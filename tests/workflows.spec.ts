@@ -72,6 +72,53 @@ test('create/edit through UI, keyboard dialog, local assets, and responsive shel
   expect(remote).toEqual([]);
 });
 
+test('breadcrumbs retain the map and back follows navigation across reload and browser history', async ({
+  request,
+  page,
+}) => {
+  const parent = await create(request, 'Release', 'container');
+  const child = await create(request, 'Deploy', 'container', parent.id);
+  await page.goto('/#/map');
+  await page.getByRole('button', { name: 'Open Release graph' }).click();
+  const breadcrumbs = page.getByRole('navigation', { name: 'Breadcrumb', exact: true });
+  await expect(breadcrumbs.getByRole('button').filter({ hasNot: page.locator('svg') })).toHaveText([
+    'Workspace',
+    'Map',
+    'Release',
+  ]);
+  await expect(breadcrumbs.locator('[aria-current="page"]')).toHaveText('Release');
+  await page.getByRole('button', { name: 'Open Deploy graph' }).click();
+  await expect(breadcrumbs.locator('[aria-current="page"]')).toHaveText('Deploy');
+  await expect(breadcrumbs.locator('svg.lucide-chevron-right')).toHaveCount(3);
+  await page.reload();
+  await page.getByRole('button', { name: 'Back to Release', exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`#/tasks/${parent.id}$`));
+  await page.goForward();
+  await expect(page).toHaveURL(new RegExp(`#/tasks/${child.id}$`));
+  await page.goBack();
+  await page.getByRole('button', { name: 'Back to Workspace map', exact: true }).click();
+  await expect(page).toHaveURL(/#\/map$/);
+  await page.getByRole('button', { name: 'Open Release graph' }).click();
+  await breadcrumbs.getByRole('button', { name: 'Release', exact: true }).click();
+  await page.getByRole('button', { name: 'Back to Workspace map', exact: true }).click();
+  await expect(page).toHaveURL(/#\/map$/);
+  await page.getByRole('button', { name: 'Open Release graph' }).click();
+  await breadcrumbs.getByRole('button', { name: 'Map', exact: true }).click();
+  await expect(page).toHaveURL(/#\/map$/);
+  await breadcrumbs.getByRole('button', { name: 'Workspace', exact: true }).click();
+  await page.locator('.card-main').filter({ hasText: 'Release' }).click();
+  await page.getByRole('button', { name: 'Back to Overview', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'A little room to think.' })).toBeVisible();
+});
+
+test('direct container links have an in-app back fallback', async ({ request, page }) => {
+  const parent = await create(request, 'Release', 'container');
+  const child = await create(request, 'Deploy', 'container', parent.id);
+  await page.goto(`/#/tasks/${child.id}`);
+  await page.getByRole('button', { name: 'Back to Release', exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`#/tasks/${parent.id}$`));
+});
+
 test('early-ready chain propagates, floats remain independent, reopening preserves own work', async ({
   request,
   page,
@@ -122,6 +169,9 @@ test('link existing container, navigate its graph, confirm deletion impact and u
   await page.getByRole('button', { name: 'Close task details' }).click();
   await page.getByRole('button', { name: 'Open Ship to stage graph' }).click();
   await expect(page.locator('.graph-title h1')).toHaveText('Ship to stage');
+  await page.getByRole('button', { name: 'Back to Ship to prod', exact: true }).click();
+  await expect(page.locator('.graph-title h1')).toHaveText('Ship to prod');
+  await page.getByRole('button', { name: 'Open Ship to stage graph' }).click();
   await page.getByRole('button', { name: 'Delete container', exact: true }).click();
   await expect(dialog).toContainText('Ship to prod');
   await expect(dialog).toContainText('Smoke tests');

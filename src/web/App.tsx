@@ -1,4 +1,4 @@
-import { startTransition, useEffect, useRef, useState } from 'react';
+import { Fragment, startTransition, useEffect, useRef, useState } from 'react';
 import {
   ArrowDownRight,
   ArrowLeft,
@@ -58,6 +58,9 @@ export function App() {
   const [github, setGithub] = useState<GithubStatus | null>(null);
   const [prs, setPrs] = useState<GithubPr[]>([]);
   const [path, setPath] = useState(route);
+  const [previousPath, setPreviousPath] = useState<string | null>(
+    () => window.history.state?.foggyFrom ?? null,
+  );
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [edgeId, setEdgeId] = useState<string | null>(null);
   const [modal, setModal] = useState<Modal>(null);
@@ -105,13 +108,17 @@ export function App() {
     }, 4000);
     const onHash = () => {
       setPath(route());
+      setPreviousPath(window.history.state?.foggyFrom ?? null);
+      setSelectedId(null);
       setEdgeId(null);
       setSidebar(false);
     };
     window.addEventListener('hashchange', onHash);
+    window.addEventListener('popstate', onHash);
     return () => {
       clearInterval(timer);
       window.removeEventListener('hashchange', onHash);
+      window.removeEventListener('popstate', onHash);
       refreshId.current++;
     };
   }, []);
@@ -136,7 +143,11 @@ export function App() {
   }
 
   const navigate = (next: string) => {
-    window.location.hash = next;
+    if (next !== route()) {
+      const from = route();
+      window.history.pushState({ foggyFrom: from }, '', `#${next}`);
+      setPreviousPath(from);
+    }
     setPath(next);
     setSelectedId(null);
     setEdgeId(null);
@@ -155,6 +166,20 @@ export function App() {
   };
   const currentId = path.startsWith('/tasks/') ? path.slice('/tasks/'.length) : null;
   const current = snapshot.tasks.find((task) => task.id === currentId);
+  const backPath = previousPath ?? (current?.parentId ? `/tasks/${current.parentId}` : '/');
+  const backLabel =
+    backPath === '/map'
+      ? 'Workspace map'
+      : backPath === '/prs'
+        ? 'Pull requests'
+        : backPath.startsWith('/tasks/')
+          ? (snapshot.tasks.find((task) => `/tasks/${task.id}` === backPath)?.title ??
+            'Previous graph')
+          : 'Overview';
+  const goBack = () => {
+    if (previousPath) window.history.back();
+    else navigate(backPath);
+  };
   const isGraph = path === '/map' || !!currentId;
   const isPrs = path === '/prs';
   const viewId = currentId ?? 'root';
@@ -321,7 +346,7 @@ export function App() {
 
       <main className="main">
         <header className="topbar">
-          <div className="breadcrumbs">
+          <nav className="breadcrumbs" aria-label="Breadcrumb">
             <button
               className="icon-button mobile-menu"
               aria-label="Open navigation"
@@ -333,24 +358,30 @@ export function App() {
             <ChevronRight size={13} />
             {isGraph ? (
               <>
-                {breadcrumbs.length ? (
-                  breadcrumbs.map((task) => (
+                <button
+                  onClick={() => navigate('/map')}
+                  className={!currentId ? 'current' : ''}
+                  aria-current={!currentId ? 'page' : undefined}
+                >
+                  Map
+                </button>
+                {breadcrumbs.map((task) => (
+                  <Fragment key={task.id}>
+                    <ChevronRight size={13} aria-hidden="true" />
                     <button
-                      key={task.id}
                       onClick={() => open(task.id)}
                       className={task.id === currentId ? 'current' : ''}
+                      aria-current={task.id === currentId ? 'page' : undefined}
                     >
                       {task.title}
                     </button>
-                  ))
-                ) : (
-                  <span className="current">Map</span>
-                )}
+                  </Fragment>
+                ))}
               </>
             ) : (
               <span className="current">{isPrs ? 'Pull requests' : 'Overview'}</span>
             )}
-          </div>
+          </nav>
           <div className="topbar-right">
             <span className={`connection ${connectionError ? 'offline' : ''}`}>
               <span className="local-dot" />
@@ -391,20 +422,17 @@ export function App() {
               <Box size={40} />
               <h2>This task is no longer here.</h2>
               <p>It may have been deleted from another view or the CLI.</p>
-              <button className="button" onClick={() => navigate('/')}>
-                Back to overview
+              <button className="button" onClick={goBack}>
+                Back to {backLabel}
               </button>
             </div>
           ) : (
             <section className="graph-page">
               <div className="graph-heading">
                 <div>
-                  <button
-                    className="back-link"
-                    onClick={() => navigate(current?.parentId ? `/tasks/${current.parentId}` : '/')}
-                  >
+                  <button className="back-link" onClick={goBack}>
                     <ArrowLeft size={13} />
-                    {current?.parentId ? 'Parent graph' : 'Overview'}
+                    Back to {backLabel}
                   </button>
                   <div className="graph-title">
                     <h1>{current?.title ?? 'The bigger picture'}</h1>
