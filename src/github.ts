@@ -1,5 +1,11 @@
 import { DomainError, type Store } from './core.js';
-import type { GithubPr, GithubStatus, PrState, TaskView, WorkspaceRepositories } from './shared.js';
+import type {
+  GithubPr,
+  GithubStatus,
+  PrMergeStatus,
+  TaskView,
+  WorkspaceRepositories,
+} from './shared.js';
 import { safeSyncRef, type WorkspaceBranches, type WorkspaceFiles } from './shared.js';
 
 const API_ROOT = 'https://api.github.com';
@@ -330,7 +336,7 @@ export class GithubPoller {
     return this.pending;
   }
 
-  private async request(path: string): Promise<unknown> {
+  private async request(path: string, body?: unknown): Promise<unknown> {
     // All paths are constructed here, never taken from API links or user URLs.
     const url = new URL(path, API_ROOT);
     if (url.origin !== API_ROOT || !path.startsWith('/'))
@@ -339,11 +345,14 @@ export class GithubPoller {
     const signal = AbortSignal.any([this.controller!.signal, AbortSignal.timeout(this.timeoutMs)]);
     try {
       const response = await this.fetcher(url.href, {
+        method: body === undefined ? 'GET' : 'POST',
+        body: body === undefined ? undefined : JSON.stringify(body),
         headers: {
           Accept: 'application/vnd.github+json',
           Authorization: `Bearer ${this.token}`,
           'X-GitHub-Api-Version': '2022-11-28',
           'User-Agent': 'foggybrain',
+          ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
         },
         redirect: 'error',
         signal,
@@ -483,12 +492,67 @@ export class GithubPoller {
     );
   }
 
-  private apply(
-    task: TaskView,
-    update: { state?: PrState; checkedAt: string; error: string | null },
-  ): void {
+  private apply(task: TaskView, update: Parameters<Store['updatePr']>[1]): void {
     // There is no await between the guard and write, so URL edits/deletions cannot race the update.
     if (this.current(task)) this.store.updatePr(task.id, update);
+  }
+
+  private async mergeStatus(parsed: ReturnType<typeof parseGithubPrUrl>): Promise<PrMergeStatus> {
+    const result = record(
+      await this.request('/graphql', {
+        query: `query($owner: String!, $repo: String!, $number: Int!) {
+        repository(owner: $owner, name: $repo) {
+          pullRequest(number: $number) {
+            state isDraft reviewDecision mergeStateStatus
+            commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
+          }
+        }
+      }`,
+        variables: { owner: parsed.owner, repo: parsed.repo, number: parsed.number },
+      }),
+    );
+    if (result.errors !== undefined && (!Array.isArray(result.errors) || result.errors.length))
+      throw new GithubError(
+        'GitHub could not return PR readiness metadata. Check token permissions and repository access.',
+      );
+    const pr = record(record(record(result.data).repository).pullRequest);
+    const nodes = record(pr.commits).nodes;
+    if (!Array.isArray(nodes) || nodes.length !== 1)
+      throw new GithubError('GitHub returned invalid PR readiness metadata.');
+    const rollup = record(record(nodes[0]).commit).statusCheckRollup;
+    const checks = rollup === null ? null : record(rollup).state;
+    const review = pr.reviewDecision;
+    const merge = pr.mergeStateStatus;
+    if (
+      !['OPEN', 'CLOSED', 'MERGED'].includes(pr.state as string) ||
+      typeof pr.isDraft !== 'boolean' ||
+      (review !== null &&
+        !['APPROVED', 'CHANGES_REQUESTED', 'REVIEW_REQUIRED'].includes(review as string)) ||
+      ![
+        'BEHIND',
+        'BLOCKED',
+        'CLEAN',
+        'DIRTY',
+        'DRAFT',
+        'HAS_HOOKS',
+        'UNKNOWN',
+        'UNSTABLE',
+      ].includes(merge as string) ||
+      (checks !== null &&
+        !['ERROR', 'EXPECTED', 'FAILURE', 'PENDING', 'SUCCESS'].includes(checks as string))
+    )
+      throw new GithubError('GitHub returned invalid PR readiness metadata.');
+
+    if (pr.state !== 'OPEN') return 'unknown';
+    if (pr.isDraft || merge === 'DRAFT') return 'draft';
+    if (merge === 'DIRTY') return 'conflicts';
+    if (review === 'CHANGES_REQUESTED') return 'changes_requested';
+    if (checks === 'ERROR' || checks === 'FAILURE' || merge === 'UNSTABLE') return 'checks_failing';
+    if (checks === 'EXPECTED' || checks === 'PENDING') return 'checks_pending';
+    if (review === 'REVIEW_REQUIRED') return 'under_review';
+    if (merge === 'BLOCKED' || merge === 'BEHIND' || merge === 'HAS_HOOKS') return 'blocked';
+    // CLEAN confirms GitHub's gates; an open or merely mergeable PR is not enough.
+    return merge === 'CLEAN' ? 'ready' : 'unknown';
   }
 
   private async poll(): Promise<void> {
@@ -526,11 +590,23 @@ export class GithubPoller {
         if ((pr.state !== 'open' && pr.state !== 'closed') || typeof pr.merged !== 'boolean') {
           throw new GithubError('GitHub returned an invalid pull request state.');
         }
-        const update = {
-          state: (pr.merged ? 'merged' : pr.state) as PrState,
+        const update: Parameters<Store['updatePr']>[1] = {
+          state: pr.merged ? 'merged' : pr.state,
           checkedAt: new Date(this.now()).toISOString(),
           error: null,
         };
+        if (update.state === 'open') {
+          try {
+            update.mergeStatus = await this.mergeStatus(parsed);
+          } catch (error) {
+            update.error = `PR readiness metadata unavailable; last readiness retained and may be stale. ${errorMessage(error)}`;
+            if (group.some((task) => this.current(task)))
+              errors.push(`Tracked PRs: ${update.error}`);
+          }
+        } else {
+          update.mergeStatus = 'unknown';
+        }
+        update.checkedAt = new Date(this.now()).toISOString();
         for (const task of group) this.apply(task, update);
       } catch (error) {
         const message = errorMessage(error);

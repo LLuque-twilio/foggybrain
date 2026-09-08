@@ -3,10 +3,12 @@ import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import type {
+  ConnectTaskInput,
   CreateTaskInput,
   DeletionPreview,
   Dependency,
   Layout,
+  PrMergeStatus,
   PrState,
   PortableState,
   Snapshot,
@@ -80,6 +82,39 @@ function normalizePrUrl(value: unknown): string {
     throw new DomainError('PR URL must be an HTTPS GitHub pull request URL');
   }
   return `https://github.com/${match[1].toLowerCase()}/${match[2].toLowerCase()}/pull/${Number(match[3])}`;
+}
+
+function insertTask(state: StoredSnapshot, input: CreateTaskInput): Task {
+  objectInput(input, ['title', 'description', 'kind', 'parentId', 'prUrl']);
+  const title = text(input.title, 'Title', true);
+  const description = input.description === undefined ? '' : text(input.description, 'Description');
+  if (!['container', 'manual', 'pr'].includes(input.kind))
+    throw new DomainError('Invalid task kind');
+  if (input.kind !== 'pr' && input.prUrl !== undefined)
+    throw new DomainError('Only PR tasks can have a PR URL');
+  const prUrl = input.kind === 'pr' ? normalizePrUrl(input.prUrl) : null;
+  const parentId =
+    input.parentId === undefined || input.parentId === null
+      ? null
+      : containerById(state, input.parentId).id;
+  const now = new Date().toISOString();
+  const task: Task = {
+    id: randomUUID(),
+    title,
+    description,
+    kind: input.kind,
+    parentId,
+    manualDone: false,
+    prUrl,
+    prState: 'unknown',
+    prMergeStatus: 'unknown',
+    prCheckedAt: null,
+    prError: null,
+    createdAt: now,
+    updatedAt: now,
+  };
+  state.tasks.push(task);
+  return task;
 }
 
 function graph(state: StoredSnapshot) {
@@ -243,6 +278,7 @@ export function validatePortableState(value: unknown): PortableState {
     tasks: input.tasks.map((task) => ({
       ...task,
       prState: 'unknown',
+      prMergeStatus: 'unknown',
       prCheckedAt: null,
       prError: null,
       createdAt: '',
@@ -324,7 +360,9 @@ export class Store {
 
   private read(): StoredSnapshot {
     const row = this.db.prepare('SELECT payload FROM foggybrain_snapshot WHERE id = 1').get()!;
-    return JSON.parse(row.payload as string) as StoredSnapshot;
+    const state = JSON.parse(row.payload as string) as StoredSnapshot;
+    for (const task of state.tasks) task.prMergeStatus ??= 'unknown';
+    return state;
   }
 
   private mutate(change: (state: StoredSnapshot) => void): Snapshot {
@@ -433,6 +471,7 @@ export class Store {
           createdAt: old?.createdAt ?? now,
           updatedAt: unchanged ? old.updatedAt : now,
           prState: samePr ? old.prState : 'unknown',
+          prMergeStatus: samePr ? old.prMergeStatus : 'unknown',
           prCheckedAt: samePr ? old.prCheckedAt : null,
           prError: samePr ? old.prError : null,
         };
@@ -468,37 +507,54 @@ export class Store {
   }
 
   createTask(input: CreateTaskInput): TaskView {
-    objectInput(input, ['title', 'description', 'kind', 'parentId', 'prUrl']);
-    const title = text(input.title, 'Title', true);
-    const description =
-      input.description === undefined ? '' : text(input.description, 'Description');
-    if (!['container', 'manual', 'pr'].includes(input.kind))
-      throw new DomainError('Invalid task kind');
-    if (input.kind !== 'pr' && input.prUrl !== undefined)
-      throw new DomainError('Only PR tasks can have a PR URL');
-    const prUrl = input.kind === 'pr' ? normalizePrUrl(input.prUrl) : null;
-    const id = randomUUID();
+    let id: string;
     return this.mutate((state) => {
-      const parentId =
-        input.parentId === undefined || input.parentId === null
-          ? null
-          : containerById(state, input.parentId).id;
-      const now = new Date().toISOString();
-      state.tasks.push({
-        id,
-        title,
-        description,
-        kind: input.kind,
-        parentId,
-        manualDone: false,
-        prUrl,
-        prState: 'unknown',
-        prCheckedAt: null,
-        prError: null,
-        createdAt: now,
-        updatedAt: now,
-      });
+      id = insertTask(state, input).id;
     }).tasks.find((task) => task.id === id)!;
+  }
+
+  connectTask(id: string, input: ConnectTaskInput): TaskView {
+    objectInput(input, ['direction', 'taskId', 'task', 'dependencyId']);
+    if (input.direction !== 'prerequisite' && input.direction !== 'dependent')
+      throw new DomainError('Direction must be prerequisite or dependent');
+    if ('taskId' in input === 'task' in input)
+      throw new DomainError('Exactly one of taskId or task is required');
+    if ('dependencyId' in input) text(input.dependencyId, 'Dependency ID', true);
+    let connectedId: string;
+    return this.mutate((state) => {
+      const anchor = taskById(state, id);
+      let selected: Dependency | undefined;
+      if (input.dependencyId !== undefined) {
+        selected = state.dependencies.find((edge) => edge.id === input.dependencyId);
+        if (!selected) throw new DomainError('Dependency not found', 404);
+        const endpoint =
+          input.direction === 'prerequisite' ? selected.dependentId : selected.prerequisiteId;
+        if (endpoint !== anchor.id)
+          throw new DomainError('Dependency does not match the anchor and direction', 409);
+        state.dependencies = state.dependencies.filter((edge) => edge.id !== input.dependencyId);
+      }
+      connectedId =
+        'taskId' in input ? taskById(state, input.taskId).id : insertTask(state, input.task!).id;
+      const legs =
+        input.direction === 'prerequisite'
+          ? [
+              [connectedId, anchor.id],
+              ...(selected ? [[selected.prerequisiteId, connectedId]] : []),
+            ]
+          : [[anchor.id, connectedId], ...(selected ? [[connectedId, selected.dependentId]] : [])];
+      for (const [prerequisiteId, dependentId] of legs) {
+        if (prerequisiteId === dependentId)
+          throw new DomainError('A task cannot depend on itself', 409);
+        const exists = state.dependencies.some(
+          (edge) => edge.prerequisiteId === prerequisiteId && edge.dependentId === dependentId,
+        );
+        if (exists) {
+          if (!selected) throw new DomainError('Dependency already exists', 409);
+        } else {
+          state.dependencies.push({ id: randomUUID(), prerequisiteId, dependentId });
+        }
+      }
+    }).tasks.find((task) => task.id === connectedId)!;
   }
 
   updateTask(id: string, input: UpdateTaskInput): TaskView {
@@ -514,6 +570,7 @@ export class Store {
         if (prUrl !== task.prUrl) {
           task.prUrl = prUrl;
           task.prState = 'unknown';
+          task.prMergeStatus = 'unknown';
           task.prCheckedAt = null;
           task.prError = null;
         }
@@ -667,9 +724,14 @@ export class Store {
 
   updatePr(
     id: string,
-    input: { state?: PrState; checkedAt: string; error: string | null },
+    input: {
+      state?: PrState;
+      mergeStatus?: PrMergeStatus;
+      checkedAt: string;
+      error: string | null;
+    },
   ): TaskView {
-    objectInput(input, ['state', 'checkedAt', 'error']);
+    objectInput(input, ['state', 'mergeStatus', 'checkedAt', 'error']);
     const checkedAt = text(input.checkedAt, 'PR check time', true);
     if (!Number.isFinite(Date.parse(checkedAt))) throw new DomainError('Invalid PR check time');
     if (input.error !== null && typeof input.error !== 'string')
@@ -680,10 +742,28 @@ export class Store {
     ) {
       throw new DomainError('Invalid PR state');
     }
+    if (
+      input.mergeStatus !== undefined &&
+      ![
+        'unknown',
+        'draft',
+        'under_review',
+        'changes_requested',
+        'checks_pending',
+        'checks_failing',
+        'conflicts',
+        'blocked',
+        'ready',
+      ].includes(input.mergeStatus)
+    ) {
+      throw new DomainError('Invalid PR merge status');
+    }
     return this.mutate((state) => {
       const task = taskById(state, id);
       if (task.kind !== 'pr') throw new DomainError('Only PR tasks can receive PR updates');
-      if (input.error === null && input.state !== undefined) task.prState = input.state;
+      // Partial polling failures must not discard independently verified fields.
+      if (input.state !== undefined) task.prState = input.state;
+      if (input.mergeStatus !== undefined) task.prMergeStatus = input.mergeStatus;
       task.prCheckedAt = checkedAt;
       task.prError = input.error;
       task.updatedAt = new Date().toISOString();

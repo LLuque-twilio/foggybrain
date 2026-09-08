@@ -26,6 +26,7 @@ import {
   X,
 } from 'lucide-react';
 import type {
+  ConnectTaskInput,
   CreateTaskInput,
   DeletionPreview,
   GithubPr,
@@ -39,6 +40,7 @@ import type {
 import { workspaceApi } from './api';
 import { Graph } from './Graph';
 import { Detail } from './Detail';
+import { DependencyDialog } from './DependencyDialog';
 import { DeleteDialog, Dialog, DialogErrorContext, ReferenceDialog, TaskDialog } from './Dialogs';
 import { Status, statusLabels } from './Status';
 import { SyncDialog } from './SyncDialog';
@@ -46,6 +48,7 @@ import { SyncDialog } from './SyncDialog';
 type Modal =
   | { type: 'create'; parentId?: string | null; prUrl?: string }
   | { type: 'edit'; task: TaskView }
+  | { type: 'dependency'; task: TaskView; direction: ConnectTaskInput['direction'] }
   | { type: 'reference'; containerId: string }
   | { type: 'delete'; task: TaskView; preview: DeletionPreview }
   | { type: 'help' }
@@ -661,7 +664,10 @@ export function WorkspaceApp({
                         setSelectedId(null);
                       })
                     }
-                    addDependency={addDependency}
+                    addDependency={(direction) => {
+                      setError('');
+                      setModal({ type: 'dependency', task: selected, direction });
+                    }}
                     removeDependency={(id) => void run(() => api(`/dependencies/${id}`, 'DELETE'))}
                   />
                 )}
@@ -987,6 +993,21 @@ export function WorkspaceApp({
         </div>
       )}
       <DialogErrorContext value={error}>
+        {modal?.type === 'dependency' && (
+          <DependencyDialog
+            task={snapshot.tasks.find((task) => task.id === modal.task.id) ?? modal.task}
+            direction={modal.direction}
+            snapshot={snapshot}
+            prs={prs}
+            github={github}
+            busy={busy}
+            clearError={() => setError('')}
+            close={() => {
+              if (!mutation.current) setModal(null);
+            }}
+            submit={(input) => run(() => api(`/tasks/${modal.task.id}/connections`, 'POST', input))}
+          />
+        )}
         {modal?.type === 'sync' && (
           <SyncDialog
             api={api}

@@ -99,6 +99,9 @@ export function TaskDialog({
   close,
   submit,
   busy,
+  dialogTitle,
+  submitLabel,
+  initialKind,
 }: {
   task?: TaskView;
   parentId?: string | null;
@@ -109,9 +112,12 @@ export function TaskDialog({
   close: () => void;
   submit: (input: CreateTaskInput | UpdateTaskInput, id?: string) => Promise<boolean>;
   busy: boolean;
+  dialogTitle?: string;
+  submitLabel?: string;
+  initialKind?: TaskKind;
 }) {
   const [kind, setKind] = useState<TaskKind>(
-    task?.kind ?? (prUrl !== undefined ? 'pr' : parentId ? 'manual' : 'container'),
+    task?.kind ?? initialKind ?? (prUrl !== undefined ? 'pr' : parentId ? 'manual' : 'container'),
   );
   const [title, setTitle] = useState(
     task?.title ?? (prUrl ? `Merge PR #${prUrl.split('/').pop()}` : ''),
@@ -122,7 +128,7 @@ export function TaskDialog({
   const githubLoading = !github || github.syncing;
   return (
     <Dialog
-      title={task ? 'Edit task' : parentId ? 'Add a step' : 'Make a little space'}
+      title={dialogTitle ?? (task ? 'Edit task' : parentId ? 'Add a step' : 'Make a little space')}
       close={close}
     >
       <form
@@ -259,7 +265,7 @@ export function TaskDialog({
             Cancel
           </button>
           <button className="button primary" disabled={busy} type="submit">
-            {task ? 'Save changes' : 'Create task'}
+            {submitLabel ?? (task ? 'Save changes' : 'Create task')}
             <ArrowRight size={15} />
           </button>
         </footer>

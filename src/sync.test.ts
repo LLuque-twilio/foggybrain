@@ -329,6 +329,108 @@ for (const deletingSide of ['local', 'remote'] as const) {
   });
 }
 
+for (const phase of [
+  'reading repository',
+  'reading branch',
+  'reading state file',
+  'writing state file',
+]) {
+  for (const [status, guidance] of [
+    [401, /valid and unexpired/],
+    [403, /organization\/SSO approval.*rate limits/],
+    [404, /hide private resources/],
+    [409, /Remote state may have changed/],
+    [422, /branch rules/],
+    [429, /wait before requesting a new preview/],
+    [500, /GitHub service error/],
+    [503, /GitHub service error/],
+    [400, /Check the sync target/],
+  ] as const) {
+    test(`${phase} HTTP ${status} has safe diagnostics and preserves sync state`, async (t) => {
+      const { store, sync, github } = setup(t);
+      store.createTask({ title: 'Local', kind: 'manual' });
+      const preview = await sync.preview();
+      const before = store.snapshot();
+      const record = store.syncRecord(target);
+      let failures = 0;
+      github.override = (url, init) => {
+        const current =
+          init.method === 'PUT'
+            ? 'writing state file'
+            : url.includes('/contents/')
+              ? 'reading state file'
+              : url.includes('/branches/')
+                ? 'reading branch'
+                : 'reading repository';
+        if (current !== phase) return;
+        failures++;
+        return new Response(`${token} private upstream body https://secret.example`, {
+          status,
+          statusText: `${token} private status text`,
+        });
+      };
+      if (phase === 'reading state file' && status === 404) {
+        assert.equal((await sync.preview()).canApply, true);
+      } else {
+        await assert.rejects(
+          phase === 'writing state file' ? sync.apply(preview.previewId) : sync.preview(),
+          (error) => {
+            assert.ok(error instanceof DomainError);
+            assert.equal(error.status, status === 409 || status === 422 ? 409 : 502);
+            assert.ok(error.message.includes(`while ${phase} (HTTP ${status})`));
+            assert.match(error.message, guidance);
+            assert.doesNotMatch(
+              error.message,
+              /separate-secret-token|private upstream|private status|https:|owner\/repo/,
+            );
+            return true;
+          },
+        );
+      }
+      assert.equal(failures, 1);
+      assert.deepEqual(store.snapshot(), before);
+      assert.equal(github.state, null);
+      if (phase === 'writing state file' && status !== 409 && status !== 422) {
+        assert.ok(store.syncRecord(target).pending);
+        assert.equal(store.syncRecord(target).lastSync, record.lastSync);
+      } else assert.deepEqual(store.syncRecord(target), record);
+      if (phase === 'writing state file') {
+        await assert.rejects(sync.apply(preview.previewId), conflict);
+        assert.equal(failures, 1);
+      }
+    });
+  }
+
+  test(`${phase} transport errors are sanitized`, async (t) => {
+    const { store, sync, github } = setup(t);
+    store.createTask({ title: 'Local', kind: 'manual' });
+    const preview = await sync.preview();
+    github.override = (url, init) => {
+      const current =
+        init.method === 'PUT'
+          ? 'writing state file'
+          : url.includes('/contents/')
+            ? 'reading state file'
+            : url.includes('/branches/')
+              ? 'reading branch'
+              : 'reading repository';
+      if (current === phase) throw new Error(`${token} https://secret.example`);
+      return undefined;
+    };
+    await assert.rejects(
+      phase === 'writing state file' ? sync.apply(preview.previewId) : sync.preview(),
+      (error) => {
+        assert.ok(error instanceof DomainError);
+        assert.match(error.message, /failed during transport/);
+        assert.ok(error.message.includes(`while ${phase}`));
+        assert.doesNotMatch(error.message, /separate-secret-token|https:/);
+        return true;
+      },
+    );
+    assert.equal(!!store.syncRecord(target).pending, phase === 'writing state file');
+  });
+}
+
 for (const status of [409, 422]) {
   test(`definitive PUT ${status} restores baseline so a real remote race re-previews normally`, async (t) => {
     const { store, sync, github } = setup(t);
@@ -626,10 +728,15 @@ test('one 10-second deadline covers the entire operation, including response rea
     },
   });
   const preview = sync.preview();
-  const rejected = assert.rejects(
-    preview,
-    (error) => error instanceof DomainError && !String(error).includes(token),
-  );
+  const rejected = assert.rejects(preview, (error) => {
+    assert.ok(error instanceof DomainError);
+    assert.match(
+      error.message,
+      /timed out after the 10-second sync deadline while reading repository/,
+    );
+    assert.ok(!error.message.includes(token));
+    return true;
+  });
   await ready;
   t.mock.timers.tick(4_000);
   await rejected;

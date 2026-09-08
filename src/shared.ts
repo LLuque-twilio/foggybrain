@@ -1,6 +1,16 @@
 export type TaskKind = 'container' | 'manual' | 'pr';
 export type TaskStatus = 'available' | 'blocked' | 'ready' | 'completed';
 export type PrState = 'unknown' | 'open' | 'closed' | 'merged';
+export type PrMergeStatus =
+  | 'unknown'
+  | 'draft'
+  | 'under_review'
+  | 'changes_requested'
+  | 'checks_pending'
+  | 'checks_failing'
+  | 'conflicts'
+  | 'blocked'
+  | 'ready';
 
 export interface Task {
   id: string;
@@ -11,6 +21,7 @@ export interface Task {
   manualDone: boolean;
   prUrl: string | null;
   prState: PrState;
+  prMergeStatus: PrMergeStatus;
   prCheckedAt: string | null;
   prError: string | null;
   createdAt: string;
@@ -55,6 +66,13 @@ export interface CreateTaskInput {
   kind: TaskKind;
   parentId?: string | null;
   prUrl?: string;
+}
+
+export interface ConnectTaskInput {
+  direction: 'prerequisite' | 'dependent';
+  taskId?: string;
+  task?: CreateTaskInput;
+  dependencyId?: string;
 }
 
 export interface UpdateTaskInput {

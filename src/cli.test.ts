@@ -16,6 +16,7 @@ const task = (id: string, extra: Partial<TaskView> = {}): TaskView => ({
   manualDone: false,
   prUrl: null,
   prState: 'unknown',
+  prMergeStatus: 'unknown',
   prCheckedAt: null,
   prError: null,
   createdAt: '2026-09-08T00:00:00.000Z',

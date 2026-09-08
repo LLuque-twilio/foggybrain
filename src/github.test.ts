@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { Store } from './core.js';
 import { GithubPoller, parseGithubPrUrl, parsePollInterval } from './github.js';
-import type { PrState, Snapshot, TaskView } from './shared.js';
+import type { PrMergeStatus, Snapshot, TaskView } from './shared.js';
 
 const TOKEN = 'test-secret-never-a-real-credential';
 const NOW = Date.parse('2026-09-08T12:00:00Z');
@@ -16,6 +17,7 @@ function task(id: string, prUrl = `https://github.com/other/private/pull/${id}`)
     parentId: null,
     manualDone: false,
     prState: 'unknown',
+    prMergeStatus: 'unknown',
     prCheckedAt: null,
     prError: null,
     createdAt: new Date(NOW).toISOString(),
@@ -29,14 +31,15 @@ function task(id: string, prUrl = `https://github.com/other/private/pull/${id}`)
 
 function fakeStore(tasks: TaskView[] = []) {
   const snapshot: Snapshot = { tasks, dependencies: [], references: [], layouts: [] };
-  const updates: { id: string; state?: PrState; checkedAt: string; error: string | null }[] = [];
+  const updates: ({ id: string } & Parameters<Store['updatePr']>[1])[] = [];
   const store = {
     snapshot: () => structuredClone(snapshot),
-    updatePr(id: string, update: { state?: PrState; checkedAt: string; error: string | null }) {
+    updatePr(id: string, update: Parameters<Store['updatePr']>[1]) {
       const task = snapshot.tasks.find((task) => task.id === id);
       assert.ok(task, 'poller must not update deleted tasks');
       updates.push({ id, ...update });
       if (update.state !== undefined) task.prState = update.state;
+      if (update.mergeStatus !== undefined) task.prMergeStatus = update.mergeStatus;
       task.prCheckedAt = update.checkedAt;
       task.prError = update.error;
       return task;
@@ -66,6 +69,25 @@ function authored(number: number) {
 
 function search(items: unknown[] = [], total = items.length) {
   return json({ items, total_count: total, incomplete_results: false });
+}
+
+function metadata(fields: Record<string, unknown> = {}, checks: string | null = 'SUCCESS') {
+  return {
+    data: {
+      repository: {
+        pullRequest: {
+          state: 'OPEN',
+          isDraft: false,
+          reviewDecision: 'APPROVED',
+          mergeStateStatus: 'CLEAN',
+          commits: {
+            nodes: [{ commit: { statusCheckRollup: checks === null ? null : { state: checks } } }],
+          },
+          ...fields,
+        },
+      },
+    },
+  };
 }
 
 function mockFetch(handler: (url: URL, init: RequestInit) => Response | Promise<Response>) {
@@ -140,6 +162,7 @@ test('poll interval defaults to 60 seconds and rejects unsafe timer values', () 
 test('unconfigured polling makes no requests and retains verified task state', async () => {
   const fake = fakeStore([task('1')]);
   fake.snapshot.tasks[0].prState = 'merged';
+  fake.snapshot.tasks[0].prMergeStatus = 'ready';
   const poller = new GithubPoller(fake.store, {
     fetch: async () => {
       assert.fail('unexpected network');
@@ -151,6 +174,7 @@ test('unconfigured polling makes no requests and retains verified task state', a
   assert.equal(status.syncing, false);
   assert.match(status.error!, /not configured/);
   assert.equal(fake.snapshot.tasks[0].prState, 'merged');
+  assert.equal(fake.snapshot.tasks[0].prMergeStatus, 'ready');
   assert.match(fake.snapshot.tasks[0].prError!, /not configured/);
   assert.deepEqual(poller.getPrs(), []);
 });
@@ -170,6 +194,7 @@ test('authored OPEN cache is independent of tracked accessible PRs and distingui
     }
     if (url.pathname.endsWith('/1')) return json({ state: 'closed', merged: true });
     if (url.pathname.endsWith('/2')) return json({ state: 'closed', merged: false });
+    if (url.pathname === '/graphql') return json(metadata());
     return json({ state: 'open', merged: false });
   });
   const poller = new GithubPoller(fake.store, {
@@ -233,9 +258,11 @@ test('list and tracked errors retain caches/verified state and clear independent
 
 test('tracked PR polling continues even if the authored-user lookup fails', async () => {
   const fake = fakeStore([task('1')]);
-  const mock = mockFetch((url) =>
-    url.pathname === '/user' ? json({}, 403) : json({ state: 'open', merged: false }),
-  );
+  const mock = mockFetch((url) => {
+    if (url.pathname === '/user') return json({}, 403);
+    if (url.pathname === '/graphql') return json(metadata());
+    return json({ state: 'open', merged: false });
+  });
   const poller = new GithubPoller(fake.store, { token: TOKEN, fetch: mock.fetcher });
   const status = await poller.sync();
   assert.match(status.error!, /access denied/);
@@ -341,6 +368,7 @@ test('rate limits honor reset/retry windows without overlapping or losing verifi
     const mock = mockFetch((url) => {
       if (url.pathname === '/user') return json({ login: 'me' });
       if (url.pathname === '/search/issues') return search();
+      if (url.pathname === '/graphql') return json(metadata());
       return limited
         ? json({}, code, {
             'x-ratelimit-remaining': '0',
@@ -441,4 +469,211 @@ test('malformed upstream states and network errors never overwrite verified stat
   assert.match((await poller.sync()).error!, /request failed/);
   assert.equal(fake.snapshot.tasks[0].prState, 'merged');
   assert.equal(JSON.stringify([poller.getStatus(), fake.updates]).includes(TOKEN), false);
+});
+
+test('readiness uses review decisions, merge gates and the latest commit rollup with conservative precedence', async (t) => {
+  const cases: [string, Record<string, unknown>, string | null, PrMergeStatus][] = [
+    ['approved and clean', {}, 'SUCCESS', 'ready'],
+    ['no required review or checks', { reviewDecision: null }, null, 'ready'],
+    [
+      'draft wins over other gates',
+      { isDraft: true, mergeStateStatus: 'DIRTY', reviewDecision: 'CHANGES_REQUESTED' },
+      'FAILURE',
+      'draft',
+    ],
+    ['draft merge state', { mergeStateStatus: 'DRAFT' }, 'SUCCESS', 'draft'],
+    [
+      'conflicts win over review and checks',
+      { mergeStateStatus: 'DIRTY', reviewDecision: 'CHANGES_REQUESTED' },
+      'FAILURE',
+      'conflicts',
+    ],
+    [
+      'changes requested win over checks',
+      { reviewDecision: 'CHANGES_REQUESTED' },
+      'FAILURE',
+      'changes_requested',
+    ],
+    ['failed check', {}, 'FAILURE', 'checks_failing'],
+    ['errored check', {}, 'ERROR', 'checks_failing'],
+    ['unstable checks', { mergeStateStatus: 'UNSTABLE' }, 'SUCCESS', 'checks_failing'],
+    [
+      'checks precede pending review',
+      { reviewDecision: 'REVIEW_REQUIRED', mergeStateStatus: 'BLOCKED' },
+      'PENDING',
+      'checks_pending',
+    ],
+    ['expected checks', {}, 'EXPECTED', 'checks_pending'],
+    [
+      'pending review',
+      { reviewDecision: 'REVIEW_REQUIRED', mergeStateStatus: 'BLOCKED' },
+      'SUCCESS',
+      'under_review',
+    ],
+    ['other branch protection', { mergeStateStatus: 'BLOCKED' }, 'SUCCESS', 'blocked'],
+    ['behind base', { mergeStateStatus: 'BEHIND' }, 'SUCCESS', 'blocked'],
+    ['hooks remain', { mergeStateStatus: 'HAS_HOOKS' }, 'SUCCESS', 'blocked'],
+    [
+      'unknown merge gates despite passing checks',
+      { mergeStateStatus: 'UNKNOWN' },
+      'SUCCESS',
+      'unknown',
+    ],
+    [
+      'unknown gates without reviews or checks',
+      { mergeStateStatus: 'UNKNOWN', reviewDecision: null },
+      null,
+      'unknown',
+    ],
+    ['closed during metadata request', { state: 'CLOSED' }, 'SUCCESS', 'unknown'],
+    ['merged during metadata request', { state: 'MERGED' }, 'SUCCESS', 'unknown'],
+  ];
+  for (const [name, fields, checks, expected] of cases) {
+    await t.test(name, async () => {
+      const fake = fakeStore([task('1'), task('2', task('1').prUrl!)]);
+      const mock = mockFetch((url, init) => {
+        if (url.pathname === '/user') return json({ login: 'me' });
+        if (url.pathname === '/search/issues') return search();
+        if (url.pathname === '/graphql') {
+          assert.equal(init.method, 'POST');
+          assert.equal(new Headers(init.headers).get('Content-Type'), 'application/json');
+          const body = JSON.parse(init.body as string);
+          assert.deepEqual(body.variables, { owner: 'other', repo: 'private', number: 1 });
+          assert.match(body.query, /state isDraft reviewDecision mergeStateStatus/);
+          assert.match(body.query, /commits\(last: 1\).*statusCheckRollup/);
+          return json(metadata(fields, checks));
+        }
+        assert.equal(url.pathname, '/repos/other/private/pulls/1');
+        return json({ state: 'open', merged: false, mergeable: true });
+      });
+      const poller = new GithubPoller(fake.store, { token: TOKEN, fetch: mock.fetcher });
+      assert.equal((await poller.sync()).error, null);
+      for (const pr of fake.snapshot.tasks) {
+        assert.equal(pr.prMergeStatus, expected);
+        assert.equal(pr.prState, 'open');
+        assert.equal(pr.prError, null);
+      }
+      assert.equal(mock.calls.filter((url) => url.pathname === '/graphql').length, 1);
+    });
+  }
+});
+
+test('metadata failures preserve readiness but still persist REST verification; recovery clears stale errors', async (t) => {
+  const failures = [
+    ...[401, 403, 404, 429, 500].map((code) => () => json({ message: TOKEN }, code)),
+    () => json({ ...metadata(), errors: [{ message: TOKEN }] }),
+    () => json({ data: { repository: null } }),
+    () => json(metadata({ reviewDecision: undefined })),
+    () => json(metadata({ mergeStateStatus: 'FUTURE_STATE' })),
+    () => json(metadata({ isDraft: null })),
+    () => json(metadata({ commits: { nodes: [] } })),
+    () => json(metadata({}, 'FUTURE_CHECK_STATE')),
+    () => new Response(TOKEN),
+    () => {
+      throw new Error(TOKEN);
+    },
+  ];
+  for (const [index, failure] of failures.entries()) {
+    await t.test(`failure ${index + 1}`, async (t) => {
+      const store = new Store(':memory:');
+      t.after(() => store.close());
+      const pr = store.createTask({ title: 'PR', kind: 'pr', prUrl: task('1').prUrl! });
+      store.updatePr(pr.id, {
+        state: 'merged',
+        mergeStatus: 'under_review',
+        checkedAt: new Date(NOW).toISOString(),
+        error: null,
+      });
+      let mode: 'metadata-failure' | 'success' | 'rest-failure' = 'metadata-failure';
+      let now = NOW;
+      const mock = mockFetch((url) => {
+        if (url.pathname === '/user') return json({ login: 'me' });
+        if (url.pathname === '/search/issues') return search();
+        if (url.pathname === '/graphql')
+          return mode === 'metadata-failure' ? failure() : json(metadata());
+        return mode === 'rest-failure'
+          ? json({ message: TOKEN }, 500)
+          : json({ state: 'open', merged: false });
+      });
+      const poller = new GithubPoller(store, { token: TOKEN, fetch: mock.fetcher, now: () => now });
+      const failed = await poller.sync();
+      assert.match(failed.error!, /readiness metadata unavailable.*stale/);
+      let current = store.snapshot().tasks[0];
+      assert.equal(current.prState, 'open');
+      assert.equal(current.status, 'available');
+      assert.equal(current.prMergeStatus, 'under_review');
+      assert.match(current.prError!, /readiness metadata unavailable.*stale/);
+      assert.equal(current.prCheckedAt, new Date(NOW).toISOString());
+      assert.equal(JSON.stringify([failed, current]).includes(TOKEN), false);
+      mode = 'success';
+      now += 120_000;
+      assert.equal((await poller.sync()).error, null);
+      current = store.snapshot().tasks[0];
+      assert.equal(current.prMergeStatus, 'ready');
+      assert.equal(current.prError, null);
+      assert.equal(current.ownSatisfied, false);
+      assert.equal(current.status, 'available');
+      mode = 'rest-failure';
+      assert.match((await poller.sync()).error!, /500/);
+      current = store.snapshot().tasks[0];
+      assert.equal(current.prState, 'open');
+      assert.equal(current.prMergeStatus, 'ready');
+      assert.match(current.prError!, /500/);
+    });
+  }
+});
+
+test('REST closed and merged results need no metadata access and clear readiness and stale errors', async (t) => {
+  const store = new Store(':memory:');
+  t.after(() => store.close());
+  const pr = store.createTask({ title: 'PR', kind: 'pr', prUrl: task('1').prUrl! });
+  let merged = false;
+  const mock = mockFetch((url) => {
+    if (url.pathname === '/user') return json({ login: 'me' });
+    if (url.pathname === '/search/issues') return search();
+    assert.notEqual(url.pathname, '/graphql');
+    return json({ state: 'closed', merged });
+  });
+  const poller = new GithubPoller(store, { token: TOKEN, fetch: mock.fetcher });
+  for (merged of [false, true]) {
+    store.updatePr(pr.id, {
+      state: 'open',
+      mergeStatus: 'ready',
+      checkedAt: new Date(NOW).toISOString(),
+      error: 'Stale metadata',
+    });
+    assert.equal((await poller.sync()).error, null);
+    const current = store.snapshot().tasks[0];
+    assert.equal(current.prState, merged ? 'merged' : 'closed');
+    assert.equal(current.prMergeStatus, 'unknown');
+    assert.equal(current.prError, null);
+    assert.equal(current.status, merged ? 'completed' : 'available');
+  }
+});
+
+test('URL changes and deletions while metadata is in flight discard both fields and metadata errors', async () => {
+  for (const mutation of ['change', 'delete'] as const) {
+    for (const failed of [false, true]) {
+      const fake = fakeStore([task('1')]);
+      const requested = deferred<void>();
+      const response = deferred<Response>();
+      const mock = mockFetch((url) => {
+        if (url.pathname === '/user') return json({ login: 'me' });
+        if (url.pathname === '/search/issues') return search();
+        if (url.pathname === '/graphql') {
+          requested.resolve();
+          return response.promise;
+        }
+        return json({ state: 'open', merged: false });
+      });
+      const poller = new GithubPoller(fake.store, { token: TOKEN, fetch: mock.fetcher });
+      const sync = poller.sync();
+      await requested.promise;
+      if (mutation === 'delete') fake.snapshot.tasks = [];
+      else fake.snapshot.tasks[0].prUrl = 'https://github.com/new/repo/pull/2';
+      response.resolve(failed ? json({ errors: [{ message: TOKEN }] }) : json(metadata()));
+      assert.equal((await sync).error, null);
+      assert.equal(fake.updates.length, 0);
+    }
+  }
 });

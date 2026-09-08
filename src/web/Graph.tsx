@@ -16,9 +16,10 @@ import {
   type Connection,
 } from '@xyflow/react';
 import dagre from '@dagrejs/dagre';
-import { ArrowUpRight, Box, GitPullRequest, Link2, ListChecks } from 'lucide-react';
+import { ArrowUpRight, Box, ExternalLink, GitPullRequest, Link2, ListChecks } from 'lucide-react';
 import type { Layout, Snapshot, TaskView } from '../shared';
 import { Status } from './Status';
+import { PrStatus } from './PrStatus';
 
 type StepNode = Node<
   {
@@ -45,7 +46,23 @@ function Step({ data, selected }: NodeProps<StepNode>) {
               ? 'TASK CONTAINER'
               : 'MANUAL STEP'}
         </span>
-        {data.reference && <Link2 size={13} aria-label="Shared reference" />}
+        <span>
+          {data.reference && <Link2 size={13} aria-label="Shared reference" />}
+          {task.kind === 'pr' && task.prUrl && (
+            <a
+              className="node-pr-link nodrag nopan"
+              href={task.prUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label={`Open PR for ${task.title} on GitHub`}
+              title="Open PR on GitHub"
+              onClick={(event) => event.stopPropagation()}
+              onDoubleClick={(event) => event.stopPropagation()}
+            >
+              <ExternalLink size={14} aria-hidden="true" />
+            </a>
+          )}
+        </span>
       </div>
       <div className="node-title">{task.title}</div>
       <div className="node-bottom">
@@ -61,21 +78,15 @@ function Step({ data, selected }: NodeProps<StepNode>) {
           >
             Open graph <ArrowUpRight size={13} />
           </button>
+        ) : task.kind === 'pr' ? (
+          <PrStatus task={task} />
         ) : (
           <span className="node-caption">
-            {task.kind === 'pr'
-              ? task.prError
-                ? 'Sync issue'
-                : task.prState === 'unknown'
-                  ? 'Not checked'
-                  : task.prState === 'closed'
-                    ? 'Not merged'
-                    : task.prState
-              : task.status === 'ready'
-                ? 'Waiting on prerequisites'
-                : task.waitingOn.length
-                  ? `${task.waitingOn.length} prerequisite${task.waitingOn.length === 1 ? '' : 's'}`
-                  : 'You decide when'}
+            {task.status === 'ready'
+              ? 'Waiting on prerequisites'
+              : task.waitingOn.length
+                ? `${task.waitingOn.length} prerequisite${task.waitingOn.length === 1 ? '' : 's'}`
+                : 'You decide when'}
           </span>
         )}
       </div>
@@ -224,7 +235,11 @@ function Canvas({
       <Background color="#b9c6b8" gap={22} size={1} />
       <Controls showInteractive={false} />
       <MiniMap<StepNode>
-        nodeColor={(node) => (node.data.task.status === 'completed' ? '#a0b78d' : '#d7dfce')}
+        nodeColor={(node) =>
+          node.selected ? '#7963b3' : node.data.task.status === 'completed' ? '#a0b78d' : '#d7dfce'
+        }
+        nodeStrokeColor={(node) => (node.selected ? '#4e387f' : 'transparent')}
+        nodeStrokeWidth={3}
         maskColor="rgba(247,248,242,0.7)"
         pannable
         zoomable

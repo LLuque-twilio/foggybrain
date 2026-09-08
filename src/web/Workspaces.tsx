@@ -11,6 +11,7 @@ import { api } from './api';
 import { WorkspaceApp } from './App';
 import { Dialog, DialogErrorContext } from './Dialogs';
 import { LoadingField } from './LoadingField';
+import { SearchableSelect } from './SearchableSelect';
 
 const selectedWorkspace = () => new URL(window.location.href).searchParams.get('workspace');
 
@@ -846,9 +847,6 @@ function DiscoveryPicker({
   const [error, setError] = useState('');
   const [retry, setRetry] = useState(0);
   const [search, setSearch] = useState('');
-  const [open, setOpen] = useState(false);
-  const [active, setActive] = useState(-1);
-  const list = useRef<HTMLUListElement>(null);
   const files = kind === 'files';
   const id = `workspace-${kind}`;
   useEffect(() => {
@@ -868,110 +866,42 @@ function DiscoveryPicker({
       current = false;
     };
   }, [kind, query, retry]);
-  const visible = (items ?? []).filter((item) =>
-    item.toLowerCase().includes(search.trim().toLowerCase()),
-  );
   const newPath = files && safeSyncRef(search.trim()) && !items?.includes(search.trim());
-  const options = [...visible, ...(newPath ? [search.trim()] : [])];
-  const expanded = open && !!items && !disabled;
+  const options = [...(items ?? []), ...(newPath ? [search.trim()] : [])];
   const loading = !!query && !items && !error;
-  const highlighted = expanded && active >= 0 && active < options.length;
-  useEffect(() => {
-    if (highlighted)
-      list.current?.querySelector('[data-active="true"]')?.scrollIntoView({ block: 'nearest' });
-  }, [active, highlighted]);
-  function select(entry: string) {
-    choose(entry);
-    setSearch(entry);
-    setOpen(false);
-    setActive(-1);
-  }
   return (
     <>
-      <div className="repository-picker">
-        <label htmlFor={id}>{files ? 'State file path' : 'Branch'}</label>
-        <LoadingField loading={loading}>
-          <input
-            id={id}
-            role="combobox"
-            aria-autocomplete="list"
-            aria-busy={loading}
-            aria-expanded={expanded}
-            aria-controls={`${id}-list`}
-            aria-describedby={loading ? `${id}-hint ${id}-loading` : `${id}-hint`}
-            aria-activedescendant={highlighted ? `${id}-${active}` : undefined}
-            autoComplete="off"
-            required
-            value={search}
-            disabled={disabled || !items}
-            placeholder={
-              loading
-                ? `Loading ${kind}...`
-                : files
-                  ? 'Search JSON files or enter a new path'
-                  : 'Search existing branches'
-            }
-            onFocus={() => setOpen(true)}
-            onClick={() => setOpen(true)}
-            onBlur={() => {
-              setOpen(false);
-              setActive(-1);
-            }}
-            onChange={(event) => {
-              setSearch(event.target.value);
-              choose('');
-              setOpen(true);
-              setActive(-1);
-            }}
-            onKeyDown={(event) => {
-              if (event.nativeEvent.isComposing) return;
-              if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-                event.preventDefault();
-                setOpen(true);
-                setActive(
-                  options.length
-                    ? !expanded || active < 0
-                      ? event.key === 'ArrowDown'
-                        ? 0
-                        : options.length - 1
-                      : (active + (event.key === 'ArrowDown' ? 1 : -1) + options.length) %
-                        options.length
-                    : -1,
-                );
-              } else if (event.key === 'Enter') {
-                event.preventDefault();
-                if (highlighted) select(options[active]);
-              } else if (event.key === 'Escape' && expanded) {
-                event.preventDefault();
-                event.stopPropagation();
-                setOpen(false);
-                setActive(-1);
-              }
-            }}
-          />
-        </LoadingField>
-        <ul
-          id={`${id}-list`}
-          ref={list}
-          role="listbox"
-          aria-label={files ? 'State paths' : 'Branches'}
-          hidden={!expanded}
-        >
-          {options.map((entry, index) => (
-            <li
-              key={entry}
-              id={`${id}-${index}`}
-              role="option"
-              aria-selected={value === entry}
-              data-active={active === index}
-              onMouseDown={(event) => event.preventDefault()}
-              onClick={() => select(entry)}
-            >
-              {newPath && index === visible.length ? `Use new path: ${entry}` : entry}
-            </li>
-          ))}
-        </ul>
-      </div>
+      <SearchableSelect
+        id={id}
+        label={files ? 'State file path' : 'Branch'}
+        listLabel={files ? 'State paths' : 'Branches'}
+        options={options.map((entry) => ({ value: entry, label: entry }))}
+        value={value}
+        onChange={choose}
+        search={search}
+        onSearchChange={setSearch}
+        required
+        disabled={disabled || !items}
+        loading={loading}
+        describedBy={loading ? `${id}-hint ${id}-loading` : `${id}-hint`}
+        placeholder={
+          loading
+            ? `Loading ${kind}...`
+            : files
+              ? 'Search JSON files or enter a new path'
+              : 'Search existing branches'
+        }
+        renderOption={(entry) =>
+          newPath && entry.value === search.trim() ? `Use new path: ${entry.label}` : entry.label
+        }
+        emptyMessage={
+          items
+            ? files
+              ? 'No matching JSON files. Enter a safe new state path.'
+              : 'No matching supported branches.'
+            : undefined
+        }
+      />
       <p className="form-hint" id={`${id}-hint`}>
         {!query
           ? files
@@ -998,13 +928,6 @@ function DiscoveryPicker({
             Retry {kind}
           </button>
         </div>
-      )}
-      {items && !options.length && (
-        <p role="status">
-          {files
-            ? 'No matching JSON files. Enter a safe new state path.'
-            : 'No matching supported branches.'}
-        </p>
       )}
     </>
   );

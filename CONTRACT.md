@@ -20,6 +20,7 @@ Workspace management is always unscoped. Every existing endpoint below also acce
 
 - `GET /state`: `Snapshot` with computed task states.
 - `POST /tasks`: `CreateTaskInput` -> `TaskView`, status 201.
+- `POST /tasks/:id/connections`: `ConnectTaskInput` -> connected existing/new `TaskView`, status 201. `direction` is `prerequisite` (connected -> anchor) or `dependent` (anchor -> connected); exactly one of `taskId` or `task: CreateTaskInput` is required. Without `dependencyId`, adds an ordinary link (duplicates return 409). With `dependencyId`, splits only that edge: prerequisite insertion requires an incoming edge `P -> anchor` and produces `P -> connected -> anchor`; dependent insertion requires an outgoing edge `anchor -> D` and produces `anchor -> connected -> D`. Other edges and existing task ownership are unchanged; existing replacement legs are reused with their IDs. Missing tasks/edges return 404, mismatched edges and self/cyclic links return 409, malformed inputs return 400. Task creation and all edge changes commit atomically only after whole-graph validation, including membership cycles; failures leave no partial changes.
 - `PATCH /tasks/:id`: `UpdateTaskInput` -> `TaskView`.
 - `POST /tasks/:id/done`: `{done: boolean}` -> `TaskView`. Manual steps only.
 - `GET /tasks/:id/deletion-preview`: `DeletionPreview`.
@@ -38,11 +39,28 @@ Workspace management is always unscoped. Every existing endpoint below also acce
 
 ## Core API
 
-`src/core.ts` exports `Store` and `DomainError`. Constructor: `new Store(databasePath: string)` (supports `:memory:`). Methods: `snapshot()`, `createTask(input)`, `updateTask(id,input)`, `setDone(id,done)`, `addDependency(prerequisiteId,dependentId)`, `removeDependency(id)`, `addReference(containerId,taskId)`, `removeReference(id)`, `previewDeletion(id)`, `deleteTask(id)`, `saveLayout(layout)`, `updatePr(id, {state?, checkedAt, error})`, `close()`. `DomainError` exposes `status: number`.
+`src/core.ts` exports `Store` and `DomainError`. Constructor: `new Store(databasePath: string)` (supports `:memory:`). Methods: `snapshot()`, `createTask(input)`, `connectTask(id,input)`, `updateTask(id,input)`, `setDone(id,done)`, `addDependency(prerequisiteId,dependentId)`, `removeDependency(id)`, `addReference(containerId,taskId)`, `removeReference(id)`, `previewDeletion(id)`, `deleteTask(id)`, `saveLayout(layout)`, `updatePr(id, {state?, mergeStatus?, checkedAt, error})`, `close()`. `DomainError` exposes `status: number`.
 
 Input validation is required at runtime. A task's own condition is manualDone, PR merged, or all owned + referenced children completed. Empty containers are not complete. A task completes only if its own condition and all prerequisite tasks are complete. An early satisfied condition is ready; incomplete own condition is available or blocked. All completion is derived, so reopening propagates. WaitingOn is incomplete direct prerequisites. Containers may be nested. References add an existing independently owned task as a child; references are not copies. Duplicate membership and all effective cycles (containment + references + dependencies) are rejected. Deleting a task deletes owned descendants, never reference targets, removes touching dependencies/references, and recalculates. Preview includes externally affected tasks, transitively, including parent containers.
 
 GitHub URLs: HTTPS github.com/{owner}/{repo}/pull/{number} only, normalized. PR URL changes reset verified state. Poll errors retain last verified state but set error. Pollers must not apply a response for a URL that has changed in the meantime.
+
+`Task.prMergeStatus: PrMergeStatus` is required, server-derived informational PR gate readiness, separate from task `status`. It never satisfies a PR task's own condition: only REST-verified `prState: "merged"` does. New tasks (including non-PR tasks) and legacy SQLite snapshots missing this field default to `unknown`. Readiness is persisted local verification, excluded from portable state, retained with verification/errors on same-ID, same-kind, same-URL imports, and reset to `unknown` on PR URL changes or newly imported identities.
+
+For REST-open, unmerged PRs, the poller fetches GitHub GraphQL `state`, `isDraft`, `reviewDecision`, `mergeStateStatus`, and `commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }`. Valid metadata maps in this precedence order (first match wins):
+
+- `unknown`: GraphQL says closed/merged (the REST result remains authoritative until the next poll).
+- `draft`: `isDraft` or merge state `DRAFT`.
+- `conflicts`: merge state `DIRTY`.
+- `changes_requested`: review decision `CHANGES_REQUESTED`.
+- `checks_failing`: rollup `ERROR`/`FAILURE` or merge state `UNSTABLE`, including non-required failing checks.
+- `checks_pending`: rollup `EXPECTED`/`PENDING`.
+- `under_review`: review decision `REVIEW_REQUIRED`.
+- `blocked`: merge state `BLOCKED`, `BEHIND`, or `HAS_HOOKS`, without a more specific gate above.
+- `ready`: merge state `CLEAN` with none of the preceding gates; review is `APPROVED` or null, and rollup is `SUCCESS` or null (no checks). Merely open/mergeable is never sufficient. This is GitHub's last reported gate status, not a guarantee that a particular user can merge.
+- `unknown`: otherwise (merge state `UNKNOWN`).
+
+REST-closed/merged PRs need no GraphQL request and reset readiness to `unknown`. Malformed/incomplete metadata, GraphQL errors (even with partial data), transport failures and permission errors retain the previous readiness and set a sanitized `prError` explicitly marking readiness unavailable/potentially stale; the independently successful REST state still persists. REST failures retain both verified fields. Successful polling clears `prError`; `prCheckedAt` records the latest attempt, not necessarily the last successful metadata verification. Consumers must treat a non-null `prError` as stale/incomplete verification. No raw upstream errors or tokens are exposed. Internal `updatePr` applies each supplied verified field independently even when `error` is non-null; callers must omit fields whose verification failed. Omitted fields are retained. Task creation/update APIs do not accept readiness or other verification fields.
 
 ## Workspace Sync
 

@@ -243,16 +243,17 @@ export class StateSync {
   }
 
   private async request(
+    operation:
+      'reading repository' | 'reading branch' | 'reading state file' | 'writing state file',
     suffix: string,
     signal: AbortSignal,
     init: RequestInit = {},
     missing = false,
   ): Promise<unknown> {
-    signal.throwIfAborted();
-    const url = `https://api.github.com/repos/${this.target!.repo}${suffix}`;
-    let response: Response;
     try {
-      response = await this.fetcher(url, {
+      signal.throwIfAborted();
+      const url = `https://api.github.com/repos/${this.target!.repo}${suffix}`;
+      const response = await this.fetcher(url, {
         ...init,
         signal,
         redirect: 'error',
@@ -263,48 +264,73 @@ export class StateSync {
           'Content-Type': 'application/json',
         },
       });
-    } catch {
-      throw new DomainError('GitHub state request failed; re-preview before trying again', 502);
-    }
-    if (response.redirected || (response.url && response.url !== url))
-      throw new DomainError('GitHub returned an unexpected response URL', 502);
-    if (missing && response.status === 404) {
-      await response.body?.cancel();
-      return null;
-    }
-    if (!response.ok) {
-      await response.body?.cancel();
-      if (init.method === 'PUT' && (response.status === 409 || response.status === 422))
-        throw new RejectedSyncWrite('Remote state changed; re-preview', 409);
-      throw new DomainError(
-        response.status === 409 || response.status === 422
-          ? 'Remote state changed; re-preview'
-          : 'GitHub state request failed',
-        response.status === 409 || response.status === 422 ? 409 : 502,
-      );
-    }
-    if (!response.body) throw new DomainError('Empty GitHub response', 502);
-    const reader = response.body.getReader();
-    const chunks: Uint8Array[] = [];
-    let size = 0;
-    try {
-      while (true) {
-        signal.throwIfAborted();
-        const { done, value } = await reader.read();
-        if (done) break;
-        size += value.byteLength;
-        if (size > 2 * MAX_CONTENT)
-          throw new DomainError('GitHub response exceeds size limit', 502);
-        chunks.push(value);
+      if (response.redirected || (response.url && response.url !== url))
+        throw new DomainError('GitHub returned an unexpected response URL', 502);
+      if (missing && response.status === 404) {
+        await response.body?.cancel();
+        return null;
       }
-    } finally {
-      await reader.cancel();
-    }
-    signal.throwIfAborted();
-    try {
-      return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks)));
-    } catch {
-      throw new DomainError('GitHub returned malformed JSON', 502);
+      if (!response.ok) {
+        await response.body?.cancel().catch(() => {});
+        const guidance: Record<number, string> = {
+          401: 'Check that the selected server sync credential is valid and unexpired.',
+          403: 'Check repository permissions, organization/SSO approval, and GitHub rate limits; writes require Contents read/write and may be restricted by branch rules.',
+          404: 'Check the configured repository, existing branch, and path, and the selected credential access; GitHub may hide private resources.',
+          409: 'Remote state may have changed; re-preview and review before applying again.',
+          422: 'Check the state file target and branch rules; re-preview and review before applying again.',
+          429: 'GitHub rate limit reached; wait before requesting a new preview.',
+        };
+        const message = `GitHub state sync failed while ${operation} (HTTP ${response.status}). ${
+          guidance[response.status] ??
+          (response.status >= 500 && response.status <= 599
+            ? 'GitHub service error; check GitHub service status and wait before requesting a new preview.'
+            : 'Check the sync target and selected server credential; re-preview before applying again.')
+        }${init.method === 'PUT' ? ' Do not retry the apply blindly; the upload may need reconciliation.' : ''}`;
+        if (init.method === 'PUT' && (response.status === 409 || response.status === 422))
+          throw new RejectedSyncWrite(message, 409);
+        throw new DomainError(
+          message,
+          response.status === 409 || response.status === 422 ? 409 : 502,
+        );
+      }
+      if (!response.body) throw new DomainError('Empty GitHub response', 502);
+      const reader = response.body.getReader();
+      const chunks: Uint8Array[] = [];
+      let size = 0;
+      try {
+        while (true) {
+          signal.throwIfAborted();
+          const { done, value } = await reader.read();
+          if (done) break;
+          size += value.byteLength;
+          if (size > 2 * MAX_CONTENT)
+            throw new DomainError('GitHub response exceeds size limit', 502);
+          chunks.push(value);
+        }
+      } finally {
+        await reader.cancel();
+      }
+      signal.throwIfAborted();
+      try {
+        return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks)));
+      } catch {
+        throw new DomainError('GitHub returned malformed JSON', 502);
+      }
+    } catch (error) {
+      if (error instanceof DomainError) throw error;
+      const reason = signal.aborted
+        ? this.stopped
+          ? 'was cancelled because the sync service stopped'
+          : 'timed out after the 10-second sync deadline'
+        : 'failed during transport; check server network, DNS, TLS, and proxy connectivity';
+      throw new DomainError(
+        `GitHub state sync ${reason} while ${operation}. Re-preview before applying again.${
+          init.method === 'PUT'
+            ? ' The upload may have committed; do not retry the apply blindly.'
+            : ''
+        }`,
+        502,
+      );
     }
   }
 
@@ -313,11 +339,18 @@ export class StateSync {
   }
 
   private async remote(signal: AbortSignal): Promise<{ state: PortableState; sha: string | null }> {
-    const repo = (await this.request('', signal)) as { private?: unknown } | null;
+    const repo = (await this.request('reading repository', '', signal)) as {
+      private?: unknown;
+    } | null;
     if (repo?.private !== true)
       throw new DomainError('State sync requires a private GitHub repository');
-    await this.request(`/branches/${encodeURIComponent(this.target!.branch)}`, signal);
+    await this.request(
+      'reading branch',
+      `/branches/${encodeURIComponent(this.target!.branch)}`,
+      signal,
+    );
     const file = (await this.request(
+      'reading state file',
       `${this.contentPath()}?ref=${encodeURIComponent(this.target!.branch)}`,
       signal,
       {},
@@ -429,7 +462,7 @@ export class StateSync {
       if (!equal(saved.remote, saved.merged) || saved.sha === null) {
         // Durable intent precedes the only PUT. Never retry an ambiguous upload automatically.
         try {
-          await this.request(this.contentPath(), signal, {
+          await this.request('writing state file', this.contentPath(), signal, {
             method: 'PUT',
             body: JSON.stringify({
               message: 'Sync FoggyBrain state',

@@ -79,6 +79,7 @@ test('manual preview requires confirmation and successful apply refreshes the gr
               manualDone: false,
               prUrl: null,
               prState: 'unknown',
+              prMergeStatus: 'unknown',
               prCheckedAt: null,
               prError: null,
               createdAt: '2026-09-08T00:00:00Z',

@@ -254,6 +254,9 @@ function domainRoutes(
     for (const field of ['title', 'description', 'prUrl']) stringField(body, field, true);
     res.json(store.updateTask(id(req), body as UpdateTaskInput));
   });
+  app.post('/tasks/:id/connections', (req, res) => {
+    res.status(201).json(store.connectTask(id(req), req.body));
+  });
   app.post('/tasks/:id/done', (req, res) => {
     const body = object(req.body, ['done']);
     if (typeof body.done !== 'boolean') throw new HttpError(400, 'done must be a boolean.');

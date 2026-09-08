@@ -298,6 +298,24 @@ On first sync, an empty local graph can pull existing remote state, or a missing
 
 The versioned JSON (`version: 1`) contains editable task fields and dependency/reference records, not PR verification, derived completion, layouts, or timestamps. PR state is reverified locally by server polling; remote JSON cannot assert a verified merge. The server persists its baseline in SQLite and makes automatic full local backups in `foggybrain_sync_backups`. There is no restore API or automatic backup pruning. Keep independent database backups too. GitHub Contents API writes create Git history without a local git CLI or clone; deleting sensitive text from current state does not remove it from history or backups.
 
+### Diagnosing Failures
+
+Use the returned workspace ID to inspect the same workspace that failed:
+
+```sh
+foggy --json workspace list
+foggy --json --workspace WORKSPACE_ID sync status
+foggy --json --workspace WORKSPACE_ID sync preview
+```
+
+Status reads local configuration and baseline bookkeeping only; it does not contact GitHub or retain the last error. Preview reads GitHub without changing either graph or writing a remote file, but replaces the previous process-local preview. Inspect both change lists, `conflicts`, `validationError`, and `canApply`. A successful preview cannot verify write permission or prove that an earlier upload succeeded. Do not use apply as a diagnostic probe.
+
+Request failures name the phase (`reading repository`, `reading branch`, `reading state file`, or `writing state file`) and upstream HTTP status when available. HTTP 401 suggests checking credential validity/expiry; 403 suggests permissions, organization/SSO approval, rate limits, or branch rules; 404 suggests checking the target and private-resource access. A missing state-file GET 404 remains normal bootstrap behavior, not an error. HTTP 409 requires a fresh reviewed preview; 422 also calls for checking the target and branch rules. For 429 or 5xx, wait and check rate limits or GitHub service health before re-previewing. These are static diagnostic suggestions, not a definitive explanation from GitHub.
+
+Timeouts identify the server's overall 10-second sync deadline; transport failures suggest checking the server's network, DNS, TLS, and proxy connectivity. Messages intentionally omit upstream bodies, status text, URLs, tokens, and raw exceptions. After a write failure, never blindly retry: the upload may have committed, and retained upload intent may require reconciliation. Obtain authorization before applying a newly reviewed preview.
+
+Credentials are server-only: dedicated mode uses only `FOGGY_SYNC_TOKEN` (without fallback); explicit `github` mode uses server `GH_TOKEN`, `GITHUB_TOKEN`, or `gh auth token`. Both require access to the selected private repository, Contents read/write for publishing, and any organization/SSO approval. Prefer dedicated sync credentials to keep PR access read-only. Never put tokens in CLI arguments, task text, diagnostic reports, or logs. This sync uses the GitHub Contents API, so local git remotes and git CLI tracing do not diagnose its requests.
+
 ## UI
 
 ```text

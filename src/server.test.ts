@@ -675,6 +675,232 @@ test('contract routes preserve core completion, relationship and deletion semant
   assert.deepEqual(snapshot.layouts, []);
 });
 
+test('connection API returns the connected TaskView and preserves branches in both insertion directions', async (t) => {
+  const { store, request } = await fixture(t);
+  for (const direction of ['prerequisite', 'dependent'] as const) {
+    const a = store.createTask({ title: 'A', kind: 'manual' });
+    const b = store.createTask({ title: 'B', kind: 'manual' });
+    const branch = store.createTask({ title: 'Branch', kind: 'manual' });
+    const selected = store.addDependency(a.id, b.id);
+    const retained = [store.addDependency(a.id, branch.id), store.addDependency(branch.id, b.id)];
+    store.setDone(a.id, true);
+    store.setDone(branch.id, true);
+    store.setDone(b.id, true);
+    const anchor = direction === 'prerequisite' ? b : a;
+    const path = `/api/tasks/${anchor.id}/connections`;
+    const response = await request(path, 'POST', {
+      direction,
+      dependencyId: selected.id,
+      task: { title: '  PR gate  ', kind: 'pr', prUrl: 'https://github.com/O/R/pull/001/' },
+    });
+    assert.equal(response.status, 201);
+    assert.equal(response.headers['cache-control'], 'no-store');
+    const connected: TaskView = response.body;
+    assert.notEqual(connected.id, anchor.id);
+    assert.equal(connected.title, 'PR gate');
+    assert.equal(connected.prUrl, 'https://github.com/o/r/pull/1');
+    assert.equal(connected.prState, 'unknown');
+    assert.equal(connected.status, 'available');
+    assert.deepEqual(connected.waitingOn, []);
+    const snapshot: Snapshot = (await request('/api/state')).body;
+    assert.deepEqual(
+      connected,
+      snapshot.tasks.find((task) => task.id === connected.id),
+    );
+    assert.equal(snapshot.tasks.find((task) => task.id === b.id)!.status, 'ready');
+    assert.equal(snapshot.tasks.find((task) => task.id === branch.id)!.status, 'completed');
+    assert.ok(!snapshot.dependencies.some((edge) => edge.id === selected.id));
+    for (const edge of retained)
+      assert.deepEqual(
+        snapshot.dependencies.find((item) => item.id === edge.id),
+        edge,
+      );
+    assert.ok(
+      snapshot.dependencies.some(
+        (edge) => edge.prerequisiteId === a.id && edge.dependentId === connected.id,
+      ),
+    );
+    assert.ok(
+      snapshot.dependencies.some(
+        (edge) => edge.prerequisiteId === connected.id && edge.dependentId === b.id,
+      ),
+    );
+
+    const existing = store.createTask({ title: 'Existing', kind: 'manual' });
+    const leaf = await request(path, 'POST', { direction, taskId: existing.id });
+    assert.equal(leaf.status, 201);
+    assert.equal(leaf.body.id, existing.id);
+    const redundant = store.addDependency(
+      direction === 'prerequisite' ? a.id : existing.id,
+      direction === 'prerequisite' ? existing.id : b.id,
+    );
+    const incident = store
+      .snapshot()
+      .dependencies.find((edge) =>
+        direction === 'prerequisite'
+          ? edge.prerequisiteId === connected.id && edge.dependentId === b.id
+          : edge.prerequisiteId === a.id && edge.dependentId === connected.id,
+      )!;
+    const inserted = await request(path, 'POST', {
+      direction,
+      taskId: existing.id,
+      dependencyId: incident.id,
+    });
+    assert.equal(inserted.status, 201);
+    assert.equal(inserted.body.id, existing.id);
+    assert.deepEqual(
+      store.snapshot().dependencies.find((edge) => edge.id === redundant.id),
+      redundant,
+    );
+    const before = store.snapshot();
+    const stale = await request(path, 'POST', {
+      direction,
+      dependencyId: incident.id,
+      task: { title: 'Must not exist', kind: 'manual' },
+    });
+    assert.equal(stale.status, 404);
+    assert.deepEqual(Object.keys(stale.body), ['error']);
+    assert.deepEqual(store.snapshot(), before);
+  }
+});
+
+test('connection API rejects malformed requests, missing tasks, mismatched edges and membership cycles without partial writes', async (t) => {
+  const { store, request } = await fixture(t);
+  const group = store.createTask({ title: 'Group', kind: 'container' });
+  const a = store.createTask({ title: 'A', kind: 'manual', parentId: group.id });
+  const b = store.createTask({ title: 'B', kind: 'manual' });
+  const edge = store.addDependency(a.id, b.id);
+  const path = `/api/tasks/${b.id}/connections`;
+  const valid = { direction: 'prerequisite', dependencyId: edge.id };
+  const task = { title: 'New', kind: 'manual' };
+  const checks: [unknown, number][] = [
+    [null, 400],
+    [[], 400],
+    [{}, 400],
+    [{ ...valid }, 400],
+    [{ ...valid, taskId: a.id, task }, 400],
+    [{ ...valid, task, extra: true }, 400],
+    [{ ...valid, task, direction: 'before' }, 400],
+    ...[null, 1, '', {}, []].map((taskId): [unknown, number] => [{ ...valid, taskId }, 400]),
+    ...[null, 1, '', {}, []].map((dependencyId): [unknown, number] => [
+      { ...valid, task, dependencyId },
+      400,
+    ]),
+    ...[
+      null,
+      [],
+      {},
+      { ...task, parentId: 42 },
+      { ...task, manualDone: true },
+      { title: 'PR', kind: 'pr' },
+      { ...task, title: '' },
+    ].map((task): [unknown, number] => [{ ...valid, task }, 400]),
+    [{ ...valid, taskId: 'missing' }, 404],
+    [{ ...valid, task: { ...task, parentId: 'missing' } }, 404],
+    [{ ...valid, task, dependencyId: 'missing' }, 404],
+    [{ ...valid, task, direction: 'dependent' }, 409],
+    [{ ...valid, taskId: b.id }, 409],
+    [{ ...valid, taskId: a.id }, 409],
+    [{ direction: 'prerequisite', taskId: a.id }, 409],
+    [{ direction: 'dependent', taskId: a.id }, 409],
+    [{ ...valid, task: { ...task, parentId: group.id }, direction: 'dependent' }, 409],
+  ];
+  const before = store.snapshot();
+  for (const [body, status] of checks) {
+    const response = await request(path, 'POST', body);
+    assert.equal(response.status, status, JSON.stringify(body));
+    assert.deepEqual(Object.keys(response.body), ['error']);
+    assert.equal(typeof response.body.error, 'string');
+    assert.deepEqual(store.snapshot(), before);
+  }
+  const cycle = await request(`/api/tasks/${group.id}/connections`, 'POST', {
+    direction: 'dependent',
+    task: { ...task, parentId: group.id },
+  });
+  assert.equal(cycle.status, 409);
+  assert.deepEqual(store.snapshot(), before);
+  assert.equal(
+    (await request('/api/tasks/missing/connections', 'POST', { direction: 'dependent', task }))
+      .status,
+    404,
+  );
+  assert.equal((await request(path, 'POST')).status, 415);
+  assert.equal(
+    (await request(path, 'POST', undefined, { 'Content-Type': 'application/json' })).status,
+    400,
+  );
+  assert.deepEqual(store.snapshot(), before);
+});
+
+test('connections are workspace scoped with no cross-workspace task, parent or edge fallback', async (t) => {
+  const dataDir = mkdtempSync(join(tmpdir(), 'foggy-connections-api-'));
+  const workspaces = new WorkspaceManager({
+    dataDir,
+    fetch: async () => assert.fail('No network'),
+  });
+  t.after(async () => {
+    await workspaces.close();
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+  const other = workspaces.create({ name: 'Other', type: 'local' });
+  const { request } = await fixture(t, { workspaces });
+  const defaultStore = workspaces.get('default').store;
+  const scopedStore = workspaces.get(other.id).store;
+  const parent = defaultStore.createTask({ title: 'Default parent', kind: 'container' });
+  const defaultTask = defaultStore.createTask({ title: 'Default task', kind: 'manual' });
+  const defaultEdge = defaultStore.addDependency(defaultTask.id, parent.id);
+  const anchor = scopedStore.createTask({ title: 'Scoped anchor', kind: 'manual' });
+  const prefix = `/api/workspaces/${other.id}`;
+  const task = { title: 'Scoped new', kind: 'container' };
+  const response = await request(`${prefix}/tasks/${anchor.id}/connections`, 'POST', {
+    direction: 'prerequisite',
+    task,
+  });
+  assert.equal(response.status, 201);
+  assert.equal(response.body.kind, 'container');
+  assert.equal(response.body.status, 'available');
+  assert.equal(response.body.ownSatisfied, false);
+  const before = scopedStore.snapshot();
+  const defaultBefore = defaultStore.snapshot();
+  const checks: [string, unknown][] = [
+    [
+      `${prefix}/tasks/${anchor.id}/connections`,
+      { direction: 'dependent', taskId: defaultTask.id },
+    ],
+    [
+      `${prefix}/tasks/${anchor.id}/connections`,
+      { direction: 'dependent', task: { ...task, parentId: parent.id } },
+    ],
+    [
+      `${prefix}/tasks/${anchor.id}/connections`,
+      { direction: 'dependent', task, dependencyId: defaultEdge.id },
+    ],
+    [`${prefix}/tasks/${defaultTask.id}/connections`, { direction: 'dependent', task }],
+    [`/api/tasks/${anchor.id}/connections`, { direction: 'dependent', task }],
+    [
+      `/api/workspaces/missing/tasks/${defaultTask.id}/connections`,
+      { direction: 'dependent', task },
+    ],
+  ];
+  for (const [path, body] of checks) {
+    assert.equal((await request(path, 'POST', body)).status, 404);
+    assert.deepEqual(scopedStore.snapshot(), before);
+    assert.deepEqual(defaultStore.snapshot(), defaultBefore);
+  }
+  const leaf = await request(
+    `/api/workspaces/default/tasks/${defaultTask.id}/connections`,
+    'POST',
+    {
+      direction: 'prerequisite',
+      task: { title: 'Default leaf', kind: 'manual' },
+    },
+  );
+  assert.equal(leaf.status, 201);
+  const snapshot: Snapshot = (await request('/api/state')).body;
+  assert.ok(snapshot.tasks.some((task) => task.id === leaf.body.id));
+  assert.deepEqual(scopedStore.snapshot(), before);
+});
+
 test('JSON validation rejects coercible booleans, unsupported fields, invalid types and nonfinite coordinates', async (t) => {
   const { store, request } = await fixture(t);
   const manual = store.createTask({ title: 'Manual', kind: 'manual' });

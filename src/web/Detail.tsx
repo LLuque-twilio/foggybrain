@@ -12,8 +12,9 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
-import type { Snapshot, TaskView } from '../shared';
+import type { ConnectTaskInput, Snapshot, TaskView } from '../shared';
 import { Status } from './Status';
+import { PrStatus } from './PrStatus';
 
 export function Detail({
   task,
@@ -39,10 +40,9 @@ export function Detail({
   done: () => void;
   remove: () => void;
   unlink: (id: string) => void;
-  addDependency: (from: string, to: string) => void;
+  addDependency: (direction: ConnectTaskInput['direction']) => void;
   removeDependency: (id: string) => void;
 }) {
-  const [prerequisite, setPrerequisite] = useState('');
   const [copied, setCopied] = useState(false);
   const incoming = snapshot.dependencies.filter((edge) => edge.dependentId === task.id);
   const outgoing = snapshot.dependencies.filter((edge) => edge.prerequisiteId === task.id);
@@ -50,10 +50,6 @@ export function Detail({
     (ref) => ref.containerId === viewId && ref.taskId === task.id,
   );
   const memberships = snapshot.references.filter((ref) => ref.taskId === task.id);
-  const candidates = snapshot.tasks.filter(
-    (candidate) =>
-      candidate.id !== task.id && !incoming.some((edge) => edge.prerequisiteId === candidate.id),
-  );
   return (
     <aside className="detail-panel" aria-label="Task details">
       <div className="detail-top">
@@ -130,8 +126,7 @@ export function Detail({
             <ArrowUpRight size={15} />
           </a>
           <p>
-            Merge status:{' '}
-            <strong>{task.prState === 'closed' ? 'Closed without merging' : task.prState}</strong>
+            Merge status: <PrStatus task={task} />
           </p>
           <small className="muted">
             {task.prCheckedAt
@@ -169,36 +164,15 @@ export function Detail({
             </div>
           );
         })}
-        <form
-          className="add-prerequisite"
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (prerequisite) {
-              addDependency(prerequisite, task.id);
-              setPrerequisite('');
-            }
-          }}
+        <button
+          className="button full"
+          disabled={busy}
+          onClick={() => addDependency('prerequisite')}
+          aria-haspopup="dialog"
         >
-          <select
-            aria-label="Add prerequisite"
-            value={prerequisite}
-            onChange={(event) => setPrerequisite(event.target.value)}
-          >
-            <option value="">Add a prerequisite...</option>
-            {candidates.map((candidate) => (
-              <option key={candidate.id} value={candidate.id}>
-                {candidate.title}
-              </option>
-            ))}
-          </select>
-          <button
-            className="icon-button"
-            disabled={!prerequisite || busy}
-            aria-label="Connect prerequisite"
-          >
-            <Plus size={18} />
-          </button>
-        </form>
+          <Plus size={16} />
+          Add prerequisite
+        </button>
       </section>
       <section className="detail-section">
         <h3>
@@ -224,6 +198,15 @@ export function Detail({
             </div>
           );
         })}
+        <button
+          className="button full"
+          disabled={busy}
+          onClick={() => addDependency('dependent')}
+          aria-haspopup="dialog"
+        >
+          <Plus size={16} />
+          Add dependent
+        </button>
       </section>
       {(task.parentId || memberships.length > 0) && (
         <section className="detail-section">

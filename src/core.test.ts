@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test, type TestContext } from 'node:test';
 import { DomainError, Store, validatePortableState } from './core.js';
-import type { TaskView } from './shared.js';
+import type { ConnectTaskInput, CreateTaskInput, TaskView } from './shared.js';
 
 function memory(t: TestContext): Store {
   const store = new Store(':memory:');
@@ -41,6 +41,7 @@ test('empty store and task defaults; returned values do not mutate storage', (t)
   assert.equal(task.manualDone, false);
   assert.equal(task.prUrl, null);
   assert.equal(task.prState, 'unknown');
+  assert.equal(task.prMergeStatus, 'unknown');
   assert.equal(task.prCheckedAt, null);
   assert.equal(task.prError, null);
   assert.equal(task.status, 'available');
@@ -246,6 +247,367 @@ test('dependency removals derive completion and duplicate edges are rejected ato
   rejectsUnchanged(store, () => store.removeDependency(edge.id), 404);
 });
 
+test('connections add leaves or split one incident edge in either direction for existing/new task kinds', async (t) => {
+  for (const direction of ['prerequisite', 'dependent'] as const) {
+    for (const split of [false, true]) {
+      for (const existing of [false, true]) {
+        for (const kind of ['manual', 'pr', 'container'] as const) {
+          await t.test(`${direction}, split=${split}, existing=${existing}, ${kind}`, (t) => {
+            const store = memory(t);
+            const owner = container(store);
+            const anchor = manual(store, 'Anchor');
+            const before = manual(store, 'Before');
+            const after = manual(store, 'After');
+            const branch = manual(store, 'Branch');
+            const nextBranch = manual(store, 'Next branch');
+            const incoming = store.addDependency(before.id, anchor.id);
+            const outgoing = store.addDependency(anchor.id, after.id);
+            store.addDependency(before.id, branch.id);
+            store.addDependency(branch.id, anchor.id);
+            store.addDependency(branch.id, after.id);
+            store.addDependency(anchor.id, nextBranch.id);
+            const task: CreateTaskInput = {
+              title: '  Connected  ',
+              description: 'Details',
+              kind,
+              parentId: owner.id,
+              ...(kind === 'pr' ? { prUrl: 'https://github.com/O/R/pull/001/' } : {}),
+            };
+            const target = existing ? store.createTask(task) : null;
+            const selected = direction === 'prerequisite' ? incoming : outgoing;
+            const previous = store.snapshot();
+            const result = store.connectTask(anchor.id, {
+              direction,
+              ...(target ? { taskId: target.id } : { task }),
+              ...(split ? { dependencyId: selected.id } : {}),
+            });
+            assert.notEqual(result.id, anchor.id);
+            if (target) assert.equal(result.id, target.id);
+            assert.equal(result.title, 'Connected');
+            assert.equal(result.description, 'Details');
+            assert.equal(result.kind, kind);
+            assert.equal(result.parentId, owner.id);
+            assert.equal(result.manualDone, false);
+            assert.equal(result.prState, 'unknown');
+            assert.equal(result.prUrl, kind === 'pr' ? 'https://github.com/o/r/pull/1' : null);
+            assert.equal(
+              result.status,
+              direction === 'dependent' || split ? 'blocked' : 'available',
+            );
+            assert.deepEqual(result, view(store, result));
+            const snapshot = store.snapshot();
+            assert.equal(snapshot.tasks.length, previous.tasks.length + (existing ? 0 : 1));
+            assert.deepEqual(snapshot.references, previous.references);
+            assert.deepEqual(snapshot.layouts, previous.layouts);
+            assert.deepEqual(
+              snapshot.dependencies.filter((edge) =>
+                previous.dependencies.some((old) => old.id === edge.id),
+              ),
+              previous.dependencies.filter((edge) => !split || edge.id !== selected.id),
+            );
+            const expected =
+              direction === 'prerequisite'
+                ? [[result.id, anchor.id], ...(split ? [[before.id, result.id]] : [])]
+                : [[anchor.id, result.id], ...(split ? [[result.id, after.id]] : [])];
+            assert.deepEqual(
+              snapshot.dependencies
+                .filter((edge) => !previous.dependencies.some((old) => old.id === edge.id))
+                .map((edge) => [edge.prerequisiteId, edge.dependentId]),
+              expected,
+            );
+          });
+        }
+      }
+    }
+  }
+});
+
+test('insertion reuses either or both existing replacement legs without changing their IDs', (t) => {
+  for (const direction of ['prerequisite', 'dependent'] as const) {
+    for (const mask of [1, 2, 3]) {
+      const store = memory(t);
+      const a = manual(store, 'A');
+      const b = manual(store, 'B');
+      const connected = manual(store, 'Connected');
+      const selected = store.addDependency(a.id, b.id);
+      const retained = [];
+      if (mask & 1) retained.push(store.addDependency(a.id, connected.id));
+      if (mask & 2) retained.push(store.addDependency(connected.id, b.id));
+      const anchor = direction === 'prerequisite' ? b : a;
+      store.connectTask(anchor.id, { direction, taskId: connected.id, dependencyId: selected.id });
+      const edges = store.snapshot().dependencies;
+      assert.equal(edges.length, 2);
+      for (const edge of retained)
+        assert.deepEqual(
+          edges.find((item) => item.id === edge.id),
+          edge,
+        );
+      assert.deepEqual(
+        new Set(edges.map((edge) => `${edge.prerequisiteId}/${edge.dependentId}`)),
+        new Set([`${a.id}/${connected.id}`, `${connected.id}/${b.id}`]),
+      );
+      rejectsUnchanged(
+        store,
+        () => store.connectTask(anchor.id, { direction, taskId: connected.id }),
+        409,
+      );
+    }
+  }
+});
+
+test('malformed connections and invalid inline task fields leave tasks and selected edges unchanged', (t) => {
+  const store = memory(t);
+  const a = manual(store, 'A');
+  const b = manual(store, 'B');
+  const selected = store.addDependency(a.id, b.id);
+  const valid = { direction: 'prerequisite', dependencyId: selected.id };
+  for (const input of [
+    null,
+    [],
+    'connect',
+    {},
+    { taskId: a.id },
+    { direction: 'before', taskId: a.id },
+    { ...valid },
+    { ...valid, taskId: a.id, task: { title: 'New', kind: 'manual' } },
+    { ...valid, taskId: a.id, task: undefined },
+    { ...valid, taskId: a.id, extra: true },
+    ...[null, undefined, 1, '', ' ', {}, []].map((taskId) => ({ ...valid, taskId })),
+    ...[null, undefined, 1, '', ' ', {}, []].map((dependencyId) => ({
+      ...valid,
+      taskId: a.id,
+      dependencyId,
+    })),
+    ...[
+      null,
+      undefined,
+      [],
+      {},
+      { title: '', kind: 'manual' },
+      { title: 1, kind: 'manual' },
+      { title: 'New', kind: 'bad' },
+      { title: 'New', kind: 'manual', description: null },
+      { title: 'New', kind: 'manual', parentId: a.id },
+      { title: 'New', kind: 'manual', parentId: 1 },
+      { title: 'New', kind: 'manual', manualDone: true },
+      { title: 'New', kind: 'manual', prUrl: 'https://github.com/o/r/pull/1' },
+      { title: 'New', kind: 'pr' },
+      { title: 'New', kind: 'pr', prUrl: 'https://evil.test/o/r/pull/1' },
+    ].map((task) => ({ ...valid, task })),
+  ]) {
+    rejectsUnchanged(store, () => store.connectTask(b.id, input as never));
+  }
+});
+
+test('connections reject missing, stale, nonincident and wrong-direction edges atomically', (t) => {
+  const store = memory(t);
+  const a = manual(store, 'A');
+  const b = manual(store, 'B');
+  const c = manual(store, 'C');
+  const selected = store.addDependency(a.id, b.id);
+  const task: CreateTaskInput = { title: 'New', kind: 'manual' };
+  for (const direction of ['prerequisite', 'dependent'] as const) {
+    const anchor = direction === 'prerequisite' ? b : a;
+    const opposite = direction === 'prerequisite' ? a : b;
+    for (const id of [opposite.id, c.id]) {
+      rejectsUnchanged(
+        store,
+        () => store.connectTask(id, { direction, task, dependencyId: selected.id }),
+        409,
+      );
+    }
+    rejectsUnchanged(store, () => store.connectTask('missing', { direction, task }), 404);
+    rejectsUnchanged(
+      store,
+      () =>
+        store.connectTask(anchor.id, { direction, taskId: 'missing', dependencyId: selected.id }),
+      404,
+    );
+    rejectsUnchanged(
+      store,
+      () =>
+        store.connectTask(anchor.id, {
+          direction,
+          task: { ...task, parentId: 'missing' },
+          dependencyId: selected.id,
+        }),
+      404,
+    );
+    rejectsUnchanged(
+      store,
+      () => store.connectTask(anchor.id, { direction, task, dependencyId: 'missing' }),
+      404,
+    );
+    rejectsUnchanged(
+      store,
+      () => store.connectTask(anchor.id, { direction, taskId: anchor.id }),
+      409,
+    );
+    for (const target of [a, b]) {
+      rejectsUnchanged(
+        store,
+        () =>
+          store.connectTask(anchor.id, { direction, taskId: target.id, dependencyId: selected.id }),
+        409,
+      );
+    }
+  }
+  store.connectTask(b.id, { direction: 'prerequisite', task, dependencyId: selected.id });
+  rejectsUnchanged(
+    store,
+    () => store.connectTask(b.id, { direction: 'prerequisite', task, dependencyId: selected.id }),
+    404,
+  );
+  const replacement = store.addDependency(a.id, b.id);
+  assert.notEqual(replacement.id, selected.id);
+  rejectsUnchanged(
+    store,
+    () => store.connectTask(b.id, { direction: 'prerequisite', task, dependencyId: selected.id }),
+    404,
+  );
+});
+
+test('connection cycles across dependencies, ownership and references roll back the entire insertion', (t) => {
+  for (const direction of ['prerequisite', 'dependent'] as const) {
+    for (const membership of ['dependency', 'owned', 'reference'] as const) {
+      const store = memory(t);
+      const group = container(store);
+      const leaf = manual(store, 'Leaf', membership === 'owned' ? group.id : undefined);
+      if (membership === 'reference') store.addReference(group.id, leaf.id);
+      if (membership === 'dependency') {
+        const bridge = manual(store, 'Bridge');
+        store.addDependency(leaf.id, bridge.id);
+        store.addDependency(bridge.id, group.id);
+      }
+      const other = manual(store, 'Other');
+      const anchor = direction === 'prerequisite' ? leaf : group;
+      const target = direction === 'prerequisite' ? group : leaf;
+      const edge =
+        direction === 'prerequisite'
+          ? store.addDependency(other.id, anchor.id)
+          : store.addDependency(anchor.id, other.id);
+      for (const split of [false, true]) {
+        rejectsUnchanged(
+          store,
+          () =>
+            store.connectTask(anchor.id, {
+              direction,
+              taskId: target.id,
+              ...(split ? { dependencyId: edge.id } : {}),
+            }),
+          409,
+        );
+      }
+    }
+  }
+  const store = memory(t);
+  const group = container(store);
+  const after = manual(store);
+  const edge = store.addDependency(group.id, after.id);
+  rejectsUnchanged(
+    store,
+    () =>
+      store.connectTask(group.id, {
+        direction: 'dependent',
+        dependencyId: edge.id,
+        task: { title: 'Cannot depend on own parent', kind: 'manual', parentId: group.id },
+      }),
+    409,
+  );
+  const before = manual(store);
+  const incoming = store.addDependency(before.id, after.id);
+  store.addDependency(group.id, before.id);
+  rejectsUnchanged(
+    store,
+    () =>
+      store.connectTask(after.id, {
+        direction: 'prerequisite',
+        dependencyId: incoming.id,
+        task: { title: 'Cycle in the other replacement leg', kind: 'manual', parentId: group.id },
+      }),
+    409,
+  );
+});
+
+test('connections propagate completion and reopening through ownership, references and verified PR gates', (t) => {
+  const store = memory(t);
+  const owner = container(store);
+  const observer = container(store);
+  const a = manual(store, 'A');
+  const b = manual(store, 'B', owner.id);
+  store.addReference(observer.id, b.id);
+  const next = manual(store, 'Next');
+  const edge = store.addDependency(a.id, b.id);
+  store.addDependency(observer.id, next.id);
+  for (const task of [a, b, next]) store.setDone(task.id, true);
+  assert.ok(store.snapshot().tasks.every((task) => task.status === 'completed'));
+  const inserted = store.connectTask(b.id, {
+    direction: 'prerequisite',
+    dependencyId: edge.id,
+    task: { title: 'New PR gate', kind: 'pr', prUrl: 'https://github.com/o/r/pull/1' },
+  });
+  assert.equal(inserted.status, 'available');
+  assert.deepEqual(view(store, b).waitingOn, [inserted.id]);
+  for (const task of [b, next]) assert.equal(view(store, task).status, 'ready');
+  for (const task of [owner, observer]) assert.equal(view(store, task).status, 'available');
+  store.updatePr(inserted.id, { state: 'merged', checkedAt: '2026-09-08T12:00:00Z', error: null });
+  assert.ok(store.snapshot().tasks.every((task) => task.status === 'completed'));
+  store.setDone(a.id, false);
+  assert.equal(view(store, inserted).status, 'ready');
+  assert.deepEqual(view(store, inserted).waitingOn, [a.id]);
+  assert.equal(view(store, next).status, 'ready');
+  store.setDone(a.id, true);
+  const dependentEdge = store.snapshot().dependencies.find((item) => item.dependentId === b.id)!;
+  const manualGate = store.connectTask(inserted.id, {
+    direction: 'dependent',
+    dependencyId: dependentEdge.id,
+    task: { title: 'Manual gate', kind: 'manual' },
+  });
+  assert.equal(manualGate.status, 'available');
+  assert.equal(view(store, b).status, 'ready');
+  store.setDone(manualGate.id, true);
+  assert.ok(store.snapshot().tasks.every((task) => task.status === 'completed'));
+});
+
+test('connection persistence is atomic on disk failure, across store instances and restart', (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'foggybrain-connections-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const path = join(directory, 'brain.sqlite');
+  const store = new Store(path);
+  const second = new Store(path);
+  const db = new DatabaseSync(path);
+  t.after(() => {
+    store.close();
+    second.close();
+    db.close();
+  });
+  const a = manual(store, 'A');
+  const b = manual(second, 'B');
+  const edge = second.addDependency(a.id, b.id);
+  const input: ConnectTaskInput = {
+    direction: 'dependent',
+    dependencyId: edge.id,
+    task: { title: 'New', kind: 'manual' },
+  };
+  const before = store.snapshot();
+  db.exec(
+    "CREATE TRIGGER fail_write BEFORE UPDATE ON foggybrain_snapshot BEGIN SELECT RAISE(ABORT, 'disk failure'); END",
+  );
+  assert.throws(() => store.connectTask(a.id, input), /disk failure/);
+  assert.deepEqual(store.snapshot(), before);
+  assert.deepEqual(second.snapshot(), before);
+  db.exec('DROP TRIGGER fail_write');
+  const result = store.connectTask(a.id, input);
+  assert.equal(view(second, result).title, 'New');
+  rejectsUnchanged(second, () => second.connectTask(a.id, input), 404);
+  const expected = second.snapshot();
+  store.close();
+  second.close();
+  const restarted = new Store(path);
+  t.after(() => restarted.close());
+  assert.deepEqual(restarted.snapshot(), expected);
+});
+
 test('rejects dependency self cycles and multi-hop cycles', (t) => {
   const store = memory(t);
   const a = manual(store, 'A');
@@ -426,7 +788,7 @@ test('PR URLs normalize identity and URL changes reset verification and reopen c
   store.addDependency(owner.id, next.id);
   store.setDone(next.id, true);
   const checkedAt = '2026-09-08T12:00:00.000Z';
-  store.updatePr(pr.id, { state: 'merged', checkedAt, error: null });
+  store.updatePr(pr.id, { state: 'merged', mergeStatus: 'ready', checkedAt, error: null });
   assert.equal(view(store, next).status, 'completed');
   store.updateTask(pr.id, {
     title: 'Renamed',
@@ -434,9 +796,11 @@ test('PR URLs normalize identity and URL changes reset verification and reopen c
     prUrl: 'https://github.com/OWNER/REPO/pull/42/',
   });
   assert.equal(view(store, pr).prState, 'merged');
+  assert.equal(view(store, pr).prMergeStatus, 'ready');
   assert.equal(view(store, pr).prCheckedAt, checkedAt);
   store.updateTask(pr.id, { prUrl: 'https://github.com/owner/repo/pull/43' });
   assert.equal(view(store, pr).prState, 'unknown');
+  assert.equal(view(store, pr).prMergeStatus, 'unknown');
   assert.equal(view(store, pr).prCheckedAt, null);
   assert.equal(view(store, pr).prError, null);
   assert.equal(view(store, pr).status, 'available');
@@ -464,16 +828,50 @@ test('PR poll errors retain last verified state, successes clear error, and only
   assert.equal(failed.prError, 'Rate limited');
   assert.equal(failed.prCheckedAt, '2026-09-08T13:00:00Z');
   assert.equal(
-    store.updatePr(pr.id, { state: 'open', checkedAt, error: 'Network failed' }).prState,
-    'merged',
+    store.updatePr(pr.id, { state: 'open', checkedAt, error: 'Metadata failed' }).prState,
+    'open',
   );
-  assert.equal(store.updatePr(pr.id, { checkedAt, error: null }).prState, 'merged');
+  assert.equal(store.updatePr(pr.id, { checkedAt, error: null }).prState, 'open');
   assert.equal(view(store, pr).prError, null);
   assert.equal(
     store.updatePr(pr.id, { state: 'closed', checkedAt, error: null }).status,
     'available',
   );
   rejectsUnchanged(store, () => store.setDone(pr.id, true));
+});
+
+test('PR readiness is informational and partial failures retain omitted verification fields', (t) => {
+  const store = memory(t);
+  const pr = store.createTask({ kind: 'pr', title: 'PR', prUrl: 'https://github.com/o/r/pull/1' });
+  const checkedAt = '2026-09-08T12:00:00Z';
+  for (const mergeStatus of [
+    'unknown',
+    'draft',
+    'under_review',
+    'changes_requested',
+    'checks_pending',
+    'checks_failing',
+    'conflicts',
+    'blocked',
+    'ready',
+  ] as const) {
+    const updated = store.updatePr(pr.id, { state: 'open', mergeStatus, checkedAt, error: null });
+    assert.equal(updated.prMergeStatus, mergeStatus);
+    assert.equal(updated.ownSatisfied, false);
+    assert.equal(updated.status, 'available');
+  }
+  const failed = store.updatePr(pr.id, { checkedAt, error: 'Network failed' });
+  assert.equal(failed.prState, 'open');
+  assert.equal(failed.prMergeStatus, 'ready');
+  const partial = store.updatePr(pr.id, { state: 'merged', checkedAt, error: 'Metadata failed' });
+  assert.equal(partial.prState, 'merged');
+  assert.equal(partial.prMergeStatus, 'ready');
+  assert.equal(partial.status, 'completed');
+  assert.equal(partial.prError, 'Metadata failed');
+  const recovered = store.updatePr(pr.id, { mergeStatus: 'unknown', checkedAt, error: null });
+  assert.equal(recovered.prState, 'merged');
+  assert.equal(recovered.prMergeStatus, 'unknown');
+  assert.equal(recovered.prError, null);
 });
 
 test('merged PRs may be ready and reopen through prerequisites', (t) => {
@@ -599,6 +997,11 @@ test('PR updates validate shape, states, timestamps, errors, and task kind atomi
     [],
     {},
     { checkedAt, error: null, state: 'done' },
+    ...[null, 1, {}, 'merged', 'CLEAN'].map((mergeStatus) => ({
+      checkedAt,
+      error: null,
+      mergeStatus,
+    })),
     { checkedAt: 'not a date', error: null },
     { checkedAt: 123, error: null },
     { checkedAt, error: 123 },
@@ -683,7 +1086,12 @@ test('SQLite disk persistence includes graph, PR verification, layouts, and reop
   first.addReference(owner.id, pr.id);
   first.addDependency(child.id, pr.id);
   first.setDone(child.id, true);
-  first.updatePr(pr.id, { state: 'merged', checkedAt: '2026-09-08T12:00:00Z', error: null });
+  first.updatePr(pr.id, {
+    state: 'merged',
+    mergeStatus: 'ready',
+    checkedAt: '2026-09-08T12:00:00Z',
+    error: 'Metadata unavailable',
+  });
   first.saveLayout({
     viewId: owner.id,
     mode: 'manual',
@@ -730,6 +1138,40 @@ test('multiple stores see latest committed writes and never overwrite another in
   assert.equal(view(second, b).status, 'completed');
   rejectsUnchanged(first, () => first.addDependency(b.id, a.id), 409);
   assert.deepEqual(first.snapshot(), second.snapshot());
+});
+
+test('legacy persisted snapshots default missing readiness without losing verification', (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'foggybrain-legacy-pr-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const path = join(directory, 'brain.sqlite');
+  const first = new Store(path);
+  t.after(() => first.close());
+  const pr = first.createTask({ kind: 'pr', title: 'PR', prUrl: 'https://github.com/o/r/pull/1' });
+  manual(first);
+  first.updatePr(pr.id, {
+    state: 'merged',
+    checkedAt: '2026-09-08T12:00:00Z',
+    error: 'Network failed',
+  });
+  first.close();
+  const db = new DatabaseSync(path);
+  t.after(() => db.close());
+  const legacy = JSON.parse(
+    db.prepare('SELECT payload FROM foggybrain_snapshot WHERE id = 1').get()!.payload as string,
+  );
+  for (const task of legacy.tasks) delete task.prMergeStatus;
+  db.prepare('UPDATE foggybrain_snapshot SET payload = ? WHERE id = 1').run(JSON.stringify(legacy));
+  const restarted = new Store(path);
+  t.after(() => restarted.close());
+  assert.ok(restarted.snapshot().tasks.every((task) => task.prMergeStatus === 'unknown'));
+  assert.equal(view(restarted, pr).prState, 'merged');
+  assert.equal(view(restarted, pr).prError, 'Network failed');
+  assert.equal(view(restarted, pr).status, 'completed');
+  restarted.updateTask(pr.id, { title: 'Renamed' });
+  const persisted = JSON.parse(
+    db.prepare('SELECT payload FROM foggybrain_snapshot WHERE id = 1').get()!.payload as string,
+  );
+  assert.ok(persisted.tasks.every((task: TaskView) => task.prMergeStatus === 'unknown'));
 });
 
 test('a SQLite write failure rolls back all changes and leaves the store usable', (t) => {
@@ -787,6 +1229,9 @@ test('portable state validates exact shapes, IDs, memberships and graph before i
       (s.tasks[0] as unknown as Record<string, unknown>).prState = 'merged';
     },
     (s: typeof state) => {
+      (s.tasks[0] as unknown as Record<string, unknown>).prMergeStatus = 'ready';
+    },
+    (s: typeof state) => {
       delete (s.tasks[0] as Partial<typeof child>).description;
     },
     (s: typeof state) => {
@@ -834,10 +1279,16 @@ test('sync SQLite backups retain full pre-apply snapshots and baseline updates a
   });
   const target = { repo: 'o/r', branch: 'main', path: 'state.json' };
   const pr = store.createTask({ title: 'PR', kind: 'pr', prUrl: 'https://github.com/o/r/pull/1' });
-  store.updatePr(pr.id, { state: 'merged', checkedAt: '2026-09-08T12:00:00Z', error: null });
+  store.updatePr(pr.id, {
+    state: 'merged',
+    mergeStatus: 'ready',
+    checkedAt: '2026-09-08T12:00:00Z',
+    error: 'Stale metadata',
+  });
   store.saveLayout({ viewId: 'root', mode: 'manual', positions: [{ nodeId: pr.id, x: 1, y: 2 }] });
   const before = store.snapshot();
   const local = store.exportState();
+  assert.equal(JSON.stringify(local).includes('prMergeStatus'), false);
   const merged = structuredClone(local);
   merged.tasks[0].title = 'Imported title';
   merged.tasks.push({ ...merged.tasks[0], id: 'new-pr' });
@@ -871,13 +1322,40 @@ test('sync SQLite backups retain full pre-apply snapshots and baseline updates a
   store.finishSync(target, record);
   assert.deepEqual(store.syncRecord(target).base, validatePortableState(merged));
   assert.equal(store.snapshot().tasks.find((task) => task.id === pr.id)!.prState, 'merged');
+  assert.equal(view(store, pr).prMergeStatus, 'ready');
+  assert.equal(view(store, pr).prError, 'Stale metadata');
   assert.equal(store.snapshot().tasks.find((task) => task.id === 'new-pr')!.prState, 'unknown');
+  assert.equal(view(store, { id: 'new-pr' }).prMergeStatus, 'unknown');
   assert.deepEqual(store.snapshot().layouts, before.layouts);
   store.close();
   const restarted = new Store(path);
   assert.deepEqual(restarted.syncRecord(target).base, validatePortableState(merged));
   assert.equal(db.prepare('SELECT COUNT(*) AS count FROM foggybrain_sync_backups').get()!.count, 2);
   restarted.close();
+});
+
+test('sync imports reset readiness and errors for a changed PR URL on the same task ID', (t) => {
+  const store = memory(t);
+  const target = { repo: 'o/r', branch: 'main', path: 'state.json' };
+  const pr = store.createTask({ title: 'PR', kind: 'pr', prUrl: 'https://github.com/o/r/pull/1' });
+  store.updatePr(pr.id, {
+    state: 'open',
+    mergeStatus: 'ready',
+    checkedAt: '2026-09-08T12:00:00Z',
+    error: 'Stale metadata',
+  });
+  const local = store.exportState();
+  const remote = structuredClone(local);
+  remote.tasks[0].prUrl = 'https://github.com/o/r/pull/2';
+  store.finishSync(
+    target,
+    store.prepareSync(target, store.syncRecord(target), local, remote, null),
+  );
+  const imported = view(store, pr);
+  assert.equal(imported.prState, 'unknown');
+  assert.equal(imported.prMergeStatus, 'unknown');
+  assert.equal(imported.prError, null);
+  assert.equal(imported.prCheckedAt, null);
 });
 
 test('sync optimistic storage check does not clobber concurrent graph changes or baseline changes', (t) => {
