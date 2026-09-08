@@ -251,7 +251,8 @@ function domainRoutes(
   });
   app.patch('/tasks/:id', (req, res) => {
     const body = object(req.body, ['title', 'description', 'prUrl']);
-    for (const field of ['title', 'description', 'prUrl']) stringField(body, field, true);
+    for (const field of ['title', 'description']) stringField(body, field, true);
+    if (body.prUrl !== null) stringField(body, 'prUrl', true);
     res.json(store.updateTask(id(req), body as UpdateTaskInput));
   });
   app.post('/tasks/:id/connections', (req, res) => {
@@ -325,10 +326,16 @@ function domainRoutes(
     res.json(sync.getStatus());
   });
   app.post('/sync/preview', async (req, res) => {
-    const body = object(req.body, ['resolution']);
+    const body = object(req.body, ['resolution', 'mode']);
+    if ('mode' in body && body.mode !== 'merge' && body.mode !== 'revert')
+      throw new HttpError(400, 'mode must be merge or revert.');
+    if (body.mode === 'revert' && 'resolution' in body)
+      throw new HttpError(400, 'Revert does not accept resolution.');
     if ('resolution' in body && body.resolution !== 'local' && body.resolution !== 'remote')
       throw new HttpError(400, 'resolution must be local or remote.');
-    res.json(await sync.preview(body as { resolution?: 'local' | 'remote' }));
+    res.json(
+      await sync.preview(body as { resolution?: 'local' | 'remote'; mode?: 'merge' | 'revert' }),
+    );
   });
   app.post('/sync/apply', async (req, res) => {
     const body = object(req.body, ['previewId', 'confirm']);

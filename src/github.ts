@@ -485,7 +485,7 @@ export class GithubPoller {
         .tasks.some(
           (current) =>
             current.id === task.id &&
-            current.kind === 'pr' &&
+            current.kind === task.kind &&
             current.prUrl === task.prUrl &&
             current.createdAt === task.createdAt,
         )
@@ -556,7 +556,9 @@ export class GithubPoller {
   }
 
   private async poll(): Promise<void> {
-    const tasks = this.store.snapshot().tasks.filter((task) => task.kind === 'pr' && task.prUrl);
+    const tasks = this.store
+      .snapshot()
+      .tasks.filter((task) => (task.kind === 'pr' || task.kind === 'manual') && task.prUrl);
     const errors: string[] = [];
     if (!this.token) {
       for (const task of tasks)

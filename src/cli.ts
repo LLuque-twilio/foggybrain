@@ -4,6 +4,7 @@ import { createInterface } from 'node:readline/promises';
 import { fileURLToPath } from 'node:url';
 import { Command, CommanderError, Option } from 'commander';
 import type {
+  ConnectTaskInput,
   CreateWorkspaceInput,
   DeletionPreview,
   Snapshot,
@@ -221,7 +222,7 @@ export async function main(argv = process.argv): Promise<void> {
         .default('manual'),
     )
     .option('--parent <id>', 'owning container ID (omit for root)')
-    .option('--pr <url>', 'GitHub pull request URL (required for PR tasks)')
+    .option('--pr <url>', 'GitHub pull request URL (optional manual gate; required for PR tasks)')
     .option('--description <text>', 'task description')
     .action(async (title, options) =>
       output(
@@ -234,6 +235,54 @@ export async function main(argv = process.argv): Promise<void> {
         }),
       ),
     );
+  task
+    .command('connect <id>')
+    .description('Atomically connect an existing/new task or insert it into one dependency edge')
+    .addOption(
+      new Option('--direction <direction>', 'connection relative to the anchor task')
+        .choices(['prerequisite', 'dependent'])
+        .makeOptionMandatory(),
+    )
+    .option('--task <id>', 'existing task ID (mutually exclusive with creation flags)')
+    .option('--title <title>', 'create and connect a new task with this title')
+    .addOption(
+      new Option('--kind <kind>', 'new task kind (default: manual)').choices([
+        'container',
+        'manual',
+        'pr',
+      ]),
+    )
+    .option('--parent <id>', 'new task owning container ID (omit for root)')
+    .option('--pr <url>', 'new task GitHub PR URL (optional manual gate; required for PR tasks)')
+    .option('--description <text>', 'new task description')
+    .option('--dependency <id>', 'dependency relationship ID to split instead of adding a leaf')
+    .action(async (id, options) => {
+      if ((options.task === undefined) === (options.title === undefined))
+        throw new Error('Provide exactly one of --task or --title.');
+      if (
+        options.task !== undefined &&
+        [options.kind, options.parent, options.pr, options.description].some(
+          (value) => value !== undefined,
+        )
+      )
+        throw new Error('--kind, --parent, --pr, and --description require --title, not --task.');
+      const body: ConnectTaskInput = {
+        direction: options.direction,
+        dependencyId: options.dependency,
+        ...(options.task !== undefined
+          ? { taskId: options.task }
+          : {
+              task: {
+                title: options.title,
+                kind: options.kind ?? 'manual',
+                parentId: options.parent,
+                prUrl: options.pr,
+                description: options.description,
+              },
+            }),
+      };
+      output(await request<TaskView>(`/tasks/${encodeURIComponent(id)}/connections`, 'POST', body));
+    });
   task
     .command('list')
     .description('List tasks; parent filtering is ownership, not references')
@@ -298,14 +347,15 @@ export async function main(argv = process.argv): Promise<void> {
     .option('--title <title>', 'new title')
     .option('--description <text>', 'new description')
     .option('--pr <url>', 'new GitHub PR URL (resets verified PR state)')
+    .addOption(new Option('--remove-pr', 'remove an optional manual PR gate').conflicts('pr'))
     .action(async (id, options) => {
       const body: UpdateTaskInput = {
         title: options.title,
         description: options.description,
-        prUrl: options.pr,
+        prUrl: options.removePr ? null : options.pr,
       };
       if (Object.values(body).every((value) => value === undefined))
-        throw new Error('Provide at least one of --title, --description, or --pr.');
+        throw new Error('Provide at least one of --title, --description, --pr, or --remove-pr.');
       output(await request(`/tasks/${encodeURIComponent(id)}`, 'PATCH', body));
     });
   for (const [name, done] of [
@@ -315,7 +365,7 @@ export async function main(argv = process.argv): Promise<void> {
     task
       .command(`${name} <id>`)
       .description(
-        `${done ? 'Satisfy' : 'Clear'} a manual task's own condition; completion is derived`,
+        `${done ? 'Satisfy' : 'Clear'} manual work; attached PR gates and prerequisites still apply`,
       )
       .action(async (id) =>
         output(await request(`/tasks/${encodeURIComponent(id)}/done`, 'POST', { done })),
@@ -460,8 +510,19 @@ export async function main(argv = process.argv): Promise<void> {
     .addOption(
       new Option('--resolve <side>', 'choose a side for conflicts').choices(['local', 'remote']),
     )
+    .addOption(
+      new Option(
+        '--revert',
+        'preview replacing local state from origin without GitHub writes',
+      ).conflicts('resolve'),
+    )
     .action(async (options) =>
-      output(await request<SyncPreview>('/sync/preview', 'POST', { resolution: options.resolve })),
+      output(
+        await request<SyncPreview>('/sync/preview', 'POST', {
+          resolution: options.resolve,
+          mode: options.revert ? 'revert' : undefined,
+        }),
+      ),
     );
   sync
     .command('apply <preview-id>')

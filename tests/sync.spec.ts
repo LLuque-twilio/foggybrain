@@ -10,6 +10,7 @@ const status: SyncStatus = {
   syncing: false,
 };
 const preview: SyncPreview = {
+  mode: 'merge',
   previewId: 'preview-1',
   target,
   canApply: true,
@@ -58,80 +59,103 @@ test.beforeEach(async ({ page }) => {
   );
 });
 
-test('manual preview requires confirmation and successful apply refreshes the graph', async ({
-  page,
-}) => {
-  const writes: { path: string; body: unknown }[] = [];
-  let applied = false;
-  let stateReads = 0;
-  let syncReads = 0;
-  await page.route('**/api/workspaces/default/state', (route) => {
-    stateReads++;
-    const snapshot: Snapshot = {
-      tasks: applied
-        ? [
-            {
-              id: 'remote-task',
-              title: 'Imported task',
-              description: '',
-              kind: 'manual',
-              parentId: null,
-              manualDone: false,
-              prUrl: null,
-              prState: 'unknown',
-              prMergeStatus: 'unknown',
-              prCheckedAt: null,
-              prError: null,
-              createdAt: '2026-09-08T00:00:00Z',
-              updatedAt: '2026-09-08T00:00:00Z',
-              status: 'available',
-              ownSatisfied: false,
-              waitingOn: [],
-              childrenIds: [],
-            },
-          ]
-        : [],
-      dependencies: [],
-      references: [],
-      layouts: [],
-    };
-    return route.fulfill({ json: snapshot });
-  });
-  await page.route('**/api/workspaces/default/sync/**', (route) => {
-    const path = new URL(route.request().url()).pathname;
-    if (path.endsWith('/status')) {
-      syncReads++;
-      return route.fulfill({ json: status });
+for (const mode of ['merge', 'revert'] as const) {
+  test(`${mode} preview requires confirmation and successful apply refreshes the graph`, async ({
+    page,
+  }) => {
+    const writes: { path: string; body: unknown }[] = [];
+    let applied = false;
+    let stateReads = 0;
+    let syncReads = 0;
+    await page.route('**/api/workspaces/default/state', (route) => {
+      stateReads++;
+      const snapshot: Snapshot = {
+        tasks: applied
+          ? [
+              {
+                id: 'remote-task',
+                title: 'Imported task',
+                description: '',
+                kind: 'manual',
+                parentId: null,
+                manualDone: false,
+                prUrl: null,
+                prState: 'unknown',
+                prMergeStatus: 'unknown',
+                prCheckedAt: null,
+                prError: null,
+                createdAt: '2026-09-08T00:00:00Z',
+                updatedAt: '2026-09-08T00:00:00Z',
+                status: 'available',
+                ownSatisfied: false,
+                waitingOn: [],
+                childrenIds: [],
+              },
+            ]
+          : [],
+        dependencies: [],
+        references: [],
+        layouts: [],
+      };
+      return route.fulfill({ json: snapshot });
+    });
+    await page.route('**/api/workspaces/default/sync/**', (route) => {
+      const path = new URL(route.request().url()).pathname;
+      if (path.endsWith('/status')) {
+        syncReads++;
+        return route.fulfill({ json: status });
+      }
+      writes.push({ path, body: route.request().postDataJSON() });
+      if (path.endsWith('/preview')) return route.fulfill({ json: { ...preview, mode } });
+      applied = true;
+      return route.fulfill({ json: { ...status, dirty: false, lastSync: '2026-09-08T12:00:00Z' } });
+    });
+    const dialog = await openSync(page);
+    await expect(dialog).toContainText('Unsynced local changes');
+    expect(writes).toEqual([]);
+    await expect.poll(() => stateReads, { timeout: 7000 }).toBeGreaterThan(1);
+    expect(syncReads).toBe(1);
+    const entry = mode === 'revert' ? 'Revert to origin' : 'Preview sync';
+    const apply = mode === 'revert' ? 'Confirm revert to origin' : 'Apply sync';
+    await dialog.getByRole('button', { name: entry, exact: true }).click();
+    await expect(dialog).toContainText('remote-task');
+    if (mode === 'merge') {
+      await expect(dialog).toContainText('Local title');
+      await expect(dialog).toContainText('old-edge');
+    } else {
+      await expect(dialog).toContainText('discards unsynced local tasks and relationships');
+      await expect(dialog).toContainText('automatic local backup');
+      await expect(dialog).toContainText('Revert never writes to GitHub');
+      await expect(dialog).toContainText(`${target.repo} / ${target.branch} / ${target.path}`);
+      await expect(dialog.getByRole('button', { name: /for conflicts/ })).toHaveCount(0);
+      await expect(dialog.getByRole('region', { name: 'Changes to remote state' })).toHaveCount(0);
     }
-    writes.push({ path, body: route.request().postDataJSON() });
-    if (path.endsWith('/preview')) return route.fulfill({ json: preview });
-    applied = true;
-    return route.fulfill({ json: { ...status, dirty: false, lastSync: '2026-09-08T12:00:00Z' } });
+    await expect(dialog.getByRole('button', { name: apply, exact: true })).toBeDisabled();
+    expect(writes).toEqual([
+      { path: '/api/workspaces/default/sync/preview', body: mode === 'revert' ? { mode } : {} },
+    ]);
+    expect(
+      await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth),
+    ).toBeTruthy();
+    await dialog.getByRole('checkbox').check();
+    if (mode === 'revert')
+      await expect(dialog.getByRole('checkbox')).toHaveAccessibleName(
+        /discarding unsynced local changes/,
+      );
+    await dialog.getByRole('button', { name: apply, exact: true }).click();
+    await expect(dialog).toContainText(
+      mode === 'revert'
+        ? 'Workspace reverted to origin successfully.'
+        : 'Workspace sync applied successfully.',
+    );
+    expect(writes[1]).toEqual({
+      path: '/api/workspaces/default/sync/apply',
+      body: { previewId: 'preview-1', confirm: true },
+    });
+    await dialog.getByRole('button', { name: 'Close dialog' }).click();
+    await expect(page.getByRole('heading', { name: 'Imported task', exact: true })).toBeVisible();
   });
-  const dialog = await openSync(page);
-  await expect(dialog).toContainText('Unsynced local changes');
-  expect(writes).toEqual([]);
-  await expect.poll(() => stateReads, { timeout: 7000 }).toBeGreaterThan(1);
-  expect(syncReads).toBe(1);
-  await dialog.getByRole('button', { name: 'Preview sync', exact: true }).click();
-  await expect(dialog).toContainText('remote-task');
-  await expect(dialog).toContainText('Local title');
-  await expect(dialog).toContainText('old-edge');
-  await expect(dialog.getByRole('button', { name: 'Apply sync', exact: true })).toBeDisabled();
-  expect(writes).toEqual([{ path: '/api/workspaces/default/sync/preview', body: {} }]);
-  expect(
-    await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth),
-  ).toBeTruthy();
-  await dialog.getByRole('checkbox').check();
-  await dialog.getByRole('button', { name: 'Apply sync', exact: true }).click();
-  await expect(dialog).toContainText('Workspace sync applied successfully.');
-  expect(writes[1]).toEqual({
-    path: '/api/workspaces/default/sync/apply',
-    body: { previewId: 'preview-1', confirm: true },
-  });
-  await dialog.getByRole('button', { name: 'Close dialog' }).click();
-  await expect(page.getByRole('heading', { name: 'Imported task', exact: true })).toBeVisible();
-});
+}
 
 for (const resolution of ['local', 'remote'] as const) {
   test(`conflicts regenerate preview with ${resolution} resolution before confirmation`, async ({
@@ -184,35 +208,120 @@ for (const resolution of ['local', 'remote'] as const) {
   });
 }
 
-for (const failure of ['Sync preview is stale; re-preview', 'GitHub state request failed']) {
-  test(`${failure} invalidates preview and never retries apply`, async ({ page }) => {
-    let applies = 0;
+for (const mode of ['merge', 'revert'] as const) {
+  for (const failure of ['Sync preview is stale; re-preview', 'GitHub state request failed']) {
+    test(`${mode}: ${failure} invalidates preview and never retries apply`, async ({ page }) => {
+      let applies = 0;
+      let previews = 0;
+      await page.route('**/api/workspaces/default/sync/preview', (route) => {
+        previews++;
+        return route.fulfill({ json: { ...preview, mode, previewId: `preview-${previews}` } });
+      });
+      await page.route('**/api/workspaces/default/sync/apply', (route) => {
+        applies++;
+        return route.fulfill({
+          status: failure.includes('stale') ? 409 : 502,
+          json: { error: failure },
+        });
+      });
+      const dialog = await openSync(page);
+      const entry = mode === 'revert' ? 'Revert to origin' : 'Preview sync';
+      const apply = mode === 'revert' ? 'Confirm revert to origin' : 'Apply sync';
+      await dialog.getByRole('button', { name: entry, exact: true }).click();
+      await dialog.getByRole('checkbox').check();
+      await dialog.getByRole('button', { name: apply, exact: true }).click();
+      await expect(dialog.getByRole('alert')).toContainText(failure);
+      await expect(dialog.getByRole('alert')).toContainText(
+        mode === 'revert'
+          ? 'local state may already have been replaced'
+          : 'an upload may already have committed',
+      );
+      await expect(dialog.getByRole('button', { name: apply, exact: true })).toHaveCount(0);
+      expect(applies).toBe(1);
+      expect(previews).toBe(1);
+      await dialog.getByRole('button', { name: entry, exact: true }).click();
+      await expect(dialog.getByRole('checkbox')).not.toBeChecked();
+      await expect(dialog.getByRole('button', { name: apply, exact: true })).toBeDisabled();
+      expect(applies).toBe(1);
+      expect(previews).toBe(2);
+    });
+  }
+}
+
+test('revert requests fresh previews, clears merge confirmation, and cancels without apply', async ({
+  page,
+}) => {
+  const bodies: unknown[] = [];
+  let applies = 0;
+  await page.route('**/api/workspaces/default/sync/preview', (route) => {
+    const body = route.request().postDataJSON();
+    bodies.push(body);
+    return route.fulfill({
+      json: {
+        ...preview,
+        mode: body.mode ?? 'merge',
+        previewId: `preview-${bodies.length}`,
+        localChanges: [
+          { collection: 'tasks', id: 'local-only', title: 'Unsynced task', kind: 'deleted' },
+          { collection: 'dependencies', id: 'local-edge', kind: 'deleted' },
+          { collection: 'references', id: 'local-reference', kind: 'deleted' },
+        ],
+      },
+    });
+  });
+  await page.route('**/api/workspaces/default/sync/apply', (route) => {
+    applies++;
+    return route.fulfill({ json: status });
+  });
+  const dialog = await openSync(page);
+  await dialog.getByRole('button', { name: 'Preview sync', exact: true }).click();
+  await dialog.getByRole('checkbox').check();
+  await dialog.getByRole('button', { name: 'Revert to origin', exact: true }).click();
+  await expect(dialog.getByRole('checkbox')).not.toBeChecked();
+  for (const text of ['Unsynced task', 'local-edge', 'local-reference'])
+    await expect(dialog).toContainText(text);
+  await dialog.getByRole('checkbox').check();
+  await dialog.getByRole('button', { name: 'Revert to origin', exact: true }).click();
+  await expect(dialog.getByRole('checkbox')).not.toBeChecked();
+  await dialog.getByRole('checkbox').check();
+  await dialog.getByRole('button', { name: 'Close dialog' }).click();
+  const reopened = await openSync(page);
+  await expect(reopened.getByRole('checkbox')).toHaveCount(0);
+  await reopened.getByRole('button', { name: 'Revert to origin', exact: true }).click();
+  await expect(reopened.getByRole('checkbox')).not.toBeChecked();
+  expect(bodies).toEqual([{}, { mode: 'revert' }, { mode: 'revert' }, { mode: 'revert' }]);
+  expect(applies).toBe(0);
+});
+
+for (const failure of [
+  'Origin file does not exist',
+  'Pending upload outcome requires reconciliation',
+]) {
+  test(`revert preview failure clears prior confirmation: ${failure}`, async ({ page }) => {
     let previews = 0;
+    let applies = 0;
     await page.route('**/api/workspaces/default/sync/preview', (route) => {
+      expect(route.request().postDataJSON()).toEqual({ mode: 'revert' });
       previews++;
-      return route.fulfill({ json: { ...preview, previewId: `preview-${previews}` } });
+      return previews === 2
+        ? route.fulfill({ status: 409, json: { error: failure } })
+        : route.fulfill({ json: { ...preview, mode: 'revert', previewId: `revert-${previews}` } });
     });
     await page.route('**/api/workspaces/default/sync/apply', (route) => {
       applies++;
-      return route.fulfill({
-        status: failure.includes('stale') ? 409 : 502,
-        json: { error: failure },
-      });
+      return route.fulfill({ json: status });
     });
     const dialog = await openSync(page);
-    await dialog.getByRole('button', { name: 'Preview sync', exact: true }).click();
+    await dialog.getByRole('button', { name: 'Revert to origin', exact: true }).click();
     await dialog.getByRole('checkbox').check();
-    await dialog.getByRole('button', { name: 'Apply sync', exact: true }).click();
+    await dialog.getByRole('button', { name: 'Revert to origin', exact: true }).click();
     await expect(dialog.getByRole('alert')).toContainText(failure);
-    await expect(dialog.getByRole('alert')).toContainText('an upload may already have committed');
-    await expect(dialog.getByRole('button', { name: 'Apply sync', exact: true })).toHaveCount(0);
-    expect(applies).toBe(1);
-    expect(previews).toBe(1);
-    await dialog.getByRole('button', { name: 'Preview sync', exact: true }).click();
+    await expect(dialog.getByRole('checkbox')).toHaveCount(0);
+    await expect(dialog.getByRole('button', { name: 'Confirm revert to origin' })).toHaveCount(0);
+    await dialog.getByRole('button', { name: 'Revert to origin', exact: true }).click();
     await expect(dialog.getByRole('checkbox')).not.toBeChecked();
-    await expect(dialog.getByRole('button', { name: 'Apply sync', exact: true })).toBeDisabled();
-    expect(applies).toBe(1);
-    expect(previews).toBe(2);
+    await expect(dialog.getByRole('button', { name: 'Confirm revert to origin' })).toBeDisabled();
+    expect(applies).toBe(0);
   });
 }
 

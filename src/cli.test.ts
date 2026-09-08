@@ -160,6 +160,175 @@ test('CLI create uses commander, preserves arguments, uses server IDs, and honor
   ]);
 });
 
+test('CLI connect makes one atomic request for either direction, placement, and task source', async (t) => {
+  const connected = task('server-connected', { status: 'blocked', waitingOn: ['external'] });
+  const { run, requests, url } = await fixture(t, () => ({ status: 201, body: connected }));
+  const title = 'Verify "deploy"; $(not-a-command)';
+  const prUrl = 'https://github.com/acme/app/pull/42';
+  for (const direction of ['prerequisite', 'dependent']) {
+    for (const split of [false, true]) {
+      for (const kind of ['existing', 'default', 'manual', 'container', 'pr']) {
+        const creation = kind !== 'existing';
+        const explicit = creation && kind !== 'default';
+        const args = creation ? ['--title', title] : ['--task', 'existing/id'];
+        if (explicit)
+          args.push('--kind', kind, '--parent', 'container-id', '--description', 'Two\nlines');
+        if (kind === 'pr' || kind === 'manual') args.push('--pr', prUrl);
+        const result = await run(
+          [
+            'task',
+            'connect',
+            'anchor/id ?',
+            '--direction',
+            direction,
+            ...args,
+            ...(split ? ['--dependency', 'edge/id'] : []),
+            ...(explicit ? ['--workspace', 'selected/id'] : []),
+            '--url',
+            url,
+            ...(split ? ['--json'] : []),
+          ],
+          { FOGGY_URL: 'http://127.0.0.1:1', FOGGY_WORKSPACE: explicit ? 'ignored' : '' },
+        );
+        assert.equal(result.code, 0, result.stderr);
+        assert.equal(result.stderr, '');
+        assert.equal(result.stdout, `${JSON.stringify(connected)}\n`);
+        assert.deepEqual(requests.splice(0), [
+          {
+            method: 'POST',
+            path: `/api${explicit ? '/workspaces/selected%2Fid' : ''}/tasks/anchor%2Fid%20%3F/connections`,
+            body: {
+              direction,
+              ...(split ? { dependencyId: 'edge/id' } : {}),
+              ...(creation
+                ? {
+                    task: {
+                      title,
+                      kind: explicit ? kind : 'manual',
+                      ...(explicit ? { parentId: 'container-id', description: 'Two\nlines' } : {}),
+                      ...(kind === 'pr' || kind === 'manual' ? { prUrl } : {}),
+                    },
+                  }
+                : { taskId: 'existing/id' }),
+            },
+          },
+        ]);
+      }
+    }
+  }
+});
+
+test('CLI connect rejects invalid command combinations before making requests and provides help', async (t) => {
+  const { run, requests } = await fixture(t);
+  const cases = [
+    ['--task', 'existing'],
+    ['--direction', 'sideways', '--task', 'existing'],
+    ['--direction', 'dependent'],
+    ['--direction', 'dependent', '--task', 'existing', '--title', 'New'],
+    ['--direction', 'dependent', '--title', 'New', '--kind', 'invalid'],
+    ...['--kind', '--parent', '--pr', '--description'].map((flag) => [
+      '--direction',
+      'dependent',
+      '--task',
+      'existing',
+      flag,
+      flag === '--kind' ? 'manual' : '',
+    ]),
+  ];
+  for (const args of cases) {
+    const result = await run(['--json', 'task', 'connect', 'anchor', ...args]);
+    assert.equal(result.code, 1);
+    assert.equal(result.stdout, '');
+    assert.equal(typeof JSON.parse(result.stderr).error, 'string');
+  }
+  const help = await run(['--json', 'task', 'connect', '--help']);
+  assert.equal(help.code, 0);
+  assert.equal(help.stderr, '');
+  for (const flag of [
+    '--direction',
+    '--task',
+    '--title',
+    '--dependency',
+    '--kind',
+    '--parent',
+    '--pr',
+    '--description',
+  ])
+    assert.ok(help.stdout.includes(flag));
+  assert.deepEqual(requests, []);
+});
+
+test('CLI connect forwards server failures without retries or workspace fallback', async (t) => {
+  for (const status of [400, 404, 409, 500]) {
+    const { run, requests } = await fixture(t, () => ({
+      status,
+      body: { error: 'Connection rejected' },
+    }));
+    const result = await run(
+      [
+        '--json',
+        'task',
+        'connect',
+        'anchor',
+        '--direction',
+        'prerequisite',
+        '--title',
+        'New',
+        '--dependency',
+        'stale',
+      ],
+      { FOGGY_WORKSPACE: 'selected' },
+    );
+    assert.equal(result.code, 1);
+    assert.equal(result.stdout, '');
+    assert.deepEqual(JSON.parse(result.stderr), { error: `HTTP ${status}: Connection rejected` });
+    assert.deepEqual(requests, [
+      {
+        method: 'POST',
+        path: '/api/workspaces/selected/tasks/anchor/connections',
+        body: {
+          direction: 'prerequisite',
+          dependencyId: 'stale',
+          task: { title: 'New', kind: 'manual' },
+        },
+      },
+    ]);
+  }
+});
+
+test('CLI supports attaching and removing manual PR gates without deriving completion', async (t) => {
+  const { run, requests } = await fixture(t);
+  const prUrl = 'https://github.com/acme/app/pull/42';
+  for (const args of [
+    ['task', 'create', 'Work', '--pr', prUrl],
+    ['task', 'update', 'manual-id', '--pr', prUrl],
+    ['task', 'update', 'manual-id', '--remove-pr'],
+  ]) {
+    const result = await run(['--json', ...args]);
+    assert.equal(result.code, 0);
+    assert.equal(result.stderr, '');
+    assert.doesNotThrow(() => JSON.parse(result.stdout));
+  }
+  assert.deepEqual(requests, [
+    { method: 'POST', path: '/api/tasks', body: { title: 'Work', kind: 'manual', prUrl } },
+    { method: 'PATCH', path: '/api/tasks/manual-id', body: { prUrl } },
+    { method: 'PATCH', path: '/api/tasks/manual-id', body: { prUrl: null } },
+  ]);
+  const conflict = await run([
+    '--json',
+    'task',
+    'update',
+    'manual-id',
+    '--pr',
+    prUrl,
+    '--remove-pr',
+  ]);
+  assert.equal(conflict.code, 1);
+  assert.equal(conflict.stdout, '');
+  assert.match(JSON.parse(conflict.stderr).error, /cannot be used/i);
+  assert.equal(requests.length, 3);
+});
+
 test('CLI workspace selection scopes reads and writes, honors flags over env, and never falls back', async (t) => {
   const { run, requests } = await fixture(t, (request) => ({
     body: request.path.endsWith('/state') ? snapshot : { ok: true },
@@ -534,6 +703,7 @@ test('CLI state sync forwards status, previews, conflicts, and explicit apply wi
     syncing: false,
   };
   const syncPreview: SyncPreview = {
+    mode: 'merge',
     previewId: 'server-preview-id',
     target,
     localChanges: [{ collection: 'tasks', id: 'a', title: 'Remote title', kind: 'updated' }],
@@ -603,6 +773,7 @@ test('CLI state sync requires explicit --yes and valid Commander arguments witho
     ['apply', '--yes'],
     ['preview', '--resolve', 'force'],
     ['preview', '--resolve'],
+    ['preview', '--revert', '--resolve', 'remote'],
   ]) {
     const result = await run(['--json', 'sync', ...args]);
     assert.equal(result.code, 1);
@@ -610,6 +781,45 @@ test('CLI state sync requires explicit --yes and valid Commander arguments witho
     assert.equal(typeof JSON.parse(result.stderr).error, 'string');
   }
   assert.deepEqual(requests, []);
+});
+
+test('CLI revert previews are scoped, read-only until confirmed, and preserve the returned mode', async (t) => {
+  const { run, requests } = await fixture(t, () => ({
+    body: { mode: 'revert', previewId: 'revert-id', canApply: true },
+  }));
+  const result = await run(['--json', '--workspace', 'selected', 'sync', 'preview', '--revert']);
+  assert.equal(result.code, 0);
+  assert.equal(result.stderr, '');
+  assert.equal(JSON.parse(result.stdout).mode, 'revert');
+  assert.deepEqual(requests, [
+    { method: 'POST', path: '/api/workspaces/selected/sync/preview', body: { mode: 'revert' } },
+  ]);
+  const unconfirmed = await run([
+    '--json',
+    '--workspace',
+    'selected',
+    'sync',
+    'apply',
+    'revert-id',
+  ]);
+  assert.equal(unconfirmed.code, 1);
+  assert.equal(unconfirmed.stdout, '');
+  assert.equal(requests.length, 1);
+  const applied = await run([
+    '--json',
+    '--workspace',
+    'selected',
+    'sync',
+    'apply',
+    'revert-id',
+    '--yes',
+  ]);
+  assert.equal(applied.code, 0);
+  assert.deepEqual(requests[1], {
+    method: 'POST',
+    path: '/api/workspaces/selected/sync/apply',
+    body: { previewId: 'revert-id', confirm: true },
+  });
 });
 
 test('CLI state sync HTTP errors propagate without retries or automatic previews', async (t) => {

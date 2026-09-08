@@ -16,7 +16,15 @@ import {
   type Connection,
 } from '@xyflow/react';
 import dagre from '@dagrejs/dagre';
-import { ArrowUpRight, Box, ExternalLink, GitPullRequest, Link2, ListChecks } from 'lucide-react';
+import {
+  ArrowUpRight,
+  Box,
+  Check,
+  ExternalLink,
+  GitPullRequest,
+  Link2,
+  ListChecks,
+} from 'lucide-react';
 import type { Layout, Snapshot, TaskView } from '../shared';
 import { Status } from './Status';
 import { PrStatus } from './PrStatus';
@@ -48,7 +56,7 @@ function Step({ data, selected }: NodeProps<StepNode>) {
         </span>
         <span>
           {data.reference && <Link2 size={13} aria-label="Shared reference" />}
-          {task.kind === 'pr' && task.prUrl && (
+          {task.prUrl && (
             <a
               className="node-pr-link nodrag nopan"
               href={task.prUrl}
@@ -86,10 +94,24 @@ function Step({ data, selected }: NodeProps<StepNode>) {
               ? 'Waiting on prerequisites'
               : task.waitingOn.length
                 ? `${task.waitingOn.length} prerequisite${task.waitingOn.length === 1 ? '' : 's'}`
-                : 'You decide when'}
+                : task.prUrl
+                  ? 'Manual + PR gate'
+                  : 'You decide when'}
           </span>
         )}
       </div>
+      {task.kind === 'manual' && (
+        <div className="node-manual-work">
+          {task.manualDone ? <Check size={12} /> : <ListChecks size={12} />}
+          {task.manualDone ? 'Manual work done' : 'Manual work not done'}
+        </div>
+      )}
+      {task.kind === 'manual' && task.prUrl && (
+        <div className="node-pr-gate">
+          <span>PR gate</span>
+          <PrStatus task={task} />
+        </div>
+      )}
       {task.kind === 'container' && (
         <div className="node-progress">
           <span
@@ -163,7 +185,11 @@ function Canvas({
     const graph = new dagre.graphlib.Graph();
     graph.setGraph({ rankdir: 'LR', nodesep: 44, ranksep: 76, marginx: 45, marginy: 45 });
     graph.setDefaultEdgeLabel(() => ({}));
-    for (const task of tasks) graph.setNode(task.id, { width: 254, height: 142 });
+    for (const task of tasks)
+      graph.setNode(task.id, {
+        width: 254,
+        height: task.kind === 'manual' ? (task.prUrl ? 210 : 170) : 142,
+      });
     for (const edge of dependencies) graph.setEdge(edge.prerequisiteId, edge.dependentId);
     dagre.layout(graph);
     setNodes(
@@ -171,7 +197,7 @@ function Canvas({
         const stored = manual && layout.positions.find((position) => position.nodeId === task.id);
         const position = stored || {
           x: graph.node(task.id).x - 127,
-          y: graph.node(task.id).y - 71,
+          y: graph.node(task.id).y - graph.node(task.id).height / 2,
         };
         return {
           id: task.id,

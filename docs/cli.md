@@ -74,7 +74,7 @@ foggy task create <title> [--kind <kind>] [--parent <id>] [--pr <url>] [--descri
 
 - `--kind` is `manual` (default), `container`, or `pr`.
 - `--parent` makes the task an **owned** child of an existing container. Omit for a root task; do not pass the word `root` to create.
-- `--pr` supplies the GitHub PR URL for a `pr` task. A PR task requires it; it is not a way to turn a manual task into a PR task.
+- `--pr` supplies a required URL for a `pr` task or an optional merge gate for a `manual` task. It does not change the task kind; containers reject it.
 - `--description` supplies optional text.
 
 ```sh
@@ -84,6 +84,27 @@ foggy --json task create "Merge implementation" --kind pr --parent CONTAINER_ID 
 ```
 
 Returns a `TaskView`. Server validation enforces kinds, ownership, PR URL validity, and graph rules.
+
+### Connect Or Insert
+
+```text
+foggy task connect <id> --direction prerequisite|dependent (--task <id> | --title <title>) [--dependency <id>] [--kind <kind>] [--parent <id>] [--pr <url>] [--description <text>]
+```
+
+Connect an existing task (`--task`) or create and connect a new task (`--title`) relative to the anchor task positional ID. Exactly one is required. Creation flags (`--kind`, `--parent`, `--pr`, `--description`) cannot be used with `--task`. New tasks use the same defaults as `task create`: manual kind and root ownership unless `--parent` is supplied; the anchor's parent is not inherited. Existing tasks retain their ownership.
+
+- `--direction prerequisite`: connected task -> anchor.
+- `--direction dependent`: anchor -> connected task.
+- Without `--dependency`, adds a new leaf connection without changing other branches.
+- With `--dependency`, splits that specific relationship. For prerequisite insertion, `P -> anchor` becomes `P -> connected -> anchor`. For dependent insertion, `anchor -> D` becomes `anchor -> connected -> D`. Use the relationship ID from `task show` or `graph`, not a task ID.
+
+```sh
+foggy --json task connect ANCHOR_ID --direction prerequisite --task EXISTING_TASK_ID
+foggy --json task connect ANCHOR_ID --direction dependent --title "Deploy" --parent CONTAINER_ID
+foggy --json task connect ANCHOR_ID --direction dependent --dependency DEPENDENCY_ID --title "Verify deployment"
+```
+
+Makes one workspace-scoped `POST /tasks/:id/connections` request and returns the connected existing/new `TaskView`, not the anchor or relationship records. Task creation and all edge changes commit atomically after server validation. Missing/stale edges, mismatched direction, invalid task fields, or cycles fail without partial changes; other branches remain unchanged. Existing replacement legs are reused. Inspect `task show` or `graph` afterward for relationship IDs and derived completion. After a timed-out write, inspect state before retrying; the operation may already have committed.
 
 ### List
 
@@ -123,7 +144,7 @@ The original `waitingOn` is only the IDs of incomplete direct prerequisites. `ch
 ### Update
 
 ```text
-foggy task update <id> [--title <title>] [--description <text>] [--pr <url>]
+foggy task update <id> [--title <title>] [--description <text>] [--pr <url> | --remove-pr]
 ```
 
 At least one flag is required. Omitted fields are unchanged. An empty description clears it. Kind, parent, ID, computed status, and PR merge state are not editable here. Updating a PR URL resets verified PR state so a previous merge cannot satisfy a new PR.
@@ -136,6 +157,8 @@ foggy --json task update PR_TASK_ID --pr https://github.com/OWNER/REPO/pull/124
 
 Returns the updated `TaskView`.
 
+Use `--pr URL` to attach or replace a manual task's PR gate, or `--remove-pr` to remove it. Removing a gate preserves manual work status and resets PR verification. Standalone PR tasks cannot remove their required gate.
+
 ### Done And Reopen
 
 ```text
@@ -143,7 +166,7 @@ foggy task done <id>
 foggy task reopen <id>
 ```
 
-These commands set or clear a **manual task's own condition**. They cannot manually complete containers or PR tasks. Returns the updated `TaskView`.
+These commands set or clear **manual work status** (`manualDone`). An attached PR must also be verified merged before the own condition is satisfied. They cannot manually complete containers or PR tasks. Returns the updated `TaskView`.
 
 | Derived status | Meaning                                                    |
 | -------------- | ---------------------------------------------------------- |
@@ -152,7 +175,7 @@ These commands set or clear a **manual task's own condition**. They cannot manua
 | `ready`        | Own condition true, at least one prerequisite incomplete.  |
 | `completed`    | Own condition true, all prerequisites complete.            |
 
-For manual tasks the own condition is `manualDone`; for PR tasks it is a verified merge; for containers it is completion of all owned and referenced children. **Empty containers do not satisfy their own condition.** A container can also have prerequisites. Reopening an upstream manual task can make previously completed downstream tasks `ready` and make containing or referencing containers incomplete again. A merged PR's condition stays true, but its task can still wait on prerequisites.
+For manual tasks the own condition is `manualDone && (prUrl === null || prState === 'merged')`; for PR tasks it is a verified merge; for containers it is completion of all owned and referenced children. **Empty containers do not satisfy their own condition.** A container can also have prerequisites. Reopening an upstream manual task can make previously completed downstream tasks `ready` and make containing or referencing containers incomplete again. A merged PR's condition stays true, but its task can still wait on prerequisites.
 
 ### Delete
 
@@ -263,7 +286,7 @@ This top-level group syncs portable task state with a private GitHub repository,
 
 ```text
 foggy --json sync status
-foggy --json sync preview [--resolve local|remote]
+foggy --json sync preview [--resolve local|remote | --revert]
 foggy --json sync apply <preview-id> --yes
 ```
 
@@ -275,7 +298,19 @@ foggy --json sync apply <preview-id> --yes
 
 `target` contains `{repo, branch, path}` (or is null in unconfigured status). Status is local inspection, not proof of current remote access or equality. `dirty` compares local portable state with the saved baseline and includes pending reconciliation; `syncing` indicates an active server operation.
 
-A preview returns `previewId`, `target`, `localChanges`, `remoteChanges`, `conflicts`, `validationError`, `canApply`, and `resolution`. Changes describe what would change on each side, with `collection`, `id`, optional `title`, and `kind` (`added`, `updated`, `deleted`). Conflicts include `path`, `base`, `local`, and `remote`. **A preview with conflicts or validation errors is successful inspection: exit `0` is not permission to apply.** Review both change lists, all conflicts, `canApply`, and `validationError` before authorization.
+A preview returns `previewId`, `mode` (`merge` or `revert`), `target`, `localChanges`, `remoteChanges`, `conflicts`, `validationError`, `canApply`, and `resolution`. Changes describe what would change on each side, with `collection`, `id`, optional `title`, and `kind` (`added`, `updated`, `deleted`). Conflicts include `path`, `base`, `local`, and `remote`. **A preview with conflicts or validation errors is successful inspection: exit `0` is not permission to apply.** Review both change lists, all conflicts, `canApply`, and `validationError` before authorization.
+
+### Revert To Origin
+
+`sync preview --revert` sends `{mode:"revert"}` and freshly fetches the configured repository, branch, and path. Unlike `--resolve remote`, it proposes discarding all local differences and replacing tasks and relationships exactly with remote state. It never writes to GitHub. The file must exist and contain valid portable state; a valid empty graph can remove all local tasks. Missing files and uncertain pending uploads block revert. `--revert` and `--resolve` are mutually exclusive.
+
+```sh
+foggy --json --workspace WORKSPACE_ID sync preview --revert
+# Review localChanges and obtain authorization to discard local changes:
+foggy --json --workspace WORKSPACE_ID sync apply REVIEWED_PREVIEW_ID --yes
+```
+
+Apply refetches and checks the reviewed revision, rejects concurrent local changes, and atomically backs up the full local snapshot before replacement and baseline update. Layouts and matching PR verification are preserved using normal import rules. A new preview replaces the old one; apply consumes it. After failures/timeouts, inspect state and re-preview, because local replacement may already have committed. The UI exposes the same flow through **Workspace sync > Revert to origin**. This restores from GitHub, not from a local backup.
 
 `--resolve local` or `--resolve remote` chooses that side for conflicting values while retaining nonconflicting changes from both sides. It creates a new preview, not a whole-state replacement or force override. Conflicts remain visible even when resolved. Invalid merged graphs and missing common baselines still block apply.
 

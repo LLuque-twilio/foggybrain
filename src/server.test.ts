@@ -542,6 +542,7 @@ test('workspace sync routes validate confirmation and preview inputs before dele
     syncing: false,
   };
   const preview: SyncPreview = {
+    mode: 'merge',
     previewId: 'reviewed-preview',
     target: status.target!,
     localChanges: [],
@@ -572,7 +573,20 @@ test('workspace sync routes validate confirmation and preview inputs before dele
     (await request('/api/sync/preview', 'POST', { resolution: 'remote' })).body,
     preview,
   );
-  for (const body of [{ resolution: 'newest' }, { resolution: null }, { token: 'secret' }, []]) {
+  for (const mode of ['merge', 'revert']) {
+    assert.equal((await request('/api/sync/preview', 'POST', { mode })).status, 200);
+  }
+  for (const body of [
+    { resolution: 'newest' },
+    { resolution: null },
+    { token: 'secret' },
+    [],
+    { mode: null },
+    { mode: 'reset' },
+    { mode: true },
+    { mode: 'revert', resolution: 'local' },
+    { mode: 'revert', resolution: 'remote' },
+  ]) {
     assert.equal((await request('/api/sync/preview', 'POST', body)).status, 400);
   }
   for (const body of [
@@ -582,10 +596,11 @@ test('workspace sync routes validate confirmation and preview inputs before dele
     { previewId: '', confirm: true },
     { confirm: true },
     { previewId: 'reviewed-preview', confirm: true, resolution: 'local' },
+    { previewId: 'reviewed-preview', confirm: true, mode: 'revert' },
   ])
     assert.equal((await request('/api/sync/apply', 'POST', body)).status, 400);
   assert.equal((await request('/api/sync/preview', 'POST')).status, 415);
-  assert.deepEqual(calls, [{}, { resolution: 'remote' }]);
+  assert.deepEqual(calls, [{}, { resolution: 'remote' }, { mode: 'merge' }, { mode: 'revert' }]);
   const applied = await request('/api/sync/apply', 'POST', {
     previewId: 'reviewed-preview',
     confirm: true,
@@ -595,7 +610,14 @@ test('workspace sync routes validate confirmation and preview inputs before dele
   const stale = await request('/api/sync/apply', 'POST', { previewId: 'stale', confirm: true });
   assert.equal(stale.status, 409);
   assert.deepEqual(stale.body, { error: 'Sync preview is stale; re-preview' });
-  assert.deepEqual(calls, [{}, { resolution: 'remote' }, 'reviewed-preview', 'stale']);
+  assert.deepEqual(calls, [
+    {},
+    { resolution: 'remote' },
+    { mode: 'merge' },
+    { mode: 'revert' },
+    'reviewed-preview',
+    'stale',
+  ]);
 });
 
 test('contract routes preserve core completion, relationship and deletion semantics', async (t) => {
@@ -899,6 +921,51 @@ test('connections are workspace scoped with no cross-workspace task, parent or e
   const snapshot: Snapshot = (await request('/api/state')).body;
   assert.ok(snapshot.tasks.some((task) => task.id === leaf.body.id));
   assert.deepEqual(scopedStore.snapshot(), before);
+});
+
+test('manual PR gates support create, attach, replace and nullable removal over HTTP', async (t) => {
+  const { store, request } = await fixture(t);
+  const created = await request('/api/tasks', 'POST', {
+    title: 'Manual',
+    kind: 'manual',
+    prUrl: 'https://github.com/O/R/pull/001/',
+  });
+  assert.equal(created.status, 201);
+  assert.equal(created.body.prUrl, 'https://github.com/o/r/pull/1');
+  const path = `/api/tasks/${created.body.id}`;
+  assert.equal((await request(`${path}/done`, 'POST', { done: true })).body.status, 'available');
+  store.updatePr(created.body.id, {
+    state: 'merged',
+    checkedAt: '2026-09-08T12:00:00Z',
+    error: null,
+  });
+  const changed = await request(path, 'PATCH', { prUrl: 'https://github.com/o/r/pull/2' });
+  assert.equal(changed.status, 200);
+  assert.equal(changed.body.status, 'available');
+  assert.equal(changed.body.prState, 'unknown');
+  const removed = await request(path, 'PATCH', { prUrl: null });
+  assert.equal(removed.status, 200);
+  assert.equal(removed.body.status, 'completed');
+  assert.equal(removed.body.prUrl, null);
+  assert.equal(
+    (await request(path, 'PATCH', { prUrl: 'https://github.com/o/r/pull/3' })).body.status,
+    'available',
+  );
+  for (const kind of ['manual', 'pr', 'container'])
+    assert.equal(
+      (await request('/api/tasks', 'POST', { title: 'Invalid', kind, prUrl: null })).status,
+      400,
+    );
+  const pr = store.createTask({ title: 'PR', kind: 'pr', prUrl: 'https://github.com/o/r/pull/1' });
+  const container = store.createTask({ title: 'Container', kind: 'container' });
+  for (const task of [pr, container]) {
+    const before = store.snapshot();
+    assert.equal(
+      (await request(`/api/tasks/${task.id}`, 'PATCH', { title: 'Invalid', prUrl: null })).status,
+      400,
+    );
+    assert.deepEqual(store.snapshot(), before);
+  }
 });
 
 test('JSON validation rejects coercible booleans, unsupported fields, invalid types and nonfinite coordinates', async (t) => {

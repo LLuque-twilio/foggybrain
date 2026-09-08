@@ -960,6 +960,25 @@ h1 {
   max-width: 100px;
   text-align: right;
 }
+.node-manual-work {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 10px;
+  font-size: 9px;
+  color: var(--muted);
+}
+.node-pr-gate {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 5px;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid #e4ecd8;
+  font-size: 9px;
+  color: var(--muted);
+}
 .node-pr-link {
   display: inline-flex;
   align-items: center;

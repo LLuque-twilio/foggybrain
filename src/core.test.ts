@@ -390,7 +390,7 @@ test('malformed connections and invalid inline task fields leave tasks and selec
       { title: 'New', kind: 'manual', parentId: a.id },
       { title: 'New', kind: 'manual', parentId: 1 },
       { title: 'New', kind: 'manual', manualDone: true },
-      { title: 'New', kind: 'manual', prUrl: 'https://github.com/o/r/pull/1' },
+      { title: 'New', kind: 'container', prUrl: 'https://github.com/o/r/pull/1' },
       { title: 'New', kind: 'pr' },
       { title: 'New', kind: 'pr', prUrl: 'https://evil.test/o/r/pull/1' },
     ].map((task) => ({ ...valid, task })),
@@ -890,6 +890,118 @@ test('merged PRs may be ready and reopen through prerequisites', (t) => {
   assert.equal(view(store, pr).status, 'ready');
 });
 
+test('manual PR gates propagate attach, merge, change, removal and reopening through the graph', (t) => {
+  const store = memory(t);
+  const owner = container(store);
+  const shared = container(store, 'Shared');
+  const task = manual(store, 'Gated work', owner.id);
+  const prerequisite = manual(store, 'Prerequisite');
+  const dependent = manual(store, 'Dependent');
+  store.addReference(shared.id, task.id);
+  store.addDependency(prerequisite.id, task.id);
+  store.addDependency(task.id, dependent.id);
+  store.setDone(dependent.id, true);
+  store.setDone(task.id, true);
+  assert.equal(view(store, task).status, 'ready');
+  store.setDone(prerequisite.id, true);
+  const statuses = () => [task, owner, shared, dependent].map((item) => view(store, item).status);
+  assert.deepEqual(statuses(), Array(4).fill('completed'));
+  store.updateTask(task.id, { prUrl: ' https://github.com/O/R/pull/001/ ' });
+  assert.equal(view(store, task).prUrl, 'https://github.com/o/r/pull/1');
+  assert.deepEqual(statuses(), ['available', 'available', 'available', 'ready']);
+  store.updatePr(task.id, {
+    state: 'open',
+    mergeStatus: 'ready',
+    checkedAt: '2026-09-08T12:00:00Z',
+    error: null,
+  });
+  assert.equal(view(store, task).ownSatisfied, false);
+  store.updatePr(task.id, {
+    state: 'merged',
+    checkedAt: '2026-09-08T12:00:00Z',
+    error: 'Stale metadata',
+  });
+  assert.deepEqual(statuses(), Array(4).fill('completed'));
+  store.updateTask(task.id, { prUrl: 'https://github.com/O/R/pull/1/' });
+  assert.equal(view(store, task).prState, 'merged');
+  assert.equal(view(store, task).prError, 'Stale metadata');
+  store.setDone(task.id, false);
+  assert.equal(view(store, task).ownSatisfied, false);
+  store.setDone(task.id, true);
+  store.setDone(prerequisite.id, false);
+  assert.equal(view(store, task).status, 'ready');
+  store.updateTask(task.id, { prUrl: 'https://github.com/o/r/pull/2' });
+  assert.equal(view(store, task).status, 'blocked');
+  for (const prUrl of ['https://github.com/o/r/pull/2', null]) {
+    if (prUrl === null)
+      store.updatePr(task.id, {
+        state: 'merged',
+        mergeStatus: 'ready',
+        checkedAt: '2026-09-08T12:00:00Z',
+        error: 'Stale',
+      });
+    store.updateTask(task.id, { prUrl });
+    const current = view(store, task);
+    assert.equal(current.prState, 'unknown');
+    assert.equal(current.prMergeStatus, 'unknown');
+    assert.equal(current.prCheckedAt, null);
+    assert.equal(current.prError, null);
+    assert.equal(current.manualDone, true);
+  }
+  assert.equal(view(store, task).status, 'ready');
+  store.setDone(prerequisite.id, true);
+  assert.deepEqual(statuses(), Array(4).fill('completed'));
+  rejectsUnchanged(store, () =>
+    store.updatePr(task.id, { state: 'merged', checkedAt: '2026-09-08T12:00:00Z', error: null }),
+  );
+  for (const prUrl of [null, 'https://github.com/o/r/pull/1'])
+    rejectsUnchanged(store, () => store.updateTask(owner.id, { prUrl }));
+});
+
+test('manual gate imports retain verification only for the same ID, kind and URL', (t) => {
+  for (const change of ['same', 'id', 'kind', 'url', 'detach'] as const) {
+    const store = memory(t);
+    const task = store.createTask({
+      title: 'Gated',
+      kind: 'manual',
+      prUrl: 'https://github.com/o/r/pull/1',
+    });
+    store.setDone(task.id, true);
+    store.updatePr(task.id, {
+      state: 'merged',
+      mergeStatus: 'ready',
+      checkedAt: '2026-09-08T12:00:00Z',
+      error: 'Stale',
+    });
+    const local = store.exportState();
+    const remote = structuredClone(local);
+    const imported = remote.tasks[0];
+    imported.title = 'Renamed';
+    if (change === 'id') imported.id = 'new-identity';
+    if (change === 'kind') {
+      imported.kind = 'pr';
+      imported.manualDone = false;
+    }
+    if (change === 'url') imported.prUrl = 'https://github.com/o/r/pull/2';
+    if (change === 'detach') imported.prUrl = null;
+    assert.deepEqual(validatePortableState(remote), remote);
+    const target = { repo: 'o/r', branch: 'main', path: 'state.json' };
+    store.finishSync(
+      target,
+      store.prepareSync(target, store.syncRecord(target), local, remote, null),
+    );
+    const current = view(store, imported);
+    assert.equal(current.prState, change === 'same' ? 'merged' : 'unknown');
+    assert.equal(current.prMergeStatus, change === 'same' ? 'ready' : 'unknown');
+    assert.equal(current.prError, change === 'same' ? 'Stale' : null);
+    assert.equal(current.prCheckedAt, change === 'same' ? '2026-09-08T12:00:00Z' : null);
+    assert.equal(
+      current.status,
+      change === 'same' || change === 'detach' ? 'completed' : 'available',
+    );
+  }
+});
+
 test('invalid task inputs and partial updates leave the store unchanged', (t) => {
   const store = memory(t);
   const task = manual(store);
@@ -905,7 +1017,8 @@ test('invalid task inputs and partial updates leave the store unchanged', (t) =>
     { title: 'X', kind: 'manual', parentId: 1 },
     { title: 'X', kind: 'manual', parentId: task.id },
     { title: 'X', kind: 'pr' },
-    { title: 'X', kind: 'manual', prUrl: 'https://github.com/o/r/pull/1' },
+    { title: 'X', kind: 'container', prUrl: 'https://github.com/o/r/pull/1' },
+    { title: 'X', kind: 'manual', prUrl: null },
     { title: 'X', kind: 'manual', manualDone: true },
   ];
   for (const input of invalid) rejectsUnchanged(store, () => store.createTask(input as never));
@@ -918,7 +1031,7 @@ test('invalid task inputs and partial updates leave the store unchanged', (t) =>
     { description: 1 },
     { kind: 'container' },
     { parentId: null },
-    { prUrl: 'https://github.com/o/r/pull/1' },
+    { prUrl: '' },
     { title: 'Would partially change', description: null },
   ]) {
     rejectsUnchanged(store, () => store.updateTask(task.id, input as never));
@@ -1238,7 +1351,7 @@ test('portable state validates exact shapes, IDs, memberships and graph before i
       s.tasks.find((task) => task.id === group.id)!.manualDone = true;
     },
     (s: typeof state) => {
-      s.tasks[0].prUrl = 'https://github.com/o/r/pull/1';
+      s.tasks.find((task) => task.id === group.id)!.prUrl = 'https://github.com/o/r/pull/1';
     },
     (s: typeof state) => {
       s.references.push({ id: 'ref', containerId: group.id, taskId: child.id });
@@ -1267,72 +1380,93 @@ test('portable state validates exact shapes, IDs, memberships and graph before i
   assert.deepEqual(store.exportState(), state);
 });
 
-test('sync SQLite backups retain full pre-apply snapshots and baseline updates are atomic', (t) => {
-  const directory = mkdtempSync(join(tmpdir(), 'foggybrain-backups-'));
-  t.after(() => rmSync(directory, { recursive: true, force: true }));
-  const path = join(directory, 'brain.sqlite');
-  const store = new Store(path);
-  const db = new DatabaseSync(path);
-  t.after(() => {
+for (const mode of ['merge', 'revert'] as const)
+  test(`${mode} SQLite backups retain full pre-apply snapshots and baseline updates are atomic`, (t) => {
+    const directory = mkdtempSync(join(tmpdir(), 'foggybrain-backups-'));
+    t.after(() => rmSync(directory, { recursive: true, force: true }));
+    const path = join(directory, 'brain.sqlite');
+    const store = new Store(path);
+    const db = new DatabaseSync(path);
+    t.after(() => {
+      store.close();
+      db.close();
+    });
+    const target = { repo: 'o/r', branch: 'main', path: 'state.json' };
+    const pr = store.createTask({
+      title: 'PR',
+      kind: 'pr',
+      prUrl: 'https://github.com/o/r/pull/1',
+    });
+    store.updatePr(pr.id, {
+      state: 'merged',
+      mergeStatus: 'ready',
+      checkedAt: '2026-09-08T12:00:00Z',
+      error: 'Stale metadata',
+    });
+    store.saveLayout({
+      viewId: 'root',
+      mode: 'manual',
+      positions: [{ nodeId: pr.id, x: 1, y: 2 }],
+    });
+    const before = store.snapshot();
+    const local = store.exportState();
+    assert.equal(JSON.stringify(local).includes('prMergeStatus'), false);
+    const merged = structuredClone(local);
+    merged.tasks[0].title = 'Imported title';
+    merged.tasks.push({ ...merged.tasks[0], id: 'new-pr' });
+    const record =
+      mode === 'merge'
+        ? store.prepareSync(target, store.syncRecord(target), local, merged, null)
+        : store.syncRecord(target);
+    const finish = () =>
+      store.finishSync(target, record, mode === 'revert' ? { local, remote: merged } : undefined);
+    assert.deepEqual(store.snapshot(), before);
+    const full = {
+      ...before,
+      tasks: before.tasks.map(
+        ({
+          status: _status,
+          ownSatisfied: _own,
+          waitingOn: _waiting,
+          childrenIds: _children,
+          ...task
+        }) => task,
+      ),
+    };
+    db.exec(
+      "CREATE TRIGGER fail_sync BEFORE UPDATE ON foggybrain_snapshot BEGIN SELECT RAISE(ABORT, 'disk failure'); END",
+    );
+    assert.throws(finish, /disk failure/);
+    assert.deepEqual(store.snapshot(), before);
+    assert.deepEqual(store.syncRecord(target), record);
+    assert.equal(
+      db.prepare('SELECT COUNT(*) AS count FROM foggybrain_sync_backups').get()!.count,
+      mode === 'merge' ? 1 : 0,
+    );
+    db.exec('DROP TRIGGER fail_sync');
+    finish();
+    const backupRow = db
+      .prepare('SELECT * FROM foggybrain_sync_backups ORDER BY id LIMIT 1')
+      .get()!;
+    assert.deepEqual(JSON.parse(backupRow.payload as string), full);
+    assert.equal(backupRow.target, JSON.stringify(target));
+    assert.ok(Number.isFinite(Date.parse(backupRow.created_at as string)));
+    assert.deepEqual(store.syncRecord(target).base, validatePortableState(merged));
+    assert.equal(store.snapshot().tasks.find((task) => task.id === pr.id)!.prState, 'merged');
+    assert.equal(view(store, pr).prMergeStatus, 'ready');
+    assert.equal(view(store, pr).prError, 'Stale metadata');
+    assert.equal(store.snapshot().tasks.find((task) => task.id === 'new-pr')!.prState, 'unknown');
+    assert.equal(view(store, { id: 'new-pr' }).prMergeStatus, 'unknown');
+    assert.deepEqual(store.snapshot().layouts, before.layouts);
     store.close();
-    db.close();
+    const restarted = new Store(path);
+    assert.deepEqual(restarted.syncRecord(target).base, validatePortableState(merged));
+    assert.equal(
+      db.prepare('SELECT COUNT(*) AS count FROM foggybrain_sync_backups').get()!.count,
+      mode === 'merge' ? 2 : 1,
+    );
+    restarted.close();
   });
-  const target = { repo: 'o/r', branch: 'main', path: 'state.json' };
-  const pr = store.createTask({ title: 'PR', kind: 'pr', prUrl: 'https://github.com/o/r/pull/1' });
-  store.updatePr(pr.id, {
-    state: 'merged',
-    mergeStatus: 'ready',
-    checkedAt: '2026-09-08T12:00:00Z',
-    error: 'Stale metadata',
-  });
-  store.saveLayout({ viewId: 'root', mode: 'manual', positions: [{ nodeId: pr.id, x: 1, y: 2 }] });
-  const before = store.snapshot();
-  const local = store.exportState();
-  assert.equal(JSON.stringify(local).includes('prMergeStatus'), false);
-  const merged = structuredClone(local);
-  merged.tasks[0].title = 'Imported title';
-  merged.tasks.push({ ...merged.tasks[0], id: 'new-pr' });
-  const record = store.prepareSync(target, store.syncRecord(target), local, merged, null);
-  assert.deepEqual(store.snapshot(), before);
-  const backup = JSON.parse(
-    db.prepare('SELECT payload FROM foggybrain_sync_backups ORDER BY id LIMIT 1').get()!
-      .payload as string,
-  );
-  const full = {
-    ...before,
-    tasks: before.tasks.map(
-      ({
-        status: _status,
-        ownSatisfied: _own,
-        waitingOn: _waiting,
-        childrenIds: _children,
-        ...task
-      }) => task,
-    ),
-  };
-  assert.deepEqual(backup, full);
-  db.exec(
-    "CREATE TRIGGER fail_sync BEFORE UPDATE ON foggybrain_snapshot BEGIN SELECT RAISE(ABORT, 'disk failure'); END",
-  );
-  assert.throws(() => store.finishSync(target, record), /disk failure/);
-  assert.deepEqual(store.snapshot(), before);
-  assert.deepEqual(store.syncRecord(target), record);
-  assert.equal(db.prepare('SELECT COUNT(*) AS count FROM foggybrain_sync_backups').get()!.count, 1);
-  db.exec('DROP TRIGGER fail_sync');
-  store.finishSync(target, record);
-  assert.deepEqual(store.syncRecord(target).base, validatePortableState(merged));
-  assert.equal(store.snapshot().tasks.find((task) => task.id === pr.id)!.prState, 'merged');
-  assert.equal(view(store, pr).prMergeStatus, 'ready');
-  assert.equal(view(store, pr).prError, 'Stale metadata');
-  assert.equal(store.snapshot().tasks.find((task) => task.id === 'new-pr')!.prState, 'unknown');
-  assert.equal(view(store, { id: 'new-pr' }).prMergeStatus, 'unknown');
-  assert.deepEqual(store.snapshot().layouts, before.layouts);
-  store.close();
-  const restarted = new Store(path);
-  assert.deepEqual(restarted.syncRecord(target).base, validatePortableState(merged));
-  assert.equal(db.prepare('SELECT COUNT(*) AS count FROM foggybrain_sync_backups').get()!.count, 2);
-  restarted.close();
-});
 
 test('sync imports reset readiness and errors for a changed PR URL on the same task ID', (t) => {
   const store = memory(t);

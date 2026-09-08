@@ -894,7 +894,9 @@ export function WorkspaceApp({
                               ? `${count} / ${children.length} steps complete`
                               : task.kind === 'pr'
                                 ? 'Automatic merge gate'
-                                : 'Manual step'}
+                                : task.prUrl
+                                  ? 'Manual step + PR gate'
+                                  : 'Manual step'}
                           </span>
                           <ArrowUpRight size={17} />
                         </div>

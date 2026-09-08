@@ -535,81 +535,150 @@ test('a connection removed during inline chain creation reports an error without
   expect(after.references).toEqual([]);
 });
 
-test('authored PR dropdown creates a merge step and preserves custom summaries', async ({
+for (const kind of ['manual', 'pr'] as const) {
+  test(`authored PR dropdown creates a ${kind} step and preserves custom summaries`, async ({
+    page,
+    request,
+  }) => {
+    const parent = await create(request, 'Release', 'container');
+    const prs = [
+      {
+        url: 'https://github.com/example/api/pull/42',
+        title: 'Improve API',
+        number: 42,
+        repository: 'example/api',
+        state: 'open',
+        draft: false,
+        updatedAt: '2026-09-08T00:00:00Z',
+      },
+      {
+        url: 'https://github.com/example/web/pull/42',
+        title: 'Improve web',
+        number: 42,
+        repository: 'example/web',
+        state: 'open',
+        draft: true,
+        updatedAt: '2026-09-08T00:00:00Z',
+      },
+    ];
+    await page.route('**/api/workspaces/default/github/prs', (route) =>
+      route.fulfill({ json: prs }),
+    );
+    await page.route('**/api/workspaces/default/github/status', (route) =>
+      route.fulfill({
+        json: {
+          configured: true,
+          login: 'example',
+          lastSync: '2026-09-08T00:00:00Z',
+          error: null,
+          syncing: false,
+        },
+      }),
+    );
+    await page.goto(`/#/tasks/${parent.id}`);
+    await page.getByRole('button', { name: 'Add your first step' }).click();
+    const dialog = page.getByRole('dialog');
+    await dialog
+      .getByRole('button', { name: kind === 'pr' ? 'PR merge' : 'Manual step', exact: true })
+      .click();
+    const picker = dialog.getByLabel('Your open pull requests');
+    await expect(picker.locator('option')).toHaveText([
+      'Select a PR or enter a URL below',
+      'example/api #42: Improve API',
+      'example/web #42: Improve web (draft)',
+    ]);
+    await picker.selectOption(prs[0].url);
+    await expect(dialog.getByLabel('Summary')).toHaveValue(
+      kind === 'pr' ? 'Merge Improve API' : 'Improve API',
+    );
+    await expect(dialog.getByLabel('GitHub PR URL')).toHaveValue(prs[0].url);
+    await dialog.getByLabel('Summary').fill('Merge release changes');
+    await picker.selectOption(prs[1].url);
+    await expect(dialog.getByLabel('Summary')).toHaveValue('Merge release changes');
+    await expect(dialog.getByLabel('Lives in')).toHaveValue(parent.id);
+    expect(
+      await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth),
+    ).toBeTruthy();
+    await dialog.getByRole('button', { name: 'Create task', exact: true }).click();
+    await expect(dialog).not.toBeVisible();
+    const snapshot = (await (await request.get('/api/state')).json()) as Snapshot;
+    expect(snapshot.tasks.find((task) => task.title === 'Merge release changes')).toMatchObject({
+      kind,
+      parentId: parent.id,
+      prUrl: prs[1].url,
+      ownSatisfied: false,
+    });
+    await page.getByRole('button', { name: 'Edit task', exact: true }).click();
+    await expect(picker).toHaveValue(prs[1].url);
+    await dialog.getByLabel('GitHub PR URL').fill('https://github.com/example/other/pull/7');
+    await expect(picker).toHaveValue('');
+    await dialog.getByRole('button', { name: 'Save changes' }).click();
+    await expect(page.getByRole('link', { name: 'View PR on GitHub' })).toHaveAttribute(
+      'href',
+      'https://github.com/example/other/pull/7',
+    );
+  });
+}
+
+test('manual PR gate can be created, changed, removed, and added without losing manual work', async ({
   page,
   request,
 }) => {
   const parent = await create(request, 'Release', 'container');
-  const prs = [
-    {
-      url: 'https://github.com/example/api/pull/42',
-      title: 'Improve API',
-      number: 42,
-      repository: 'example/api',
-      state: 'open',
-      draft: false,
-      updatedAt: '2026-09-08T00:00:00Z',
-    },
-    {
-      url: 'https://github.com/example/web/pull/42',
-      title: 'Improve web',
-      number: 42,
-      repository: 'example/web',
-      state: 'open',
-      draft: true,
-      updatedAt: '2026-09-08T00:00:00Z',
-    },
-  ];
-  await page.route('**/api/workspaces/default/github/prs', (route) => route.fulfill({ json: prs }));
-  await page.route('**/api/workspaces/default/github/status', (route) =>
-    route.fulfill({
-      json: {
-        configured: true,
-        login: 'example',
-        lastSync: '2026-09-08T00:00:00Z',
-        error: null,
-        syncing: false,
-      },
-    }),
-  );
   await page.goto(`/#/tasks/${parent.id}`);
   await page.getByRole('button', { name: 'Add your first step' }).click();
   const dialog = page.getByRole('dialog');
-  await dialog.getByRole('button', { name: 'PR merge', exact: true }).click();
-  const picker = dialog.getByLabel('Your open pull requests');
-  await expect(picker.locator('option')).toHaveText([
-    'Select a PR or enter a URL below',
-    'example/api #42: Improve API',
-    'example/web #42: Improve web (draft)',
-  ]);
-  await picker.selectOption(prs[0].url);
-  await expect(dialog.getByLabel('Summary')).toHaveValue('Merge Improve API');
-  await expect(dialog.getByLabel('GitHub PR URL')).toHaveValue(prs[0].url);
-  await dialog.getByLabel('Summary').fill('Merge release changes');
-  await picker.selectOption(prs[1].url);
-  await expect(dialog.getByLabel('Summary')).toHaveValue('Merge release changes');
-  await expect(dialog.getByLabel('Lives in')).toHaveValue(parent.id);
-  expect(
-    await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth),
-  ).toBeTruthy();
+  await dialog.getByLabel('Summary').fill('Implement release');
+  await dialog.getByLabel('Description').fill('Keep the manual context');
+  await expect(dialog.getByLabel('GitHub PR URL')).not.toHaveAttribute('required');
+  await dialog.getByLabel('GitHub PR URL').fill('https://github.com/example/api/pull/42');
   await dialog.getByRole('button', { name: 'Create task', exact: true }).click();
   await expect(dialog).not.toBeVisible();
   const snapshot = (await (await request.get('/api/state')).json()) as Snapshot;
-  expect(snapshot.tasks.find((task) => task.title === 'Merge release changes')).toMatchObject({
-    kind: 'pr',
-    parentId: parent.id,
-    prUrl: prs[1].url,
-    ownSatisfied: false,
+  const task = snapshot.tasks.find((task) => task.title === 'Implement release')!;
+  expect(task).toMatchObject({
+    kind: 'manual',
+    manualDone: false,
+    prUrl: 'https://github.com/example/api/pull/42',
   });
-  await page.getByRole('button', { name: 'Edit task', exact: true }).click();
-  await expect(picker).toHaveValue(prs[1].url);
-  await dialog.getByLabel('GitHub PR URL').fill('https://github.com/example/other/pull/7');
-  await expect(picker).toHaveValue('');
+  const card = node(page, task.id);
+  const detail = page.getByRole('complementary', { name: 'Task details' });
+  await expect(card).toContainText('MANUAL STEP');
+  await expect(card.locator('.node-manual-work')).toHaveText('Manual work not done');
+  await expect(card.locator('.node-pr-gate')).toContainText('Not checked');
+  await expect(detail).toContainText('Keep the manual context');
+  await detail.getByRole('button', { name: 'Mark own work done' }).click();
+  await expect(card.locator('.node-manual-work')).toHaveText('Manual work done');
+  await expect(card.locator('.status')).toHaveText('Available');
+  await expect(detail.getByRole('button', { name: 'Reopen own work' })).toBeVisible();
+  await detail.getByRole('button', { name: 'Edit task', exact: true }).click();
+  await dialog.getByLabel('GitHub PR URL').fill('https://github.com/example/api/pull/43');
   await dialog.getByRole('button', { name: 'Save changes' }).click();
-  await expect(page.getByRole('link', { name: 'View PR on GitHub' })).toHaveAttribute(
+  await expect(detail.getByRole('link', { name: 'View PR on GitHub' })).toHaveAttribute(
     'href',
-    'https://github.com/example/other/pull/7',
+    'https://github.com/example/api/pull/43',
   );
+  await detail.getByRole('button', { name: 'Edit task', exact: true }).click();
+  await dialog.getByLabel('GitHub PR URL').fill('');
+  const removed = page.waitForResponse(
+    (response) =>
+      response.url().endsWith(`/tasks/${task.id}`) && response.request().method() === 'PATCH',
+  );
+  await dialog.getByRole('button', { name: 'Save changes' }).click();
+  expect((await removed).request().postDataJSON()).toMatchObject({ prUrl: null });
+  await expect(card.locator('.node-pr-gate')).toHaveCount(0);
+  await expect(card.getByRole('link')).toHaveCount(0);
+  await expect(detail.locator('.pr-detail')).toHaveCount(0);
+  await expect(card.locator('.status')).toHaveText('Completed');
+  await expect(card.locator('.node-manual-work')).toHaveText('Manual work done');
+  await detail.getByRole('button', { name: 'Edit task', exact: true }).click();
+  await dialog.getByLabel('GitHub PR URL').fill('https://github.com/example/api/pull/44');
+  await dialog.getByRole('button', { name: 'Save changes' }).click();
+  await expect(card.locator('.status')).toHaveText('Available');
+  await expect(card.locator('.node-pr-gate .pr-status')).toHaveText('Not checked');
+  await detail.getByRole('button', { name: 'Reopen own work' }).click();
+  await expect(card.locator('.node-manual-work')).toHaveText('Manual work not done');
+  await expect(detail.getByRole('link', { name: 'View PR on GitHub' })).toBeVisible();
 });
 
 test('PR dropdown reports empty and stale GitHub results without blocking URL entry', async ({
@@ -694,84 +763,92 @@ test('invalid PR errors stay inside dialog, PR tab works without credentials', a
   await expect(page.getByRole('button', { name: 'Mark own work done' })).toHaveCount(0);
 });
 
-test('PR gates show readiness, stale verification, and a direct GitHub link', async ({
-  page,
-  request,
-  context,
-}) => {
-  const response = await request.post('/api/tasks', {
-    data: { title: 'Merge release', kind: 'pr', prUrl: 'https://github.com/example/api/pull/42' },
-  });
-  expect(response.ok()).toBeTruthy();
-  const pr = (await response.json()) as TaskView;
-  const snapshot = (await (await request.get('/api/state')).json()) as Snapshot;
-  let state: PrState = 'open';
-  let readiness: PrMergeStatus = 'ready';
-  let error: string | null = null;
-  await page.route('**/api/workspaces/default/state', (route) =>
-    route.fulfill({
-      json: {
-        ...snapshot,
-        tasks: snapshot.tasks.map((task) => ({
-          ...task,
-          prState: state,
-          prMergeStatus: readiness,
-          prError: error,
-          prCheckedAt: '2026-09-08T12:00:00Z',
-        })),
-      },
-    }),
-  );
-  await page.goto('/#/map');
-  const card = node(page, pr.id);
-  const link = card.getByRole('link', { name: 'Open PR for Merge release on GitHub' });
-  await expect(link).toHaveAttribute('href', pr.prUrl!);
-  await expect(link).toHaveAttribute('target', '_blank');
-  await context.route(pr.prUrl!, (route) => route.fulfill({ body: 'Mock GitHub PR' }));
-  const popupPromise = page.waitForEvent('popup');
-  await link.click();
-  const popup = await popupPromise;
-  await expect(popup).toHaveURL(pr.prUrl!);
-  await popup.close();
-  await expect(page.getByRole('complementary', { name: 'Task details' })).toHaveCount(0);
+for (const kind of ['manual', 'pr'] as const) {
+  test(`${kind} PR gates show readiness, stale verification, and a direct GitHub link`, async ({
+    page,
+    request,
+    context,
+  }) => {
+    const response = await request.post('/api/tasks', {
+      data: { title: 'Merge release', kind, prUrl: 'https://github.com/example/api/pull/42' },
+    });
+    expect(response.ok()).toBeTruthy();
+    const pr = (await response.json()) as TaskView;
+    const snapshot = (await (await request.get('/api/state')).json()) as Snapshot;
+    let state: PrState = 'open';
+    let readiness: PrMergeStatus = 'ready';
+    let error: string | null = null;
+    await page.route('**/api/workspaces/default/state', (route) =>
+      route.fulfill({
+        json: {
+          ...snapshot,
+          tasks: snapshot.tasks.map((task) => ({
+            ...task,
+            prState: state,
+            prMergeStatus: readiness,
+            prError: error,
+            prCheckedAt: '2026-09-08T12:00:00Z',
+          })),
+        },
+      }),
+    );
+    await page.goto('/#/map');
+    const card = node(page, pr.id);
+    const link = card.getByRole('link', { name: 'Open PR for Merge release on GitHub' });
+    await expect(link).toHaveAttribute('href', pr.prUrl!);
+    await expect(link).toHaveAttribute('target', '_blank');
+    await context.route(pr.prUrl!, (route) => route.fulfill({ body: 'Mock GitHub PR' }));
+    const popupPromise = page.waitForEvent('popup');
+    await link.click();
+    const popup = await popupPromise;
+    await expect(popup).toHaveURL(pr.prUrl!);
+    await popup.close();
+    await expect(page.getByRole('complementary', { name: 'Task details' })).toHaveCount(0);
 
-  const cases: [PrState, PrMergeStatus, string][] = [
-    ['open', 'ready', 'Ready to merge'],
-    ['open', 'under_review', 'Under review'],
-    ['open', 'checks_failing', 'Failing checks'],
-    ['open', 'checks_pending', 'Checks pending'],
-    ['open', 'draft', 'Draft'],
-    ['open', 'changes_requested', 'Changes requested'],
-    ['open', 'conflicts', 'Merge conflicts'],
-    ['open', 'blocked', 'Merge blocked'],
-    ['open', 'unknown', 'Readiness unknown'],
-    ['unknown', 'unknown', 'Not checked'],
-    ['closed', 'unknown', 'Closed unmerged'],
-    ['merged', 'unknown', 'Merged'],
-  ];
-  for (const [prState, mergeStatus, label] of cases) {
-    state = prState;
-    readiness = mergeStatus;
+    const cases: [PrState, PrMergeStatus, string][] = [
+      ['open', 'ready', 'Ready to merge'],
+      ['open', 'under_review', 'Under review'],
+      ['open', 'checks_failing', 'Failing checks'],
+      ['open', 'checks_pending', 'Checks pending'],
+      ['open', 'draft', 'Draft'],
+      ['open', 'changes_requested', 'Changes requested'],
+      ['open', 'conflicts', 'Merge conflicts'],
+      ['open', 'blocked', 'Merge blocked'],
+      ['open', 'unknown', 'Readiness unknown'],
+      ['unknown', 'unknown', 'Not checked'],
+      ['closed', 'unknown', 'Closed unmerged'],
+      ['merged', 'unknown', 'Merged'],
+    ];
+    for (const [prState, mergeStatus, label] of cases) {
+      state = prState;
+      readiness = mergeStatus;
+      await page.reload();
+      await expect(card.locator('.pr-status')).toHaveText(label);
+      await card.locator('.node-title').click();
+      const detail = page.getByRole('complementary', { name: 'Task details' });
+      await expect(detail.locator('.pr-status')).toHaveText(label);
+      await expect(detail.getByRole('button', { name: 'Mark own work done' })).toHaveCount(
+        kind === 'manual' ? 1 : 0,
+      );
+      if (kind === 'manual') {
+        await expect(card.locator('.node-manual-work')).toHaveText('Manual work not done');
+        await expect(card.locator('.status')).toHaveText('Available');
+      }
+      expect(
+        await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+      ).toBeTruthy();
+    }
+    state = 'open';
+    readiness = 'ready';
+    error = 'GitHub request timed out.';
     await page.reload();
-    await expect(card.locator('.pr-status')).toHaveText(label);
+    await expect(card.locator('.pr-status')).toHaveText('Ready to merge (stale)');
+    await expect(card.locator('.pr-status')).toHaveClass(/pr-status-warning/);
     await card.locator('.node-title').click();
-    const detail = page.getByRole('complementary', { name: 'Task details' });
-    await expect(detail.locator('.pr-status')).toHaveText(label);
-    await expect(detail.getByRole('button', { name: 'Mark own work done' })).toHaveCount(0);
-    expect(
-      await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
-    ).toBeTruthy();
-  }
-  state = 'open';
-  readiness = 'ready';
-  error = 'GitHub request timed out.';
-  await page.reload();
-  await expect(card.locator('.pr-status')).toHaveText('Ready to merge (stale)');
-  await expect(card.locator('.pr-status')).toHaveClass(/pr-status-warning/);
-  await card.locator('.node-title').click();
-  await expect(page.locator('.pr-detail .warning')).toContainText(error);
-  await page.screenshot({ path: test.info().outputPath('pr-status.png'), fullPage: true });
-});
+    await expect(page.locator('.pr-detail .warning')).toContainText(error);
+    await page.screenshot({ path: test.info().outputPath('pr-status.png'), fullPage: true });
+  });
+}
 
 test('minimap highlights the selected node independently of completion', async ({
   page,

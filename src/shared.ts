@@ -78,7 +78,7 @@ export interface ConnectTaskInput {
 export interface UpdateTaskInput {
   title?: string;
   description?: string;
-  prUrl?: string;
+  prUrl?: string | null;
 }
 
 export interface DeletionPreview {
@@ -211,6 +211,7 @@ export interface SyncConflict {
 }
 
 export interface SyncPreview {
+  mode: 'merge' | 'revert';
   previewId: string;
   target: SyncTarget;
   localChanges: SyncChange[];

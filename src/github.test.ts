@@ -651,6 +651,73 @@ test('REST closed and merged results need no metadata access and clear readiness
   }
 });
 
+test('manual gates are polled alongside PR tasks and still require manual completion', async (t) => {
+  const store = new Store(':memory:');
+  t.after(() => store.close());
+  const prUrl = task('1').prUrl!;
+  const manual = store.createTask({ title: 'Manual', kind: 'manual', prUrl });
+  const pr = store.createTask({ title: 'PR', kind: 'pr', prUrl });
+  store.createTask({ title: 'Ungated', kind: 'manual' });
+  let merged = false;
+  let restCalls = 0;
+  const mock = mockFetch((url) => {
+    if (url.pathname === '/user') return json({ login: 'me' });
+    if (url.pathname === '/search/issues') return search();
+    if (url.pathname === '/graphql') return json(metadata());
+    restCalls++;
+    return json({ state: merged ? 'closed' : 'open', merged });
+  });
+  const poller = new GithubPoller(store, { token: TOKEN, fetch: mock.fetcher });
+  assert.equal((await poller.sync()).error, null);
+  assert.equal(restCalls, 1);
+  let current = store.snapshot().tasks.find((item) => item.id === manual.id)!;
+  assert.equal(current.prMergeStatus, 'ready');
+  assert.equal(current.ownSatisfied, false);
+  merged = true;
+  assert.equal((await poller.sync()).error, null);
+  assert.equal(restCalls, 2);
+  current = store.snapshot().tasks.find((item) => item.id === manual.id)!;
+  assert.equal(current.prState, 'merged');
+  assert.equal(current.status, 'available');
+  assert.equal(store.snapshot().tasks.find((item) => item.id === pr.id)!.status, 'completed');
+  assert.equal(store.setDone(manual.id, true).status, 'completed');
+});
+
+test('detached manual gates discard in-flight REST and metadata successes and errors', async (t) => {
+  for (const phase of ['rest', 'metadata']) {
+    for (const failed of [false, true]) {
+      const store = new Store(':memory:');
+      t.after(() => store.close());
+      const manual = store.createTask({ title: 'Manual', kind: 'manual', prUrl: task('1').prUrl! });
+      store.setDone(manual.id, true);
+      const requested = deferred<void>();
+      const response = deferred<Response>();
+      const mock = mockFetch((url) => {
+        if (url.pathname === '/user') return json({ login: 'me' });
+        if (url.pathname === '/search/issues') return search();
+        if ((phase === 'metadata') === (url.pathname === '/graphql')) {
+          requested.resolve();
+          return response.promise;
+        }
+        return json({ state: 'open', merged: false });
+      });
+      const poller = new GithubPoller(store, { token: TOKEN, fetch: mock.fetcher });
+      const sync = poller.sync();
+      await requested.promise;
+      store.updateTask(manual.id, { prUrl: null });
+      const detached = store.snapshot();
+      response.resolve(
+        failed
+          ? json({ message: TOKEN }, 500)
+          : json(phase === 'rest' ? { state: 'closed', merged: true } : metadata()),
+      );
+      assert.equal((await sync).error, null);
+      assert.deepEqual(store.snapshot(), detached);
+      assert.equal(detached.tasks[0].status, 'completed');
+    }
+  }
+});
+
 test('URL changes and deletions while metadata is in flight discard both fields and metadata errors', async () => {
   for (const mutation of ['change', 'delete'] as const) {
     for (const failed of [false, true]) {

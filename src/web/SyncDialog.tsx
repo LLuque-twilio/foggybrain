@@ -22,6 +22,7 @@ export function SyncDialog({
   const [busy, setBusy] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
   const [success, setSuccess] = useState(false);
+  const [mode, setMode] = useState<'merge' | 'revert'>('merge');
   const active = useRef(false);
   const generation = useRef(0);
   const previewOnMount = useRef(initialPreview);
@@ -35,6 +36,7 @@ export function SyncDialog({
     setConfirmed(false);
     setError('');
     setSuccess(false);
+    setMode('merge');
     api<SyncStatus>('/sync/status').then(
       (value) => {
         if (generation.current !== current) return;
@@ -55,7 +57,11 @@ export function SyncDialog({
     };
   }, [api, workspace.id, workspace.type]);
 
-  async function request(action: 'status' | 'preview' | 'apply', resolution?: 'local' | 'remote') {
+  async function request(
+    action: 'status' | 'preview' | 'apply',
+    resolution?: 'local' | 'remote',
+    requestedMode: 'merge' | 'revert' = 'merge',
+  ) {
     if (active.current) return;
     const current = ++generation.current;
     const isCurrent = () => generation.current === current;
@@ -65,6 +71,11 @@ export function SyncDialog({
     setSuccess(false);
     setConfirmed(false);
     setPreview(null);
+    if (action === 'preview') setMode(requestedMode);
+    const retryWarning =
+      preview?.mode === 'revert'
+        ? 'Re-preview before trying again; local state may already have been replaced. Revert never writes to GitHub.'
+        : 'Re-preview before trying again; an upload may already have committed.';
     try {
       if (action === 'status') {
         const value = await api<SyncStatus>('/sync/status');
@@ -73,7 +84,7 @@ export function SyncDialog({
         const value = await api<SyncPreview>(
           '/sync/preview',
           'POST',
-          resolution ? { resolution } : {},
+          requestedMode === 'revert' ? { mode: 'revert' } : resolution ? { resolution } : {},
         );
         if (isCurrent()) setPreview(value);
       } else if (preview?.canApply && confirmed) {
@@ -86,17 +97,13 @@ export function SyncDialog({
             });
             if (isCurrent()) setStatus(value);
           } catch (error) {
-            failure = `${error instanceof Error ? error.message : 'Sync failed.'} Re-preview before trying again; an upload may already have committed.`;
+            failure = `${error instanceof Error ? error.message : 'Sync failed.'} ${retryWarning}`;
             throw new Error(failure);
           }
         });
         if (!isCurrent()) return;
         if (applied) setSuccess(true);
-        else
-          setError(
-            failure ||
-              'Sync was not confirmed successful. Re-preview before trying again; an upload may already have committed.',
-          );
+        else setError(failure || `Sync was not confirmed successful. ${retryWarning}`);
       }
     } catch (error) {
       if (isCurrent()) setError(error instanceof Error ? error.message : 'Workspace sync failed.');
@@ -177,13 +184,27 @@ export function SyncDialog({
           )}
           {success && (
             <p className="callout" role="status">
-              Workspace sync applied successfully.
+              {mode === 'revert'
+                ? 'Workspace reverted to origin successfully.'
+                : 'Workspace sync applied successfully.'}
             </p>
           )}
           {preview && (
             <>
-              <h3>Review sync preview</h3>
-              {(['local', 'remote'] as const).map((side) => (
+              <h3>
+                {preview.mode === 'revert' ? 'Review revert to origin' : 'Review sync preview'}
+              </h3>
+              {preview.mode === 'revert' && (
+                <p className="callout warning">
+                  This discards unsynced local tasks and relationships, replacing local state from
+                  the configured repository, branch, and path shown above. An automatic local backup
+                  is created before replacement. Revert never writes to GitHub.
+                </p>
+              )}
+              {(preview.mode === 'revert'
+                ? (['local'] as const)
+                : (['local', 'remote'] as const)
+              ).map((side) => (
                 <section key={side} aria-label={`Changes to ${side} state`}>
                   <h3>Changes to {side} state</h3>
                   {preview[`${side}Changes`].length ? (
@@ -200,7 +221,7 @@ export function SyncDialog({
                   )}
                 </section>
               ))}
-              {!!preview.conflicts.length && (
+              {preview.mode === 'merge' && !!preview.conflicts.length && (
                 <section>
                   <h3>Conflicts</h3>
                   <p>
@@ -237,9 +258,11 @@ export function SyncDialog({
                   </div>
                 </section>
               )}
-              <p>
-                Selected conflict resolution: <strong>{preview.resolution ?? 'None'}</strong>
-              </p>
+              {preview.mode === 'merge' && (
+                <p>
+                  Selected conflict resolution: <strong>{preview.resolution ?? 'None'}</strong>
+                </p>
+              )}
               {preview.validationError && (
                 <div className="callout warning" role="alert">
                   {preview.validationError}
@@ -253,7 +276,9 @@ export function SyncDialog({
                     disabled={busy}
                     onChange={(event) => setConfirmed(event.target.checked)}
                   />
-                  I confirm applying these changes to local and remote state.
+                  {preview.mode === 'revert'
+                    ? 'I confirm discarding unsynced local changes and replacing this workspace from origin.'
+                    : 'I confirm applying these changes to local and remote state.'}
                 </label>
               )}
             </>
@@ -270,13 +295,20 @@ export function SyncDialog({
             >
               Preview sync
             </button>
+            <button
+              className="button"
+              disabled={busy || workspace.type === 'local' || !status?.configured || status.syncing}
+              onClick={() => void request('preview', undefined, 'revert')}
+            >
+              Revert to origin
+            </button>
             {preview && (
               <button
                 className="button primary"
                 disabled={busy || !preview.canApply || !confirmed}
                 onClick={() => void request('apply')}
               >
-                Apply sync
+                {preview.mode === 'revert' ? 'Confirm revert to origin' : 'Apply sync'}
               </button>
             )}
           </footer>

@@ -90,9 +90,10 @@ function insertTask(state: StoredSnapshot, input: CreateTaskInput): Task {
   const description = input.description === undefined ? '' : text(input.description, 'Description');
   if (!['container', 'manual', 'pr'].includes(input.kind))
     throw new DomainError('Invalid task kind');
-  if (input.kind !== 'pr' && input.prUrl !== undefined)
-    throw new DomainError('Only PR tasks can have a PR URL');
-  const prUrl = input.kind === 'pr' ? normalizePrUrl(input.prUrl) : null;
+  if (input.kind === 'container' && input.prUrl !== undefined)
+    throw new DomainError('Containers cannot have a PR URL');
+  const prUrl =
+    input.kind === 'pr' || input.prUrl !== undefined ? normalizePrUrl(input.prUrl) : null;
   const parentId =
     input.parentId === undefined || input.parentId === null
       ? null
@@ -153,7 +154,7 @@ function derive(state: StoredSnapshot): Snapshot {
     const complete = (required: string) => views.get(required)!.status === 'completed';
     const ownSatisfied =
       task.kind === 'manual'
-        ? task.manualDone
+        ? task.manualDone && (!task.prUrl || task.prState === 'merged')
         : task.kind === 'pr'
           ? task.prState === 'merged'
           : childrenIds.length > 0 && childrenIds.every(complete);
@@ -264,10 +265,10 @@ export function validatePortableState(value: unknown): PortableState {
         if (typeof item.manualDone !== 'boolean' || (item.kind !== 'manual' && item.manualDone))
           throw new DomainError('Invalid manual completion');
         if (item.parentId !== null) id(item.parentId);
-        if (item.kind === 'pr') {
+        if (item.kind === 'pr' || (item.kind === 'manual' && item.prUrl !== null)) {
           if (normalizePrUrl(item.prUrl) !== item.prUrl)
             throw new DomainError('PR URL must be normalized');
-        } else if (item.prUrl !== null) throw new DomainError('Only PR tasks can have a PR URL');
+        } else if (item.prUrl !== null) throw new DomainError('Containers cannot have a PR URL');
       } else {
         for (const field of fields[collection].slice(1)) id(item[field]);
       }
@@ -441,19 +442,22 @@ export class Store {
       .run(JSON.stringify(previous), JSON.stringify(target), JSON.stringify(expected));
   }
 
-  finishSync(target: SyncTarget, expected: SyncRecord): void {
-    const pending = expected.pending;
-    if (!pending) throw new DomainError('No pending sync', 409);
-    const merged = validatePortableState(pending.merged);
+  finishSync(
+    target: SyncTarget,
+    expected: SyncRecord,
+    replacement?: { local: PortableState; remote: PortableState },
+  ): void {
+    if (replacement && expected.pending)
+      throw new DomainError('Cannot revert with an uncertain upload; reconcile it first', 409);
+    if (!replacement && !expected.pending) throw new DomainError('No pending sync', 409);
+    const local = replacement?.local ?? expected.pending!.local;
+    const merged = validatePortableState(replacement?.remote ?? expected.pending!.merged);
     this.mutate((state) => {
       if (
-        JSON.stringify(portable(state)) !== JSON.stringify(pending.local) ||
+        JSON.stringify(portable(state)) !== JSON.stringify(local) ||
         JSON.stringify(this.syncRecord(target)) !== JSON.stringify(expected)
       )
-        throw new DomainError(
-          'Local state changed during sync; re-preview to reconcile the upload',
-          409,
-        );
+        throw new DomainError('Local state changed during sync; re-preview to reconcile', 409);
       this.db
         .prepare(
           'INSERT INTO foggybrain_sync_backups (target, created_at, payload) VALUES (?, ?, ?)',
@@ -463,7 +467,8 @@ export class Store {
       const now = new Date().toISOString();
       state.tasks = merged.tasks.map((task) => {
         const old = previous.get(task.id);
-        const samePr = old?.kind === 'pr' && task.kind === 'pr' && old.prUrl === task.prUrl;
+        const samePr =
+          old && old.kind === task.kind && task.prUrl !== null && old.prUrl === task.prUrl;
         const unchanged =
           old && Object.entries(task).every(([key, value]) => old[key as keyof Task] === value);
         return {
@@ -490,7 +495,7 @@ export class Store {
             // Removed shared memberships should not leave a stale position in that view.
             const wasMember =
               previous.get(position.nodeId)?.parentId === layout.viewId ||
-              pending.local.references.some(
+              local.references.some(
                 (ref) => ref.containerId === layout.viewId && ref.taskId === position.nodeId,
               );
             return (
@@ -565,8 +570,9 @@ export class Store {
       if ('title' in input) task.title = text(input.title, 'Title', true);
       if ('description' in input) task.description = text(input.description, 'Description');
       if ('prUrl' in input) {
-        if (task.kind !== 'pr') throw new DomainError('Only PR tasks can have a PR URL');
-        const prUrl = normalizePrUrl(input.prUrl);
+        if (task.kind === 'container') throw new DomainError('Containers cannot have a PR URL');
+        const prUrl =
+          task.kind === 'manual' && input.prUrl === null ? null : normalizePrUrl(input.prUrl);
         if (prUrl !== task.prUrl) {
           task.prUrl = prUrl;
           task.prState = 'unknown';
@@ -760,7 +766,8 @@ export class Store {
     }
     return this.mutate((state) => {
       const task = taskById(state, id);
-      if (task.kind !== 'pr') throw new DomainError('Only PR tasks can receive PR updates');
+      if (task.kind === 'container' || !task.prUrl)
+        throw new DomainError('Only tasks with a PR URL can receive PR updates');
       // Partial polling failures must not discard independently verified fields.
       if (input.state !== undefined) task.prState = input.state;
       if (input.mergeStatus !== undefined) task.prMergeStatus = input.mergeStatus;

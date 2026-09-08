@@ -2,6 +2,7 @@
   "name": "foggybrain",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "packageManager": "pnpm@10.14.0",
   "type": "module",
   "description": "Untangle your work. Local task graphs with GitHub merge gates.",

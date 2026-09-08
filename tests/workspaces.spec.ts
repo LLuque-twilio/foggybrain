@@ -82,6 +82,7 @@ async function removalSetup(page: Page, count = 3) {
     route.fulfill({
       json: {
         previewId: 'empty-cloud-preview',
+        mode: 'merge',
         target: list.workspaces[0].target!,
         localChanges: [],
         remoteChanges: [],
@@ -421,6 +422,7 @@ test.beforeEach(async ({ page }) => {
       });
     if (suffix === '/sync/preview') {
       const preview: SyncPreview = {
+        mode: 'merge',
         previewId: `preview-${workspace.id}`,
         target: workspace.target!,
         localChanges: [],
@@ -1202,6 +1204,7 @@ for (const flow of ['create', 'connect'] as const) {
       route.fulfill({
         json: {
           previewId: `import-${id}`,
+          mode: 'merge',
           target: { repo: 'example/private', branch: 'main', path: 'foggybrain/state.json' },
           localChanges: [{ collection: 'tasks', id: task.id, title: task.title, kind: 'added' }],
           remoteChanges: [],

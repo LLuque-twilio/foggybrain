@@ -118,8 +118,13 @@ export function Detail({
           </p>
         </>
       )}
-      {task.kind === 'pr' && (
+      {task.prUrl && (
         <div className="pr-detail">
+          {task.kind === 'manual' && (
+            <p className="form-hint">
+              PR gate: completion requires both manual work done and a verified merge.
+            </p>
+          )}
           <a className="button full" href={task.prUrl!} target="_blank" rel="noreferrer">
             <GitPullRequest size={16} />
             View PR on GitHub

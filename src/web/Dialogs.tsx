@@ -137,7 +137,15 @@ export function TaskDialog({
           const input = {
             title,
             description,
-            ...(kind === 'pr' ? { prUrl: url } : {}),
+            ...(kind === 'pr'
+              ? { prUrl: url }
+              : kind === 'manual'
+                ? url.trim()
+                  ? { prUrl: url }
+                  : task
+                    ? { prUrl: null }
+                    : {}
+                : {}),
             ...(!task ? { kind, parentId: parent || null } : {}),
           };
           if (await submit(input as CreateTaskInput | UpdateTaskInput, task?.id)) close();
@@ -194,7 +202,7 @@ export function TaskDialog({
             onChange={(event) => setDescription(event.target.value)}
           />
         </label>
-        {kind === 'pr' && (
+        {kind !== 'container' && (
           <>
             <label>
               Your open pull requests
@@ -207,7 +215,7 @@ export function TaskDialog({
                     const selected = prs.find((pr) => pr.url === event.target.value);
                     setUrl(event.target.value);
                     if (selected && !title.trim())
-                      setTitle(`Merge ${selected.title}`.slice(0, 300));
+                      setTitle(`${kind === 'pr' ? 'Merge ' : ''}${selected.title}`.slice(0, 300));
                   }}
                 >
                   <option value="">Select a PR or enter a URL below</option>
@@ -235,14 +243,21 @@ export function TaskDialog({
             </p>
             <label>
               GitHub PR URL
+              {kind === 'manual' && <span className="optional">optional</span>}
               <input
                 type="url"
-                required
+                required={kind === 'pr'}
                 placeholder="https://github.com/owner/repo/pull/123"
                 value={url}
                 onChange={(event) => setUrl(event.target.value)}
               />
             </label>
+            {kind === 'manual' && (
+              <p className="form-hint">
+                With a PR gate, both your manual work and a verified PR merge are required. Clear
+                the URL to remove the gate.
+              </p>
+            )}
           </>
         )}
         {!task && (

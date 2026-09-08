@@ -388,21 +388,49 @@ export class StateSync {
     return { state: validatePortableState(parsed), sha: file.sha };
   }
 
-  preview(options: { resolution?: 'local' | 'remote' } = {}): Promise<SyncPreview> {
+  preview(
+    options: { resolution?: 'local' | 'remote'; mode?: 'merge' | 'revert' } = {},
+  ): Promise<SyncPreview> {
     return this.run(async (signal) => {
       this.saved = null;
       if (
         !options ||
-        Object.keys(options).some((key) => key !== 'resolution') ||
+        typeof options !== 'object' ||
+        Array.isArray(options) ||
+        Object.keys(options).some((key) => key !== 'resolution' && key !== 'mode') ||
+        (options.mode !== undefined && options.mode !== 'merge' && options.mode !== 'revert') ||
+        (options.mode === 'revert' && 'resolution' in options) ||
         (options.resolution !== undefined &&
           options.resolution !== 'local' &&
           options.resolution !== 'remote')
       )
-        throw new DomainError('Invalid sync resolution');
+        throw new DomainError('Invalid sync preview options');
+      const mode = options.mode ?? 'merge';
       const resolution = options.resolution ?? null;
+      if (mode === 'revert' && this.store.syncRecord(this.target!).pending)
+        throw new DomainError('Cannot revert with an uncertain upload; reconcile it first', 409);
       const { state: remote, sha } = await this.remote(signal);
       const local = this.store.exportState();
       const record = this.store.syncRecord(this.target!);
+      if (mode === 'revert') {
+        if (record.pending)
+          throw new DomainError('Cannot revert with an uncertain upload; reconcile it first', 409);
+        if (sha === null)
+          throw new DomainError('Revert requires an existing remote state file', 409);
+        const preview: SyncPreview = {
+          mode,
+          previewId: randomUUID(),
+          target: { ...this.target! },
+          localChanges: changes(local, remote),
+          remoteChanges: [],
+          conflicts: [],
+          validationError: null,
+          canApply: true,
+          resolution: null,
+        };
+        this.saved = { preview, local, merged: remote, remote, sha, record };
+        return structuredClone(preview);
+      }
       let base = record.base ?? emptyPortableState();
       let validationError: string | null = null;
       if (record.pending) {
@@ -425,6 +453,7 @@ export class StateSync {
       if (Buffer.byteLength(JSON.stringify(merged)) > MAX_CONTENT)
         validationError = 'Merged state exceeds 1 MB';
       const preview: SyncPreview = {
+        mode,
         previewId: randomUUID(),
         target: { ...this.target! },
         localChanges: changes(local, merged),
@@ -446,12 +475,21 @@ export class StateSync {
       if (!saved || saved.preview.previewId !== previewId)
         throw new DomainError('Sync preview is stale; re-preview', 409);
       if (!saved.preview.canApply) throw new DomainError('Sync preview cannot be applied', 409);
+      if (saved.preview.mode === 'revert' && this.store.syncRecord(this.target!).pending)
+        throw new DomainError('Cannot revert with an uncertain upload; reconcile it first', 409);
       if (!equal(this.store.exportState(), saved.local))
         throw new DomainError('Local state changed; re-preview', 409);
       const remote = await this.remote(signal);
       if (remote.sha !== saved.sha || !equal(remote.state, saved.remote))
         throw new DomainError('Remote state changed; re-preview', 409);
       signal.throwIfAborted();
+      if (saved.preview.mode === 'revert') {
+        this.store.finishSync(this.target!, saved.record, {
+          local: saved.local,
+          remote: saved.remote,
+        });
+        return { ...this.getStatus(), syncing: false };
+      }
       const record = this.store.prepareSync(
         this.target!,
         saved.record,

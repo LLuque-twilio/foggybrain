@@ -83,6 +83,130 @@ async function apply(sync: StateSync) {
   return sync.apply(preview.previewId);
 }
 
+test('revert replaces unrelated local state without a baseline or any remote writes', async (t) => {
+  const { store, sync, github } = setup(t);
+  const removed = store.createTask({ title: 'Local only', kind: 'manual' });
+  const origin = setup(t);
+  const group = origin.store.createTask({ title: 'Origin', kind: 'container' });
+  const child = origin.store.createTask({ title: 'Child', kind: 'manual', parentId: group.id });
+  const shared = origin.store.createTask({ title: 'Shared', kind: 'manual' });
+  origin.store.addReference(group.id, shared.id);
+  origin.store.addDependency(child.id, shared.id);
+  github.state = origin.store.exportState();
+  const before = store.snapshot();
+  const record = store.syncRecord(target);
+  assert.equal((await sync.preview()).mode, 'merge');
+  const preview = await sync.preview({ mode: 'revert' });
+  assert.equal(preview.mode, 'revert');
+  assert.equal(preview.canApply, true);
+  assert.equal(preview.validationError, null);
+  assert.equal(preview.resolution, null);
+  assert.deepEqual(preview.conflicts, []);
+  assert.deepEqual(preview.remoteChanges, []);
+  assert.ok(
+    preview.localChanges.some((change) => change.id === removed.id && change.kind === 'deleted'),
+  );
+  assert.equal(preview.localChanges.length, 6);
+  assert.deepEqual(store.snapshot(), before);
+  assert.deepEqual(store.syncRecord(target), record);
+  const status = await sync.apply(preview.previewId);
+  assert.equal(status.dirty, false);
+  assert.ok(status.lastSync);
+  assert.deepEqual(store.exportState(), github.state);
+  assert.deepEqual(store.syncRecord(target), {
+    base: github.state,
+    lastSync: status.lastSync,
+    pending: null,
+  });
+  await assert.rejects(sync.apply(preview.previewId), conflict);
+  assert.equal(github.puts, 0);
+});
+
+test('revert requires an existing valid remote file but accepts an empty graph', async (t) => {
+  const { store, sync, github } = setup(t);
+  store.createTask({ title: 'Discard', kind: 'manual' });
+  const before = store.snapshot();
+  await assert.rejects(sync.preview({ mode: 'revert' }), /existing remote state file/);
+  github.state = { ...emptyPortableState(), version: 2 } as unknown as PortableState;
+  await assert.rejects(sync.preview({ mode: 'revert' }), DomainError);
+  github.state = emptyPortableState();
+  github.private = false;
+  await assert.rejects(sync.preview({ mode: 'revert' }), /private/);
+  github.private = true;
+  github.branchExists = false;
+  await assert.rejects(sync.preview({ mode: 'revert' }), DomainError);
+  github.branchExists = true;
+  assert.deepEqual(store.snapshot(), before);
+  const preview = await sync.preview({ mode: 'revert' });
+  await sync.apply(preview.previewId);
+  assert.deepEqual(store.exportState(), emptyPortableState());
+  assert.equal(github.puts, 0);
+});
+
+for (const race of [
+  'sha',
+  'content',
+  'missing',
+  'local',
+  'during fetch',
+  'record',
+  'pending',
+] as const) {
+  test(`revert rejects ${race} changes and consumes the preview without writes`, async (t) => {
+    const { store, sync, github } = setup(t);
+    const task = store.createTask({ title: 'Local', kind: 'manual' });
+    github.state = store.exportState();
+    const preview = await sync.preview({ mode: 'revert' });
+    if (race === 'sha') github.revision++;
+    if (race === 'content') github.state.tasks[0].title = 'Changed without SHA';
+    if (race === 'missing') github.state = null;
+    if (race === 'local') store.updateTask(task.id, { title: 'Concurrent' });
+    if (race === 'pending')
+      store.prepareSync(
+        target,
+        store.syncRecord(target),
+        store.exportState(),
+        store.exportState(),
+        github.sha,
+      );
+    if (race === 'during fetch' || race === 'record')
+      github.override = (url) => {
+        if (url.includes('/contents/')) {
+          if (race === 'during fetch') store.updateTask(task.id, { title: 'Concurrent' });
+          else
+            store.finishSync(target, store.syncRecord(target), {
+              local: store.exportState(),
+              remote: store.exportState(),
+            });
+        }
+        return undefined;
+      };
+    await assert.rejects(sync.apply(preview.previewId), conflict);
+    const record = store.syncRecord(target);
+    if (race === 'pending') {
+      await assert.rejects(sync.preview({ mode: 'revert' }), /uncertain upload/);
+      assert.deepEqual(store.syncRecord(target), record);
+    }
+    await assert.rejects(sync.apply(preview.previewId), conflict);
+    assert.equal(github.puts, 0);
+    assert.equal(
+      store.snapshot().tasks[0].title,
+      race === 'local' || race === 'during fetch' ? 'Concurrent' : 'Local',
+    );
+  });
+}
+
+test('revert rejects resolution and a newer preview invalidates the old one', async (t) => {
+  const { sync, github } = setup(t);
+  github.state = emptyPortableState();
+  for (const resolution of ['local', 'remote'] as const)
+    await assert.rejects(sync.preview({ mode: 'revert', resolution }), DomainError);
+  const first = await sync.preview({ mode: 'revert' });
+  await sync.preview({ mode: 'revert' });
+  await assert.rejects(sync.apply(first.previewId), conflict);
+  assert.equal(github.puts, 0);
+});
+
 test('config is explicit, separate from GH_TOKEN, and rejects unsafe targets', () => {
   assert.equal(readSyncConfig({ GH_TOKEN: 'not-sync' }), null);
   assert.equal(readSyncConfig({ FOGGY_SYNC_TOKEN: token }), null);
@@ -646,31 +770,47 @@ test('malformed content, oversized envelopes, foreign response URLs and redirect
   assert.equal(github.puts, 0);
 });
 
-test('PR polling and layouts do not dirty state or stale previews; imports preserve only matching PR cache', async (t) => {
-  const { store, sync, github } = setup(t);
-  const pr = store.createTask({ title: 'PR', kind: 'pr', prUrl: 'https://github.com/o/r/pull/1' });
-  await apply(sync);
-  const preview = await sync.preview();
-  store.updatePr(pr.id, { state: 'merged', checkedAt: '2026-09-08T12:00:00Z', error: null });
-  store.saveLayout({ viewId: 'root', mode: 'manual', positions: [{ nodeId: pr.id, x: 1, y: 2 }] });
-  assert.equal(sync.getStatus().dirty, false);
-  await sync.apply(preview.previewId);
-  assert.equal(store.snapshot().tasks[0].prState, 'merged');
-  assert.equal(store.snapshot().layouts[0].positions.length, 1);
-  assert.ok(!JSON.stringify(github.state).includes('prState'));
-  assert.ok(!JSON.stringify(github.state).includes('updatedAt'));
-  github.edit((state) => {
-    state.tasks[0].prUrl = 'https://github.com/o/r/pull/2';
+for (const mode of ['merge', 'revert'] as const)
+  test(`${mode}: PR polling and layouts do not dirty state or stale previews; imports preserve only matching PR cache`, async (t) => {
+    const { store, sync, github } = setup(t);
+    const pr = store.createTask({
+      title: 'PR',
+      kind: 'pr',
+      prUrl: 'https://github.com/o/r/pull/1',
+    });
+    await apply(sync);
+    const preview = await sync.preview({ mode });
+    store.updatePr(pr.id, {
+      state: 'merged',
+      mergeStatus: 'ready',
+      checkedAt: '2026-09-08T12:00:00Z',
+      error: 'Stale metadata',
+    });
+    store.saveLayout({
+      viewId: 'root',
+      mode: 'manual',
+      positions: [{ nodeId: pr.id, x: 1, y: 2 }],
+    });
+    assert.equal(sync.getStatus().dirty, false);
+    await sync.apply(preview.previewId);
+    assert.equal(store.snapshot().tasks[0].prState, 'merged');
+    assert.equal(store.snapshot().tasks[0].prMergeStatus, 'ready');
+    assert.equal(store.snapshot().tasks[0].prError, 'Stale metadata');
+    assert.equal(store.snapshot().layouts[0].positions.length, 1);
+    assert.ok(!JSON.stringify(github.state).includes('prState'));
+    assert.ok(!JSON.stringify(github.state).includes('updatedAt'));
+    github.edit((state) => {
+      state.tasks[0].prUrl = 'https://github.com/o/r/pull/2';
+    });
+    await sync.apply((await sync.preview({ mode })).previewId);
+    assert.equal(store.snapshot().tasks[0].prState, 'unknown');
+    assert.equal(store.snapshot().tasks[0].prCheckedAt, null);
+    github.edit((state) => {
+      state.tasks = [];
+    });
+    await sync.apply((await sync.preview({ mode })).previewId);
+    assert.deepEqual(store.snapshot().layouts[0].positions, []);
   });
-  await apply(sync);
-  assert.equal(store.snapshot().tasks[0].prState, 'unknown');
-  assert.equal(store.snapshot().tasks[0].prCheckedAt, null);
-  github.edit((state) => {
-    state.tasks = [];
-  });
-  await apply(sync);
-  assert.deepEqual(store.snapshot().layouts[0].positions, []);
-});
 
 test('stop aborts and awaits in-flight work, and rejects future operations', async (t) => {
   const store = new Store(':memory:');
