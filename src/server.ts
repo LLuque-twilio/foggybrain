@@ -7,6 +7,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Store, DomainError } from './core.js';
 import { GithubPoller, parsePollInterval } from './github.js';
+import { readSyncConfig, StateSync } from './sync.js';
 import type { CreateTaskInput, Layout, UpdateTaskInput } from './shared.js';
 
 class HttpError extends Error {
@@ -33,6 +34,8 @@ export function readConfig(env: NodeJS.ProcessEnv = process.env) {
     databasePath: join(dataDir, 'foggybrain.sqlite'),
     token: env.GH_TOKEN?.trim() || env.GITHUB_TOKEN?.trim() || undefined,
     intervalMs: parsePollInterval(env.FOGGY_POLL_INTERVAL_MS),
+    syncTarget: readSyncConfig(env),
+    syncToken: env.FOGGY_SYNC_TOKEN,
   };
 }
 
@@ -71,6 +74,7 @@ function localOrigin(origin: string, port: number): boolean {
 export interface AppOptions {
   port?: number;
   webRoot?: string;
+  sync?: Pick<StateSync, 'getStatus' | 'preview' | 'apply'>;
 }
 
 export function createApp(
@@ -80,6 +84,7 @@ export function createApp(
 ) {
   const app = express();
   const port = options.port ?? 4173;
+  const sync = options.sync ?? new StateSync(store, { target: null });
   app.disable('x-powered-by');
   app.set('query parser', 'simple');
   app.use((req, res, next) => {
@@ -205,6 +210,23 @@ export function createApp(
     if (req.body !== undefined) object(req.body, []);
     res.json(await github.sync());
   });
+  app.get('/api/sync/status', (_req, res) => {
+    res.json(sync.getStatus());
+  });
+  app.post('/api/sync/preview', async (req, res) => {
+    const body = object(req.body, ['resolution']);
+    if ('resolution' in body && body.resolution !== 'local' && body.resolution !== 'remote')
+      throw new HttpError(400, 'resolution must be local or remote.');
+    res.json(await sync.preview(body as { resolution?: 'local' | 'remote' }));
+  });
+  app.post('/api/sync/apply', async (req, res) => {
+    const body = object(req.body, ['previewId', 'confirm']);
+    stringField(body, 'previewId');
+    if (!(body.previewId as string).trim())
+      throw new HttpError(400, 'previewId must not be empty.');
+    if (body.confirm !== true) throw new HttpError(400, 'Sync apply requires confirm=true.');
+    res.json(await sync.apply(body.previewId as string));
+  });
   app.use('/api', (_req, _res, next) => {
     next(new HttpError(404, 'API route not found.'));
   });
@@ -254,8 +276,8 @@ function readTokenFromGhCli(): string | undefined {
   }
 }
 
-export async function startServer() {
-  loadDotenv({ quiet: true });
+export async function startServer(options: { loadEnv?: boolean } = {}) {
+  if (options.loadEnv !== false) loadDotenv({ quiet: true });
   const settings = readConfig();
   const token = settings.token ?? readTokenFromGhCli();
   mkdirSync(settings.dataDir, { recursive: true, mode: 0o700 });
@@ -264,7 +286,8 @@ export async function startServer() {
     token,
     intervalMs: settings.intervalMs,
   });
-  const app = createApp(store, github, { port: settings.port });
+  const sync = new StateSync(store, { target: settings.syncTarget, token: settings.syncToken });
+  const app = createApp(store, github, { port: settings.port, sync });
   const server = app.listen(settings.port, '127.0.0.1');
   try {
     await new Promise<void>((resolve, reject) => {
@@ -291,7 +314,7 @@ export async function startServer() {
       server.closeAllConnections();
     }, 5000);
     forceClose.unref();
-    closing = Promise.all([github.stop(), connectionsClosed])
+    closing = Promise.all([github.stop(), sync.stop(), connectionsClosed])
       .then(() => undefined)
       .finally(() => {
         clearTimeout(forceClose);
@@ -307,7 +330,7 @@ export async function startServer() {
   process.once('SIGINT', onSignal);
   process.once('SIGTERM', onSignal);
   console.log(`Foggybrain is listening at http://127.0.0.1:${settings.port}`);
-  return { app, server, store, github, close };
+  return { app, server, store, github, sync, close };
 }
 
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {

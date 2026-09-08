@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test, type TestContext } from 'node:test';
-import { DomainError, Store } from './core.js';
+import { DomainError, Store, validatePortableState } from './core.js';
 import type { TaskView } from './shared.js';
 
 function memory(t: TestContext): Store {
@@ -751,4 +751,168 @@ test('a SQLite write failure rolls back all changes and leaves the store usable'
   assert.deepEqual(store.snapshot(), before);
   db.exec('DROP TRIGGER fail_write');
   assert.equal(store.setDone(task.id, true).status, 'completed');
+});
+
+test('portable state validates exact shapes, IDs, memberships and graph before import', (t) => {
+  const store = memory(t);
+  const group = container(store);
+  const child = manual(store, 'Child', group.id);
+  const state = store.exportState();
+  assert.deepEqual(validatePortableState(state), state);
+  const invalid: unknown[] = [
+    null,
+    [],
+    {},
+    { ...state, version: 2 },
+    { ...state, layouts: [] },
+    { ...state, references: null },
+  ];
+  for (const change of [
+    (s: typeof state) => {
+      s.tasks.push(s.tasks[0]);
+    },
+    (s: typeof state) => {
+      s.tasks[0].id = '../unsafe';
+    },
+    (s: typeof state) => {
+      s.tasks[0].id = 'root';
+    },
+    (s: typeof state) => {
+      s.tasks[0].parentId = 'missing';
+    },
+    (s: typeof state) => {
+      s.tasks[0].title = ' ';
+    },
+    (s: typeof state) => {
+      (s.tasks[0] as unknown as Record<string, unknown>).prState = 'merged';
+    },
+    (s: typeof state) => {
+      delete (s.tasks[0] as Partial<typeof child>).description;
+    },
+    (s: typeof state) => {
+      s.tasks.find((task) => task.id === group.id)!.manualDone = true;
+    },
+    (s: typeof state) => {
+      s.tasks[0].prUrl = 'https://github.com/o/r/pull/1';
+    },
+    (s: typeof state) => {
+      s.references.push({ id: 'ref', containerId: group.id, taskId: child.id });
+    },
+    (s: typeof state) => {
+      s.references.push({ id: 'ref', containerId: child.id, taskId: group.id });
+    },
+    (s: typeof state) => {
+      s.dependencies.push({ id: 'edge', prerequisiteId: 'missing', dependentId: child.id });
+    },
+    (s: typeof state) => {
+      s.dependencies.push({ id: 'edge', prerequisiteId: group.id, dependentId: child.id });
+    },
+    (s: typeof state) => {
+      s.dependencies.push(
+        { id: 'a', prerequisiteId: child.id, dependentId: group.id },
+        { id: 'b', prerequisiteId: child.id, dependentId: group.id },
+      );
+    },
+  ]) {
+    const copy = structuredClone(state);
+    change(copy);
+    invalid.push(copy);
+  }
+  for (const value of invalid) assert.throws(() => validatePortableState(value), DomainError);
+  assert.deepEqual(store.exportState(), state);
+});
+
+test('sync SQLite backups retain full pre-apply snapshots and baseline updates are atomic', (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'foggybrain-backups-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const path = join(directory, 'brain.sqlite');
+  const store = new Store(path);
+  const db = new DatabaseSync(path);
+  t.after(() => {
+    store.close();
+    db.close();
+  });
+  const target = { repo: 'o/r', branch: 'main', path: 'state.json' };
+  const pr = store.createTask({ title: 'PR', kind: 'pr', prUrl: 'https://github.com/o/r/pull/1' });
+  store.updatePr(pr.id, { state: 'merged', checkedAt: '2026-09-08T12:00:00Z', error: null });
+  store.saveLayout({ viewId: 'root', mode: 'manual', positions: [{ nodeId: pr.id, x: 1, y: 2 }] });
+  const before = store.snapshot();
+  const local = store.exportState();
+  const merged = structuredClone(local);
+  merged.tasks[0].title = 'Imported title';
+  merged.tasks.push({ ...merged.tasks[0], id: 'new-pr' });
+  const record = store.prepareSync(target, store.syncRecord(target), local, merged, null);
+  assert.deepEqual(store.snapshot(), before);
+  const backup = JSON.parse(
+    db.prepare('SELECT payload FROM foggybrain_sync_backups ORDER BY id LIMIT 1').get()!
+      .payload as string,
+  );
+  const full = {
+    ...before,
+    tasks: before.tasks.map(
+      ({
+        status: _status,
+        ownSatisfied: _own,
+        waitingOn: _waiting,
+        childrenIds: _children,
+        ...task
+      }) => task,
+    ),
+  };
+  assert.deepEqual(backup, full);
+  db.exec(
+    "CREATE TRIGGER fail_sync BEFORE UPDATE ON foggybrain_snapshot BEGIN SELECT RAISE(ABORT, 'disk failure'); END",
+  );
+  assert.throws(() => store.finishSync(target, record), /disk failure/);
+  assert.deepEqual(store.snapshot(), before);
+  assert.deepEqual(store.syncRecord(target), record);
+  assert.equal(db.prepare('SELECT COUNT(*) AS count FROM foggybrain_sync_backups').get()!.count, 1);
+  db.exec('DROP TRIGGER fail_sync');
+  store.finishSync(target, record);
+  assert.deepEqual(store.syncRecord(target).base, validatePortableState(merged));
+  assert.equal(store.snapshot().tasks.find((task) => task.id === pr.id)!.prState, 'merged');
+  assert.equal(store.snapshot().tasks.find((task) => task.id === 'new-pr')!.prState, 'unknown');
+  assert.deepEqual(store.snapshot().layouts, before.layouts);
+  store.close();
+  const restarted = new Store(path);
+  assert.deepEqual(restarted.syncRecord(target).base, validatePortableState(merged));
+  assert.equal(db.prepare('SELECT COUNT(*) AS count FROM foggybrain_sync_backups').get()!.count, 2);
+  restarted.close();
+});
+
+test('sync optimistic storage check does not clobber concurrent graph changes or baseline changes', (t) => {
+  const store = memory(t);
+  const task = manual(store);
+  const target = { repo: 'o/r', branch: 'main', path: 'state.json' };
+  const local = store.exportState();
+  const emptyRecord = store.syncRecord(target);
+  const pending = store.prepareSync(target, emptyRecord, local, local, null);
+  assert.throws(
+    () => store.prepareSync(target, emptyRecord, local, local, null),
+    (error) => error instanceof DomainError && error.status === 409,
+  );
+  store.updateTask(task.id, { title: 'Concurrent' });
+  rejectsUnchanged(store, () => store.finishSync(target, pending), 409);
+  assert.deepEqual(store.syncRecord(target), pending);
+});
+
+test('rejected sync rollback conditionally restores only its own record without touching the graph', (t) => {
+  const store = memory(t);
+  const task = manual(store);
+  const target = { repo: 'o/r', branch: 'main', path: 'state.json' };
+  const local = store.exportState();
+  const previous = store.syncRecord(target);
+  const first = store.prepareSync(target, previous, local, local, null);
+  store.updateTask(task.id, { title: 'Concurrent' });
+  const changed = store.exportState();
+  const second = store.prepareSync(target, first, changed, changed, null);
+  const snapshot = store.snapshot();
+  store.restoreSyncRecord(target, first, previous);
+  assert.deepEqual(store.syncRecord(target), second);
+  assert.deepEqual(store.snapshot(), snapshot);
+  store.restoreSyncRecord(target, second, first);
+  assert.deepEqual(store.syncRecord(target), first);
+  assert.deepEqual(store.snapshot(), snapshot);
+  store.restoreSyncRecord(target, first, previous);
+  assert.deepEqual(store.syncRecord(target), previous);
 });

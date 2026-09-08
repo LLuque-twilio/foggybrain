@@ -220,6 +220,47 @@ Supported PR URLs are HTTPS `github.com/OWNER/REPO/pull/NUMBER`, normalized by t
 
 Use least-privilege token access to relevant repositories: fine-grained Metadata and Pull requests read permissions, with Contents read if required for repository access. Private repositories may additionally need organization approval or SSO authorization. See the [README security and GitHub notes](../README.md); localhost is not an authentication boundary.
 
+## Manual State Sync
+
+This top-level group syncs portable task state with a private GitHub repository, separate from `github sync` PR polling. All commands call the running server API; the CLI never accesses sync tokens, state files, or a local database. See the [server setup workflow](../README.md#manual-state-sync).
+
+```text
+foggy --json sync status
+foggy --json sync preview [--resolve local|remote]
+foggy --json sync apply <preview-id> --yes
+```
+
+| Command               | API request                                                                            | Result                                                         |
+| --------------------- | -------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| `sync status`         | `GET /api/sync/status`                                                                 | `SyncStatus`: `{configured, target, lastSync, dirty, syncing}` |
+| `sync preview`        | `POST /api/sync/preview` with `{}` or `{resolution:"local"}` / `{resolution:"remote"}` | `SyncPreview`                                                  |
+| `sync apply ID --yes` | `POST /api/sync/apply` with `{previewId:ID, confirm:true}`                             | `SyncStatus`                                                   |
+
+`target` contains `{repo, branch, path}` (or is null in unconfigured status). Status is local inspection, not proof of current remote access or equality. `dirty` compares local portable state with the saved baseline and includes pending reconciliation; `syncing` indicates an active server operation.
+
+A preview returns `previewId`, `target`, `localChanges`, `remoteChanges`, `conflicts`, `validationError`, `canApply`, and `resolution`. Changes describe what would change on each side, with `collection`, `id`, optional `title`, and `kind` (`added`, `updated`, `deleted`). Conflicts include `path`, `base`, `local`, and `remote`. **A preview with conflicts or validation errors is successful inspection: exit `0` is not permission to apply.** Review both change lists, all conflicts, `canApply`, and `validationError` before authorization.
+
+`--resolve local` or `--resolve remote` chooses that side for conflicting values while retaining nonconflicting changes from both sides. It creates a new preview, not a whole-state replacement or force override. Conflicts remain visible even when resolved. Invalid merged graphs and missing common baselines still block apply.
+
+```sh
+foggy --json sync status
+foggy --json sync preview
+# Only if appropriate, choose a conflict side and review the NEW preview:
+foggy --json sync preview --resolve remote
+# After approval, use the exact previewId from the reviewed, applicable preview:
+foggy --json sync apply REVIEWED_PREVIEW_ID --yes
+foggy --json sync status
+foggy --json graph
+```
+
+Apply always requires explicit `--yes`, even on a terminal. Without it, the CLI fails before any API request and never prompts. `--json` and piped input are not confirmation. Apply never generates a preview automatically. The backend also rejects missing confirmation, stale previews, changed local/remote state, and previews that cannot apply.
+
+Preview IDs are process-local, single-use tokens, not durable approvals. A newer preview replaces the previous one, and an apply attempt consumes it. Re-preview after server restart, edits, failures, or timeouts. **Do not retry a timed-out apply blindly:** the remote write may have committed even if the response was lost. Inspect status and a fresh preview; uncertain outcomes followed by remote edits may require careful reconciliation, not force. Preserve both versions and obtain approval before recovery edits.
+
+On first sync, an empty local graph can pull existing remote state, or a missing remote file can receive local state. If both sides are nonempty without a shared baseline, apply is blocked even with `--resolve`. Preserve existing data: use a separate new local data directory to inspect/pull remote state or a distinct unused remote path to publish an independent graph. Do not wipe either side to bypass the guard.
+
+The versioned JSON (`version: 1`) contains editable task fields and dependency/reference records, not PR verification, derived completion, layouts, or timestamps. PR state is reverified locally by server polling; remote JSON cannot assert a verified merge. The server persists its baseline in SQLite and makes automatic full local backups in `foggybrain_sync_backups`. There is no restore API or automatic backup pruning. Keep independent database backups too. GitHub Contents API writes create Git history without a local git CLI or clone; deleting sensitive text from current state does not remove it from history or backups.
+
 ## UI
 
 ```text

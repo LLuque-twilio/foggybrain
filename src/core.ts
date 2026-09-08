@@ -8,7 +8,9 @@ import type {
   Dependency,
   Layout,
   PrState,
+  PortableState,
   Snapshot,
+  SyncTarget,
   Task,
   TaskReference,
   TaskView,
@@ -161,6 +163,126 @@ function ownedIds(state: StoredSnapshot, id: string): Set<string> {
   return ids;
 }
 
+export const emptyPortableState = (): PortableState => ({
+  version: 1,
+  tasks: [],
+  dependencies: [],
+  references: [],
+});
+
+function portable(state: StoredSnapshot): PortableState {
+  return {
+    version: 1,
+    tasks: state.tasks
+      .map(({ id, title, description, kind, parentId, manualDone, prUrl }) => ({
+        id,
+        title,
+        description,
+        kind,
+        parentId,
+        manualDone,
+        prUrl,
+      }))
+      .sort(byId),
+    dependencies: state.dependencies
+      .map(({ id, prerequisiteId, dependentId }) => ({ id, prerequisiteId, dependentId }))
+      .sort(byId),
+    references: state.references
+      .map(({ id, containerId, taskId }) => ({ id, containerId, taskId }))
+      .sort(byId),
+  };
+}
+
+function byId(a: { id: string }, b: { id: string }): number {
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+}
+
+export function validatePortableState(value: unknown): PortableState {
+  objectInput(value, ['version', 'tasks', 'dependencies', 'references']);
+  if (value.version !== 1) throw new DomainError('Unsupported state version');
+  const fields = {
+    tasks: ['id', 'title', 'description', 'kind', 'parentId', 'manualDone', 'prUrl'],
+    dependencies: ['id', 'prerequisiteId', 'dependentId'],
+    references: ['id', 'containerId', 'taskId'],
+  };
+  const id = (value: unknown) => {
+    if (typeof value !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(value) || value === 'root')
+      throw new DomainError('Invalid state ID');
+  };
+  for (const collection of ['tasks', 'dependencies', 'references'] as const) {
+    const items = value[collection];
+    if (!Array.isArray(items)) throw new DomainError('State collections must be arrays');
+    const seen = new Set<string>();
+    for (const item of items) {
+      objectInput(item, fields[collection]);
+      if (Object.keys(item).length !== fields[collection].length)
+        throw new DomainError('Missing state field');
+      id(item.id);
+      if (seen.has(item.id as string)) throw new DomainError('Duplicate state ID');
+      seen.add(item.id as string);
+      if (collection === 'tasks') {
+        if (text(item.title, 'Title', true) !== item.title)
+          throw new DomainError('Title must be trimmed');
+        text(item.description, 'Description');
+        if (!['manual', 'container', 'pr'].includes(item.kind as string))
+          throw new DomainError('Invalid task kind');
+        if (typeof item.manualDone !== 'boolean' || (item.kind !== 'manual' && item.manualDone))
+          throw new DomainError('Invalid manual completion');
+        if (item.parentId !== null) id(item.parentId);
+        if (item.kind === 'pr') {
+          if (normalizePrUrl(item.prUrl) !== item.prUrl)
+            throw new DomainError('PR URL must be normalized');
+        } else if (item.prUrl !== null) throw new DomainError('Only PR tasks can have a PR URL');
+      } else {
+        for (const field of fields[collection].slice(1)) id(item[field]);
+      }
+    }
+  }
+  const input = value as unknown as PortableState;
+  const state: StoredSnapshot = {
+    tasks: input.tasks.map((task) => ({
+      ...task,
+      prState: 'unknown',
+      prCheckedAt: null,
+      prError: null,
+      createdAt: '',
+      updatedAt: '',
+    })),
+    dependencies: input.dependencies,
+    references: input.references,
+    layouts: [],
+  };
+  for (const task of state.tasks) if (task.parentId !== null) containerById(state, task.parentId);
+  const memberships = new Set(
+    state.tasks
+      .filter((task) => task.parentId !== null)
+      .map((task) => `${task.parentId}/${task.id}`),
+  );
+  for (const ref of state.references) {
+    containerById(state, ref.containerId);
+    taskById(state, ref.taskId);
+    const key = `${ref.containerId}/${ref.taskId}`;
+    if (memberships.has(key)) throw new DomainError('Duplicate child membership');
+    memberships.add(key);
+  }
+  const edges = new Set<string>();
+  for (const edge of state.dependencies) {
+    taskById(state, edge.prerequisiteId);
+    taskById(state, edge.dependentId);
+    const key = `${edge.prerequisiteId}/${edge.dependentId}`;
+    if (edges.has(key)) throw new DomainError('Duplicate dependency');
+    edges.add(key);
+  }
+  derive(state);
+  return portable(state);
+}
+
+export interface SyncRecord {
+  base: PortableState | null;
+  lastSync: string | null;
+  pending: { local: PortableState; merged: PortableState; sha: string | null } | null;
+}
+
 export class Store {
   private readonly db: DatabaseSync;
   private closed = false;
@@ -177,6 +299,17 @@ export class Store {
         PRAGMA synchronous = FULL;
         CREATE TABLE IF NOT EXISTS foggybrain_snapshot (
           id INTEGER PRIMARY KEY CHECK (id = 1),
+          payload TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS foggybrain_sync (
+          target TEXT PRIMARY KEY,
+          payload TEXT NOT NULL
+        );
+        -- Full local snapshots, including PR cache and layouts, retained before sync writes.
+        CREATE TABLE IF NOT EXISTS foggybrain_sync_backups (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          target TEXT NOT NULL,
+          created_at TEXT NOT NULL,
           payload TEXT NOT NULL
         );
       `);
@@ -214,6 +347,124 @@ export class Store {
 
   snapshot(): Snapshot {
     return derive(this.read());
+  }
+
+  exportState(): PortableState {
+    return portable(this.read());
+  }
+
+  syncRecord(target: SyncTarget): SyncRecord {
+    const row = this.db
+      .prepare('SELECT payload FROM foggybrain_sync WHERE target = ?')
+      .get(JSON.stringify(target));
+    return row
+      ? (JSON.parse(row.payload as string) as SyncRecord)
+      : { base: null, lastSync: null, pending: null };
+  }
+
+  private writeSyncRecord(target: SyncTarget, record: SyncRecord): void {
+    this.db
+      .prepare(
+        'INSERT INTO foggybrain_sync (target, payload) VALUES (?, ?) ON CONFLICT(target) DO UPDATE SET payload = excluded.payload',
+      )
+      .run(JSON.stringify(target), JSON.stringify(record));
+  }
+
+  prepareSync(
+    target: SyncTarget,
+    expected: SyncRecord,
+    local: PortableState,
+    merged: PortableState,
+    sha: string | null,
+  ): SyncRecord {
+    merged = validatePortableState(merged);
+    let record!: SyncRecord;
+    this.mutate((state) => {
+      if (
+        JSON.stringify(portable(state)) !== JSON.stringify(local) ||
+        JSON.stringify(this.syncRecord(target)) !== JSON.stringify(expected)
+      )
+        throw new DomainError('Sync preview is stale; re-preview', 409);
+      this.db
+        .prepare(
+          'INSERT INTO foggybrain_sync_backups (target, created_at, payload) VALUES (?, ?, ?)',
+        )
+        .run(JSON.stringify(target), new Date().toISOString(), JSON.stringify(state));
+      record = { ...expected, pending: { local, merged, sha } };
+      this.writeSyncRecord(target, record);
+    });
+    return record;
+  }
+
+  restoreSyncRecord(target: SyncTarget, expected: SyncRecord, previous: SyncRecord): void {
+    // A single conditional write restores only this rejected operation, never a newer intent.
+    this.db
+      .prepare('UPDATE foggybrain_sync SET payload = ? WHERE target = ? AND payload = ?')
+      .run(JSON.stringify(previous), JSON.stringify(target), JSON.stringify(expected));
+  }
+
+  finishSync(target: SyncTarget, expected: SyncRecord): void {
+    const pending = expected.pending;
+    if (!pending) throw new DomainError('No pending sync', 409);
+    const merged = validatePortableState(pending.merged);
+    this.mutate((state) => {
+      if (
+        JSON.stringify(portable(state)) !== JSON.stringify(pending.local) ||
+        JSON.stringify(this.syncRecord(target)) !== JSON.stringify(expected)
+      )
+        throw new DomainError(
+          'Local state changed during sync; re-preview to reconcile the upload',
+          409,
+        );
+      this.db
+        .prepare(
+          'INSERT INTO foggybrain_sync_backups (target, created_at, payload) VALUES (?, ?, ?)',
+        )
+        .run(JSON.stringify(target), new Date().toISOString(), JSON.stringify(state));
+      const previous = new Map(state.tasks.map((task) => [task.id, task]));
+      const now = new Date().toISOString();
+      state.tasks = merged.tasks.map((task) => {
+        const old = previous.get(task.id);
+        const samePr = old?.kind === 'pr' && task.kind === 'pr' && old.prUrl === task.prUrl;
+        const unchanged =
+          old && Object.entries(task).every(([key, value]) => old[key as keyof Task] === value);
+        return {
+          ...task,
+          createdAt: old?.createdAt ?? now,
+          updatedAt: unchanged ? old.updatedAt : now,
+          prState: samePr ? old.prState : 'unknown',
+          prCheckedAt: samePr ? old.prCheckedAt : null,
+          prError: samePr ? old.prError : null,
+        };
+      });
+      state.dependencies = merged.dependencies;
+      state.references = merged.references;
+      const tasks = new Map(state.tasks.map((task) => [task.id, task]));
+      state.layouts = state.layouts
+        .filter(
+          (layout) => layout.viewId === 'root' || tasks.get(layout.viewId)?.kind === 'container',
+        )
+        .map((layout) => ({
+          ...layout,
+          positions: layout.positions.filter((position) => {
+            if (!tasks.has(position.nodeId)) return false;
+            // Removed shared memberships should not leave a stale position in that view.
+            const wasMember =
+              previous.get(position.nodeId)?.parentId === layout.viewId ||
+              pending.local.references.some(
+                (ref) => ref.containerId === layout.viewId && ref.taskId === position.nodeId,
+              );
+            return (
+              !wasMember ||
+              state.references.some(
+                (ref) => ref.containerId === layout.viewId && ref.taskId === position.nodeId,
+              ) ||
+              tasks.get(position.nodeId)?.parentId === layout.viewId
+            );
+          }),
+        }));
+      this.writeSyncRecord(target, { base: merged, lastSync: now, pending: null });
+    });
   }
 
   createTask(input: CreateTaskInput): TaskView {

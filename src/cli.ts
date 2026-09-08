@@ -3,7 +3,14 @@ import { existsSync, realpathSync } from 'node:fs';
 import { createInterface } from 'node:readline/promises';
 import { fileURLToPath } from 'node:url';
 import { Command, CommanderError, Option } from 'commander';
-import type { DeletionPreview, Snapshot, TaskView, UpdateTaskInput } from './shared.js';
+import type {
+  DeletionPreview,
+  Snapshot,
+  SyncPreview,
+  SyncStatus,
+  TaskView,
+  UpdateTaskInput,
+} from './shared.js';
 
 export async function main(argv = process.argv): Promise<void> {
   const program = new Command();
@@ -336,6 +343,33 @@ export async function main(argv = process.argv): Promise<void> {
             `${reference.id}\t${reference.containerId} -> ${reference.taskId}\n`,
           );
       }
+    });
+
+  const sync = program
+    .command('sync')
+    .description('Preview and explicitly apply server-side state sync')
+    .action(missingCommand('sync '));
+  sync
+    .command('status')
+    .description('Inspect state sync configuration and local dirty status')
+    .action(async () => output(await request<SyncStatus>('/sync/status')));
+  sync
+    .command('preview')
+    .description('Inspect changes and conflicts; check canApply and validationError')
+    .addOption(
+      new Option('--resolve <side>', 'choose a side for conflicts').choices(['local', 'remote']),
+    )
+    .action(async (options) =>
+      output(await request<SyncPreview>('/sync/preview', 'POST', { resolution: options.resolve })),
+    );
+  sync
+    .command('apply <preview-id>')
+    .description('Apply a reviewed preview; never generates a preview or prompts')
+    .option('--yes', 'explicitly confirm applying this preview')
+    .action(async (previewId, options) => {
+      if (!options.yes)
+        throw new Error('State sync apply requires --yes. Inspect sync preview before confirming.');
+      output(await request<SyncStatus>('/sync/apply', 'POST', { previewId, confirm: true }));
     });
 
   const github = program

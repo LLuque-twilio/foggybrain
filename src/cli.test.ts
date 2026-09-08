@@ -5,7 +5,7 @@ import { once } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { test, type TestContext } from 'node:test';
-import type { DeletionPreview, Snapshot, TaskView } from './shared.js';
+import type { DeletionPreview, Snapshot, SyncPreview, SyncStatus, TaskView } from './shared.js';
 
 const task = (id: string, extra: Partial<TaskView> = {}): TaskView => ({
   id,
@@ -313,6 +313,123 @@ test('CLI GitHub commands preserve status errors as data and use server-side end
       method: name === 'sync' ? 'POST' : 'GET',
       path: `/api/github/${name}`,
     });
+  }
+});
+
+test('CLI state sync forwards status, previews, conflicts, and explicit apply with exact requests', async (t) => {
+  const target = { repo: 'owner/private-state', branch: 'main', path: 'foggybrain/state.json' };
+  const status: SyncStatus = {
+    configured: true,
+    target,
+    lastSync: null,
+    dirty: true,
+    syncing: false,
+  };
+  const syncPreview: SyncPreview = {
+    previewId: 'server-preview-id',
+    target,
+    localChanges: [{ collection: 'tasks', id: 'a', title: 'Remote title', kind: 'updated' }],
+    remoteChanges: [],
+    conflicts: [
+      { path: 'tasks/a/title', base: 'Old', local: 'Local title', remote: 'Remote title' },
+    ],
+    validationError: null,
+    canApply: false,
+    resolution: null,
+  };
+  const { run, requests } = await fixture(t, (request) => ({
+    body: request.path === '/api/sync/preview' ? syncPreview : status,
+  }));
+  const cases: [string[], Request, SyncStatus | SyncPreview][] = [
+    [['status'], { method: 'GET', path: '/api/sync/status' }, status],
+    [['preview'], { method: 'POST', path: '/api/sync/preview', body: {} }, syncPreview],
+    ...(['local', 'remote'] as const).map((resolution): [string[], Request, SyncPreview] => [
+      ['preview', '--resolve', resolution],
+      { method: 'POST', path: '/api/sync/preview', body: { resolution } },
+      syncPreview,
+    ]),
+    [
+      ['apply', 'server-preview-id', '--yes'],
+      {
+        method: 'POST',
+        path: '/api/sync/apply',
+        body: { previewId: 'server-preview-id', confirm: true },
+      },
+      status,
+    ],
+  ];
+  for (const [args, expected, body] of cases) {
+    requests.length = 0;
+    const result = await run(['--json', 'sync', ...args]);
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(result.stderr, '');
+    assert.equal(result.stdout, `${JSON.stringify(body)}\n`);
+    assert.deepEqual(requests, [expected]);
+  }
+  syncPreview.validationError = 'No common sync baseline';
+  const blocked = await run(['--json', 'sync', 'preview']);
+  assert.equal(blocked.code, 0);
+  assert.equal(blocked.stderr, '');
+  assert.deepEqual(JSON.parse(blocked.stdout), syncPreview);
+  syncPreview.conflicts = [];
+  syncPreview.validationError = null;
+  syncPreview.canApply = true;
+  const clean = await run(['--json', 'sync', 'preview']);
+  assert.equal(clean.code, 0);
+  assert.equal(clean.stderr, '');
+  assert.deepEqual(JSON.parse(clean.stdout), syncPreview);
+});
+
+test('CLI state sync requires explicit --yes and valid Commander arguments without API calls', async (t) => {
+  const { run, requests } = await fixture(t);
+  for (const prefix of [[], ['--json']]) {
+    const result = await run([...prefix, 'sync', 'apply', 'reviewed-id']);
+    assert.equal(result.code, 1);
+    assert.equal(result.stdout, '');
+    assert.deepEqual(JSON.parse(result.stderr), {
+      error: 'State sync apply requires --yes. Inspect sync preview before confirming.',
+    });
+  }
+  for (const args of [
+    [],
+    ['apply', '--yes'],
+    ['preview', '--resolve', 'force'],
+    ['preview', '--resolve'],
+  ]) {
+    const result = await run(['--json', 'sync', ...args]);
+    assert.equal(result.code, 1);
+    assert.equal(result.stdout, '');
+    assert.equal(typeof JSON.parse(result.stderr).error, 'string');
+  }
+  assert.deepEqual(requests, []);
+});
+
+test('CLI state sync HTTP errors propagate without retries or automatic previews', async (t) => {
+  for (const [args, status, error, expected] of [
+    [['status'], 503, 'State sync is not configured', { method: 'GET', path: '/api/sync/status' }],
+    [
+      ['preview'],
+      502,
+      'GitHub state request failed',
+      { method: 'POST', path: '/api/sync/preview', body: {} },
+    ],
+    [
+      ['apply', 'stale-id', '--yes'],
+      409,
+      'Sync preview is stale; re-preview',
+      {
+        method: 'POST',
+        path: '/api/sync/apply',
+        body: { previewId: 'stale-id', confirm: true },
+      },
+    ],
+  ] as const) {
+    const { run, requests } = await fixture(t, () => ({ status, body: { error } }));
+    const result = await run(['--json', 'sync', ...args]);
+    assert.equal(result.code, 1);
+    assert.equal(result.stdout, '');
+    assert.equal(result.stderr, `${JSON.stringify({ error: `HTTP ${status}: ${error}` })}\n`);
+    assert.deepEqual(requests, [expected]);
   }
 });
 

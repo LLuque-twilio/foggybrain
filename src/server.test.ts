@@ -5,12 +5,12 @@ import { request as httpRequest, type IncomingHttpHeaders } from 'node:http';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
-import { Store } from './core.js';
+import { DomainError, Store } from './core.js';
 import { GithubPoller } from './github.js';
-import { createApp, readConfig } from './server.js';
-import type { Snapshot, TaskView } from './shared.js';
+import { createApp, readConfig, type AppOptions } from './server.js';
+import type { Snapshot, SyncPreview, SyncStatus, TaskView } from './shared.js';
 
-async function fixture(t: TestContext, options: { port?: number; webRoot?: string } = {}) {
+async function fixture(t: TestContext, options: AppOptions = {}) {
   const store = new Store(':memory:');
   const github = new GithubPoller(store, {
     fetch: async () => {
@@ -85,6 +85,8 @@ test('server configuration validates ports and intervals, resolves storage, and 
   assert.equal(defaults.intervalMs, 60_000);
   assert.equal(defaults.databasePath, join(homedir(), '.local/share/foggybrain/foggybrain.sqlite'));
   assert.equal(defaults.token, undefined);
+  assert.equal(defaults.syncTarget, null);
+  assert.equal(defaults.syncToken, undefined);
   const config = readConfig({
     FOGGY_PORT: '5000',
     FOGGY_DATA_DIR: '/tmp/foggybrain-config-test',
@@ -101,6 +103,93 @@ test('server configuration validates ports and intervals, resolves storage, and 
     assert.throws(() => readConfig({ FOGGY_PORT }));
   assert.throws(() => readConfig({ FOGGY_DATA_DIR: '' }));
   assert.throws(() => readConfig({ FOGGY_POLL_INTERVAL_MS: '14999' }));
+  assert.throws(() => readConfig({ FOGGY_SYNC_REPO: 'owner/state', GH_TOKEN: 'not-a-sync-token' }));
+  const sync = readConfig({ FOGGY_SYNC_REPO: 'owner/state', FOGGY_SYNC_TOKEN: 'dedicated-token' });
+  assert.deepEqual(sync.syncTarget, {
+    repo: 'owner/state',
+    branch: 'main',
+    path: 'foggybrain/state.json',
+  });
+  assert.equal(sync.syncToken, 'dedicated-token');
+});
+
+test('workspace sync defaults to unconfigured and does not use PR credentials', async (t) => {
+  const { request } = await fixture(t);
+  const status = await request('/api/sync/status');
+  assert.equal(status.status, 200);
+  assert.deepEqual(status.body, {
+    configured: false,
+    target: null,
+    lastSync: null,
+    dirty: false,
+    syncing: false,
+  });
+  assert.equal((await request('/api/sync/preview', 'POST', {})).status, 503);
+});
+
+test('workspace sync routes validate confirmation and preview inputs before delegation', async (t) => {
+  const status: SyncStatus = {
+    configured: true,
+    target: { repo: 'owner/state', branch: 'main', path: 'foggybrain/state.json' },
+    lastSync: null,
+    dirty: true,
+    syncing: false,
+  };
+  const preview: SyncPreview = {
+    previewId: 'reviewed-preview',
+    target: status.target!,
+    localChanges: [],
+    remoteChanges: [],
+    conflicts: [{ path: 'tasks/id/title', base: 'base', local: 'local', remote: 'remote' }],
+    validationError: null,
+    canApply: false,
+    resolution: null,
+  };
+  const calls: unknown[] = [];
+  const { request } = await fixture(t, {
+    sync: {
+      getStatus: () => status,
+      preview: async (options) => {
+        calls.push(options);
+        return preview;
+      },
+      apply: async (id) => {
+        calls.push(id);
+        if (id === 'stale') throw new DomainError('Sync preview is stale; re-preview', 409);
+        return { ...status, dirty: false };
+      },
+    },
+  });
+  assert.deepEqual((await request('/api/sync/status')).body, status);
+  assert.deepEqual((await request('/api/sync/preview', 'POST', {})).body, preview);
+  assert.deepEqual(
+    (await request('/api/sync/preview', 'POST', { resolution: 'remote' })).body,
+    preview,
+  );
+  for (const body of [{ resolution: 'newest' }, { resolution: null }, { token: 'secret' }, []]) {
+    assert.equal((await request('/api/sync/preview', 'POST', body)).status, 400);
+  }
+  for (const body of [
+    { previewId: 'reviewed-preview' },
+    { previewId: 'reviewed-preview', confirm: 'true' },
+    { previewId: 'reviewed-preview', confirm: false },
+    { previewId: '', confirm: true },
+    { confirm: true },
+    { previewId: 'reviewed-preview', confirm: true, resolution: 'local' },
+  ])
+    assert.equal((await request('/api/sync/apply', 'POST', body)).status, 400);
+  assert.equal((await request('/api/sync/preview', 'POST')).status, 415);
+  assert.deepEqual(calls, [{}, { resolution: 'remote' }]);
+  const applied = await request('/api/sync/apply', 'POST', {
+    previewId: 'reviewed-preview',
+    confirm: true,
+  });
+  assert.equal(applied.status, 200);
+  assert.equal(applied.body.dirty, false);
+  const stale = await request('/api/sync/apply', 'POST', { previewId: 'stale', confirm: true });
+  assert.equal(stale.status, 409);
+  assert.deepEqual(stale.body, { error: 'Sync preview is stale; re-preview' });
+  assert.deepEqual(calls, [{}, { resolution: 'remote' }, 'reviewed-preview', 'stale']);
 });
 
 test('contract routes preserve core completion, relationship and deletion semantics', async (t) => {

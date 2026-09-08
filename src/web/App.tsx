@@ -40,6 +40,7 @@ import { Graph } from './Graph';
 import { Detail } from './Detail';
 import { DeleteDialog, Dialog, DialogErrorContext, ReferenceDialog, TaskDialog } from './Dialogs';
 import { Status, statusLabels } from './Status';
+import { SyncDialog } from './SyncDialog';
 
 type Modal =
   | { type: 'create'; parentId?: string | null; prUrl?: string }
@@ -47,6 +48,7 @@ type Modal =
   | { type: 'reference'; containerId: string }
   | { type: 'delete'; task: TaskView; preview: DeletionPreview }
   | { type: 'help' }
+  | { type: 'sync' }
   | null;
 const empty: Snapshot = { tasks: [], dependencies: [], references: [], layouts: [] };
 const route = () => window.location.hash.slice(1) || '/';
@@ -244,6 +246,18 @@ export function App() {
         </div>
         <div className="nav-label">YOUR SPACE</div>
         <nav aria-label="Main navigation">
+          <button
+            aria-haspopup="dialog"
+            disabled={busy}
+            onClick={() => {
+              setError('');
+              setSidebar(false);
+              setModal({ type: 'sync' });
+            }}
+          >
+            <RefreshCw size={17} />
+            Workspace sync
+          </button>
           <button className={path === '/' ? 'active' : ''} onClick={() => navigate('/')}>
             <LayoutGrid size={17} />
             Overview<span className="nav-count">{roots.length}</span>
@@ -911,6 +925,7 @@ export function App() {
         </div>
       )}
       <DialogErrorContext value={error}>
+        {modal?.type === 'sync' && <SyncDialog close={() => setModal(null)} run={run} />}
         {modal?.type === 'create' && (
           <TaskDialog
             parentId={modal.parentId}

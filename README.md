@@ -114,6 +114,45 @@ PR URLs must be HTTPS `github.com/OWNER/REPO/pull/NUMBER` URLs. `github prs` ret
 
 Authored PR search is bounded by GitHub's 1,000-result limit. Partial or incomplete responses report an error and retain the previous cache rather than silently presenting a truncated list. GitHub Enterprise hosts, deployment verification, and approval/check gates are not implemented in v1.
 
+## Manual State Sync
+
+Optional manual state sync shares a versioned task graph through a **private GitHub state repository**, separate from `github sync` PR polling. The server uses GitHub's Contents API, not a git CLI or local clone; writes create commits in the repository's history.
+
+1. Create or choose a dedicated private state repository and an **existing branch** (default `main`). Initialize the repository first if it has no branch.
+2. Create a dedicated fine-grained token restricted to **only that selected private state repository**, with **Contents: read and write** (and GitHub's required Metadata read access). Obtain organization approval if required. Do not broaden the read-only PR token. `FOGGY_SYNC_TOKEN` must be explicit; there is **no `GH_TOKEN` or `GITHUB_TOKEN` fallback** for state sync.
+3. Configure the server environment or ignored `.env` with the placeholders below replaced locally. Never put actual credentials in commands, task text, source, logs, or URLs. Restart the server after configuration changes; the CLI does not load these settings or access the token.
+
+```dotenv
+FOGGY_SYNC_REPO=OWNER/PRIVATE_STATE_REPO
+FOGGY_SYNC_BRANCH=main
+FOGGY_SYNC_PATH=foggybrain/state.json
+FOGGY_SYNC_TOKEN=REPLACE_LOCALLY_WITH_DEDICATED_TOKEN
+```
+
+4. Inspect configuration and preview changes. These commands do not apply the preview:
+
+```sh
+pnpm --silent run foggy --json sync status
+pnpm --silent run foggy --json sync preview
+```
+
+5. Review `localChanges`, `remoteChanges`, `conflicts`, `validationError`, and `canApply`. A conflicted or blocked preview still exits `0`. If appropriate, request a new preview with `sync preview --resolve local` or `--resolve remote` and review it again. Resolution chooses conflicting values, not a force overwrite, and cannot bypass graph validation or a missing baseline.
+6. Only after authorization, apply the exact returned `previewId` from the reviewed preview with `canApply: true`:
+
+```sh
+pnpm --silent run foggy --json sync apply REVIEWED_PREVIEW_ID --yes
+pnpm --silent run foggy --json sync status
+pnpm --silent run foggy --json graph
+```
+
+Apply requires `--yes` even on a terminal, never prompts, and never generates a preview. Preview tokens are process-local and single-use; newer previews replace older ones. Re-preview after restart, edits, failures, or timeouts. Never blindly retry a timed-out apply: GitHub may already have accepted the write. Errors or uncertain outcomes may require reconciliation and explicit review, not force.
+
+The UI offers the same review-and-confirm workflow under **Workspace sync** in the sidebar. A delete/edit conflict may remain blocked even after choosing the surviving task if the competing deletion also removed its children or relationships. Reconcile that related structure before re-previewing; choosing a side never bypasses structural validation. A definitively rejected GitHub write restores prior sync bookkeeping so a new preview can reconcile normal contention. Ambiguous failures retain upload intent for recovery.
+
+For first sync, an empty local graph can pull remote state, or a missing remote file can receive local state. Two nonempty sides without a shared baseline are blocked. Preserve both: use a separate new local data directory for a pull or a distinct unused remote path for an independent publication, rather than wiping existing data.
+
+Portable `version: 1` JSON includes editable task fields, dependencies, and references. It excludes PR verification, derived completion, layouts, and timestamps. PR state is reverified locally by server polling. SQLite holds the sync baseline and automatic full local backups in `foggybrain_sync_backups`; there is no restore API or automatic pruning. Keep independent backups. **Git history and local backups retain deleted sensitive information**; deleting a task is not secure erasure. See [manual sync CLI details](docs/cli.md#manual-state-sync) for response fields and recovery safeguards.
+
 ## Configuration And Data
 
 The server loads `.env` at startup. Restart it after changing server configuration. The CLI's `FOGGY_URL` comes from its process environment, not from loading `.env` itself.
@@ -125,6 +164,13 @@ The server loads `.env` at startup. Restart it after changing server configurati
 | `FOGGY_DATA_DIR`         | Server data directory; default `~/.local/share/foggybrain`. Contains `foggybrain.sqlite`. Use an explicit absolute path to control where data lives. |
 | `FOGGY_POLL_INTERVAL_MS` | GitHub polling interval while the server runs; default `60000` ms, minimum `15000` ms.                                                               |
 | `FOGGY_URL`              | CLI server origin; default `http://127.0.0.1:4173`. Overridden by `--url`.                                                                           |
+
+| Sync variable       | Purpose                                                                                                                   |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `FOGGY_SYNC_REPO`   | Optional state sync target, `owner/repo`; must be private. Required with the dedicated sync token.                        |
+| `FOGGY_SYNC_BRANCH` | Existing target branch; default `main`. Sync does not create branches.                                                    |
+| `FOGGY_SYNC_PATH`   | State JSON path in that branch; default `foggybrain/state.json`.                                                          |
+| `FOGGY_SYNC_TOKEN`  | Dedicated explicit server token, Contents read/write on only the selected private state repository. No PR-token fallback. |
 
 For an explicit data location, start the server with, for example:
 

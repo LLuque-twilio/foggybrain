@@ -87,3 +87,54 @@ export interface GithubPr {
   draft: boolean;
   updatedAt: string;
 }
+
+export type PortableTask = Pick<
+  Task,
+  'id' | 'title' | 'description' | 'kind' | 'parentId' | 'manualDone' | 'prUrl'
+>;
+
+export interface PortableState {
+  version: 1;
+  tasks: PortableTask[];
+  dependencies: Dependency[];
+  references: TaskReference[];
+}
+
+export interface SyncTarget {
+  repo: string;
+  branch: string;
+  path: string;
+}
+
+export interface SyncStatus {
+  configured: boolean;
+  target: SyncTarget | null;
+  lastSync: string | null;
+  dirty: boolean;
+  syncing: boolean;
+}
+
+export interface SyncChange {
+  collection: 'tasks' | 'dependencies' | 'references';
+  id: string;
+  title?: string;
+  kind: 'added' | 'updated' | 'deleted';
+}
+
+export interface SyncConflict {
+  path: string;
+  base: unknown;
+  local: unknown;
+  remote: unknown;
+}
+
+export interface SyncPreview {
+  previewId: string;
+  target: SyncTarget;
+  localChanges: SyncChange[];
+  remoteChanges: SyncChange[];
+  conflicts: SyncConflict[];
+  validationError: string | null;
+  canApply: boolean;
+  resolution: 'local' | 'remote' | null;
+}
