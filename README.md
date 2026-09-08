@@ -242,6 +242,12 @@ Keep this directory across upgrades. Stop the server before making a filesystem 
 
 Foggybrain is a **local, trusted-user tool**, not a multi-user service. Loopback binding reduces exposure but is not authentication or authorization. Other processes/users with access to your machine can reach the API and mutate or delete data; access to the data directory also exposes stored task and repository information. Do not publish the API through a tunnel, reverse proxy, public bind, or shared host without adding appropriate authentication and access controls. Do not rely on browser-origin protections as an API authorization boundary. The GitHub token stays server-side and is not included in API responses, but protecting the server environment and local files remains your responsibility.
 
+## API Reference
+
+The checked-in [openapi.json](openapi.json) is the authoritative OpenAPI 3.1 HTTP reference for all 45 operations, including explicit-workspace routes. Import it into an OpenAPI 3.1-compatible viewer or code generator; the server does not expose an OpenAPI endpoint or documentation UI. Generation tools are development-only.
+
+[CONTRACT.md](CONTRACT.md) defines semantic guarantees, including completion, workspace isolation, and destructive sync safeguards. DTO field shapes originate in [src/shared.ts](src/shared.ts); the spec does not replace runtime graph/state validation. See the [API maintainer guide](docs/api.md) for generation and ownership and [PR verification](docs/pr-verification.md) for readiness precedence and stale-state handling.
+
 ## Development Checks
 
 ```sh
@@ -249,6 +255,8 @@ pnpm test
 pnpm typecheck
 pnpm build
 ```
+
+After API changes, run `pnpm openapi:generate` and `pnpm openapi:check`; never hand edit `openapi.json`. The check verifies artifact freshness and OpenAPI parser validity. `pnpm test` also checks route inventory, HTTP success responses for all 45 operations, and request boundaries.
 
 CLI tests spawn the real Commander-based CLI against a fake HTTP server and do not need a running Foggybrain instance or GitHub token. To run just those tests:
 
