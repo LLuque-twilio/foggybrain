@@ -1,0 +1,388 @@
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
+import { AlertTriangle, ArrowRight, Box, GitPullRequest, Link2, ListChecks, X } from 'lucide-react';
+import type {
+  CreateTaskInput,
+  DeletionPreview,
+  GithubPr,
+  GithubStatus,
+  Snapshot,
+  TaskKind,
+  TaskView,
+  UpdateTaskInput,
+} from '../shared';
+
+export const DialogErrorContext = createContext('');
+
+export function Dialog({
+  title,
+  close,
+  children,
+  danger = false,
+}: {
+  title: string;
+  close: () => void;
+  children: ReactNode;
+  danger?: boolean;
+}) {
+  const ref = useRef<HTMLDialogElement>(null);
+  const error = useContext(DialogErrorContext);
+  useEffect(() => {
+    const element = ref.current!;
+    element.showModal();
+    return () => element.close();
+  }, []);
+  return (
+    <dialog
+      ref={ref}
+      className={`dialog ${danger ? 'dialog-danger' : ''}`}
+      aria-label={title}
+      onCancel={(event) => {
+        event.preventDefault();
+        close();
+      }}
+      onClick={(event) => {
+        if (event.target === event.currentTarget) close();
+      }}
+    >
+      <header>
+        <h2>{title}</h2>
+        <button className="icon-button" onClick={close} aria-label="Close dialog">
+          <X size={19} />
+        </button>
+      </header>
+      {error && (
+        <div className="callout warning" role="alert">
+          {error}
+        </div>
+      )}
+      {children}
+    </dialog>
+  );
+}
+
+export function TaskDialog({
+  task,
+  parentId,
+  prUrl,
+  snapshot,
+  prs,
+  github,
+  close,
+  submit,
+  busy,
+}: {
+  task?: TaskView;
+  parentId?: string | null;
+  prUrl?: string;
+  snapshot: Snapshot;
+  prs: GithubPr[];
+  github: GithubStatus | null;
+  close: () => void;
+  submit: (input: CreateTaskInput | UpdateTaskInput, id?: string) => Promise<boolean>;
+  busy: boolean;
+}) {
+  const [kind, setKind] = useState<TaskKind>(
+    task?.kind ?? (prUrl !== undefined ? 'pr' : parentId ? 'manual' : 'container'),
+  );
+  const [title, setTitle] = useState(
+    task?.title ?? (prUrl ? `Merge PR #${prUrl.split('/').pop()}` : ''),
+  );
+  const [description, setDescription] = useState(task?.description ?? '');
+  const [url, setUrl] = useState(task?.prUrl ?? prUrl ?? '');
+  const [parent, setParent] = useState(parentId ?? '');
+  return (
+    <Dialog
+      title={task ? 'Edit task' : parentId ? 'Add a step' : 'Make a little space'}
+      close={close}
+    >
+      <form
+        onSubmit={async (event) => {
+          event.preventDefault();
+          const input = {
+            title,
+            description,
+            ...(kind === 'pr' ? { prUrl: url } : {}),
+            ...(!task ? { kind, parentId: parent || null } : {}),
+          };
+          if (await submit(input as CreateTaskInput | UpdateTaskInput, task?.id)) close();
+        }}
+      >
+        {!task && (
+          <div className="kind-picker" role="group" aria-label="Task type">
+            {(
+              [
+                ['manual', ListChecks, 'Manual step'],
+                ['pr', GitPullRequest, 'PR merge'],
+                ['container', Box, 'Container'],
+              ] as const
+            ).map(([value, Icon, label]) => (
+              <button
+                key={value}
+                type="button"
+                className={kind === value ? 'active' : ''}
+                onClick={() => setKind(value)}
+                aria-pressed={kind === value}
+              >
+                <Icon size={18} />
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
+        <p className="form-hint">
+          {kind === 'container'
+            ? 'A home for connected chains, independent steps, and other task graphs.'
+            : kind === 'pr'
+              ? 'An automatic gate. This step is satisfied when GitHub confirms the PR is merged.'
+              : 'A step you mark done yourself, even before its prerequisites finish.'}
+        </p>
+        <label>
+          Summary
+          <input
+            required
+            autoFocus
+            placeholder={
+              kind === 'container' ? 'e.g. Ship the new API to stage' : 'What needs to happen?'
+            }
+            value={title}
+            onChange={(event) => setTitle(event.target.value)}
+            maxLength={300}
+          />
+        </label>
+        <label>
+          Description <span className="optional">optional</span>
+          <textarea
+            placeholder="Keep useful context out of your head."
+            rows={3}
+            value={description}
+            onChange={(event) => setDescription(event.target.value)}
+          />
+        </label>
+        {kind === 'pr' && (
+          <>
+            <label>
+              Your open pull requests
+              <select
+                value={prs.some((pr) => pr.url === url) ? url : ''}
+                onChange={(event) => {
+                  const selected = prs.find((pr) => pr.url === event.target.value);
+                  setUrl(event.target.value);
+                  if (selected && !title.trim()) setTitle(`Merge ${selected.title}`.slice(0, 300));
+                }}
+              >
+                <option value="">Select a PR or enter a URL below</option>
+                {prs.map((pr) => (
+                  <option key={pr.url} value={pr.url}>
+                    {pr.repository} #{pr.number}: {pr.title}
+                    {pr.draft ? ' (draft)' : ''}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <p className="form-hint">
+              {!github
+                ? 'Loading GitHub status... You can also enter a URL below.'
+                : !github.configured
+                  ? 'GitHub is not connected. You can still enter a PR URL below.'
+                  : github.error
+                    ? `GitHub sync failed: ${github.error}. Listed PRs may be stale; you can enter a URL below.`
+                    : github.syncing
+                      ? 'Refreshing your open pull requests... You can also enter a URL below.'
+                      : !prs.length
+                        ? 'No authored open pull requests found. Enter a PR URL below.'
+                        : 'Choose one of your authored PRs, or enter any GitHub PR URL below.'}
+            </p>
+            <label>
+              GitHub PR URL
+              <input
+                type="url"
+                required
+                placeholder="https://github.com/owner/repo/pull/123"
+                value={url}
+                onChange={(event) => setUrl(event.target.value)}
+              />
+            </label>
+          </>
+        )}
+        {!task && (
+          <label>
+            Lives in
+            <select value={parent} onChange={(event) => setParent(event.target.value)}>
+              <option value="">Workspace (top level)</option>
+              {snapshot.tasks
+                .filter((task) => task.kind === 'container')
+                .map((task) => (
+                  <option key={task.id} value={task.id}>
+                    {task.title}
+                  </option>
+                ))}
+            </select>
+          </label>
+        )}
+        <footer>
+          <button className="button" type="button" onClick={close}>
+            Cancel
+          </button>
+          <button className="button primary" disabled={busy} type="submit">
+            {task ? 'Save changes' : 'Create task'}
+            <ArrowRight size={15} />
+          </button>
+        </footer>
+      </form>
+    </Dialog>
+  );
+}
+
+export function ReferenceDialog({
+  containerId,
+  snapshot,
+  close,
+  submit,
+  busy,
+}: {
+  containerId: string;
+  snapshot: Snapshot;
+  close: () => void;
+  submit: (taskId: string) => Promise<boolean>;
+  busy: boolean;
+}) {
+  const [query, setQuery] = useState('');
+  const [chosen, setChosen] = useState('');
+  const container = snapshot.tasks.find((task) => task.id === containerId)!;
+  const candidates = snapshot.tasks.filter(
+    (task) =>
+      task.id !== containerId &&
+      !container.childrenIds.includes(task.id) &&
+      task.title.toLowerCase().includes(query.toLowerCase()),
+  );
+  return (
+    <Dialog title="Link an existing task" close={close}>
+      <p className="form-hint">
+        A reference shares the original task's progress. It counts toward this container's
+        completion, without moving or copying the task.
+      </p>
+      <label>
+        Find a task
+        <input
+          autoFocus
+          placeholder="Search by summary..."
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+        />
+      </label>
+      <div className="reference-options">
+        {candidates.length ? (
+          candidates.map((task) => (
+            <button
+              key={task.id}
+              className={chosen === task.id ? 'chosen' : ''}
+              onClick={() => setChosen(task.id)}
+            >
+              <Link2 size={16} />
+              <span>
+                {task.title}
+                <small>
+                  {task.kind} / {task.id.slice(0, 8)}
+                </small>
+              </span>
+              <span className="radio-mark" />
+            </button>
+          ))
+        ) : (
+          <p className="muted">No matching tasks. Create another task first.</p>
+        )}
+      </div>
+      <footer>
+        <button className="button" onClick={close}>
+          Cancel
+        </button>
+        <button
+          className="button primary"
+          disabled={!chosen || busy}
+          onClick={async () => {
+            if (await submit(chosen)) close();
+          }}
+        >
+          Link task
+          <Link2 size={15} />
+        </button>
+      </footer>
+    </Dialog>
+  );
+}
+
+export function DeleteDialog({
+  task,
+  preview,
+  snapshot,
+  close,
+  confirm,
+  busy,
+}: {
+  task: TaskView;
+  preview: DeletionPreview;
+  snapshot: Snapshot;
+  close: () => void;
+  confirm: () => void;
+  busy: boolean;
+}) {
+  return (
+    <Dialog title="Delete this task?" close={close} danger>
+      <div className="delete-heading">
+        <AlertTriangle size={24} />
+        <p>
+          <strong>{task.title}</strong>
+          <br />
+          This deletes{' '}
+          {preview.taskIds.length === 1
+            ? 'this task'
+            : `this task and ${preview.taskIds.length - 1} owned step${preview.taskIds.length === 2 ? '' : 's'}`}
+          . This cannot be undone.
+        </p>
+      </div>
+      {preview.taskIds.length > 1 && (
+        <details>
+          <summary>Tasks being deleted ({preview.taskIds.length})</summary>
+          <ul>
+            {preview.taskIds.map((id) => (
+              <li key={id}>{snapshot.tasks.find((task) => task.id === id)?.title ?? id}</li>
+            ))}
+          </ul>
+        </details>
+      )}
+      <h3>Other tasks affected</h3>
+      <p className="form-hint">
+        Dependencies and references to deleted tasks will be removed. The tasks below may unblock,
+        complete, or reopen.
+      </p>
+      <div className="impact-list">
+        {preview.affectedTasks.length ? (
+          preview.affectedTasks.map((task) => (
+            <div key={task.id}>
+              <Box size={16} />
+              <span>
+                {task.title}
+                <small>{task.kind}</small>
+              </span>
+            </div>
+          ))
+        ) : (
+          <p className="muted">No other tasks depend on this task.</p>
+        )}
+      </div>
+      <p className="form-hint">
+        {preview.removedDependencies.length} dependency connections and{' '}
+        {preview.removedReferences.length} references will be removed. Independently owned reference
+        targets are kept.
+      </p>
+      <footer>
+        <button className="button" onClick={close}>
+          Keep task
+        </button>
+        <button className="button danger" disabled={busy} onClick={confirm}>
+          Delete permanently
+        </button>
+      </footer>
+    </Dialog>
+  );
+}

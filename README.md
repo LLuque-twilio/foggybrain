@@ -1,0 +1,162 @@
+# FoggyBrain
+
+A local task graph for untangling work. Group steps into containers, express prerequisites, share a task across containers, and let a merged GitHub pull request satisfy a step. The web UI and `foggy` CLI use the same running server and the same persisted state.
+
+## Getting Started
+
+Use **Node.js 22, version 22.13.0 or newer** (the server uses Node's built-in SQLite support) and **pnpm 10.14.0**, pinned in `package.json`. If pnpm is not installed, run `corepack enable` with a Corepack-enabled Node installation; Corepack uses the project's pinned version.
+
+```sh
+pnpm install
+pnpm dev
+```
+
+Open **http://127.0.0.1:5173** for the development UI. The API runs at **http://127.0.0.1:4173**; Vite proxies `/api` to it. Leave the development processes running while using the CLI in another terminal:
+
+```sh
+pnpm foggy task create "Plan the release" --kind container
+pnpm foggy task list
+pnpm foggy graph
+```
+
+For a built, single-server installation:
+
+```sh
+pnpm build
+pnpm start
+```
+
+The built UI and API are both at **http://127.0.0.1:4173**. `pnpm start` uses the existing build, so rebuild after source changes. An optional global CLI is available after building:
+
+```sh
+pnpm link
+foggy --json task list
+foggy ui
+```
+
+`bin/foggy.mjs` loads the compiled CLI; linking does not start a server. If pnpm reports a missing global bin directory, run `pnpm setup` and reopen your terminal before linking. Without linking, use `pnpm foggy <command>`, which runs the CLI source. `foggy ui` opens the configured server URL; for the development UI use `pnpm foggy --url http://127.0.0.1:5173 ui` instead. CLI flags follow `foggy` directly; do not insert an extra `--` separator.
+
+`pnpm-lock.yaml` is the dependency lockfile. Use `pnpm install --frozen-lockfile` for reproducible installs. Dependency build scripts are restricted to `esbuild`, which supports Vite and tsx.
+
+## A Shared Model
+
+- **Manual** tasks have an own condition you set with `task done` or clear with `task reopen`.
+- **PR** tasks have an own condition satisfied only by a verified merge. An open PR or one closed without merging is not satisfied. `done` and `reopen` apply only to manual tasks.
+- **Containers** have an own condition satisfied when all owned and referenced children complete. **Empty containers stay open.** Containers may be nested.
+- A task **completes only when its own condition and every prerequisite are satisfied**. Marking a manual task done early can leave it `ready`, not `completed`.
+- `available` means the own condition is unsatisfied and no prerequisite is incomplete. `blocked` means the own condition is unsatisfied and a prerequisite is incomplete. `ready` means the own condition is satisfied but prerequisites are incomplete. `completed` means both checks pass.
+- Completion is derived, not latched. Reopening a shared manual task can reopen multiple containers and downstream tasks. `waitingOn` lists incomplete direct prerequisites.
+
+Ownership and references are different. A task has at most one owning parent. A reference makes the **same task**, not a copy, a child of another container without moving it. Both kinds of membership count toward container completion. Duplicate membership and effective cycles involving containment, references, and prerequisites are rejected by the server.
+
+## Using The UI
+
+1. Create a **Container** from the overview, then add manual steps, PR merge gates, or nested containers inside it.
+2. Connect a prerequisite's right handle to a dependent's left handle. You can also select a step and use **Add a prerequisite** in its details. Multiple chains and unconnected steps can share a container.
+3. Use **Link task** to bring an existing task into a graph without copying it. A referenced container's **Open graph** button navigates to its original graph. The workspace map connects top-level tasks.
+4. Select a manual step and choose **Mark own work done**. It becomes Ready if prerequisites are unfinished, otherwise Completed. **Reopen own work** preserves downstream work while recalculating its completion.
+5. Layout defaults to automatic. Click **Auto layout** to switch to manual positioning, then drag nodes. Click **Manual layout** to return to automatic arrangement. Manual positions persist per graph.
+6. Select a connection to disconnect it. Use **Unlink from this graph** for a shared reference, or delete the original task everywhere after reviewing affected containers and tasks. The UI rechecks deletion impact before confirming.
+
+The UI refreshes server state every four seconds, including changes made by the CLI or other browser tabs. All UI assets, including fonts, are served locally. Pan and zoom the canvas on desktop or touch devices; the node detail panel provides readable task information even when a large graph is zoomed out.
+
+```sh
+# Replace IDs below with the IDs returned by the server.
+pnpm foggy task create "Release" --kind container
+pnpm foggy task create "Tests" --parent CONTAINER_ID
+pnpm foggy task create "Deploy" --parent CONTAINER_ID
+pnpm foggy dependency add TESTS_ID DEPLOY_ID
+pnpm foggy task done DEPLOY_ID
+pnpm foggy --json task show DEPLOY_ID
+# Deploy is ready until Tests completes.
+pnpm foggy task done TESTS_ID
+```
+
+## Agents And CLI
+
+The CLI talks to `FOGGY_URL`, defaulting to `http://127.0.0.1:4173`. A global `--url` overrides the environment. It never creates a private local database or silently substitutes mock state if the server is down.
+
+```sh
+foggy --url http://127.0.0.1:4173 --json task list --status available
+foggy --json task show TASK_ID
+foggy --json graph CONTAINER_ID
+foggy --json task delete TASK_ID --dry-run
+# Review the preview and obtain authorization before confirming:
+foggy --json task delete TASK_ID --yes
+```
+
+With `--json`, successful commands write one JSON value to stdout. Errors write one `{"error":"message"}` value to stderr and exit nonzero in either output mode. Help remains human-readable text. Use server-returned IDs, not titles or list positions. To avoid pnpm's script banner in JSON pipelines, use **`pnpm --silent run foggy --json <command>`** or the linked `foggy` executable.
+
+Only deletion can prompt, and only on a terminal. Piped/noninteractive deletion requires `--yes`; `--dry-run` never deletes or prompts. The preview lists deleted tasks, affected tasks, and removed relationships. Deletion cascades through **owned descendants**, not reference targets, and removes touching dependencies and references. Other containers and dependents can change completion, including transitively. Unlink a shared child with `reference remove REFERENCE_ID` when you mean to keep the task. There is no CLI undo; previews are not locks against concurrent edits.
+
+See [the CLI reference](docs/cli.md) for every command, output shape, and a runnable branching/shared-task workflow. See [AGENTS.md](AGENTS.md) for repository checks and automation rules.
+
+## GitHub
+
+GitHub is optional; manual tasks and containers do not need a token. Set **`GH_TOKEN` in the server environment**, or put it in a local `.env` file in the repository root before starting the server:
+
+```dotenv
+GH_TOKEN=your_token_here
+```
+
+`.env` and other local `.env.*` files are ignored; `.env.example` is the tracked template. Never commit tokens, paste them into task descriptions, or pass them in `--url`. The CLI reads GitHub status from the server; it does not need the token itself.
+
+Use a token restricted to the repositories you intend to track. For a fine-grained token, grant **Metadata: read** and **Pull requests: read** on those repositories. Some repository access paths or organization policies may also require **Contents: read**, SSO authorization, or organization approval. Exact access depends on the account, repositories, and GitHub policy; these permissions are not a promise that every private repository will be visible. Avoid granting write permissions for this read-only integration.
+
+```sh
+pnpm --silent run foggy --json github status
+pnpm --silent run foggy --json github sync
+pnpm --silent run foggy --json github prs
+pnpm foggy task create "Merge the fix" --kind pr --pr https://github.com/OWNER/REPO/pull/123
+```
+
+PR URLs must be HTTPS `github.com/OWNER/REPO/pull/NUMBER` URLs. `github prs` returns the server's cached **authored open PRs**, not every PR in every repository. Polling runs **only while the server is running**, not while it is shut down and not in a standalone CLI process. `github sync` requests an immediate refresh. Check the returned `configured`, `syncing`, `lastSync`, and `error` fields: a successful HTTP call can still report a GitHub failure in `error`. Poll failures retain the last verified PR state and attach an error; cached data can therefore be stale. Changing a task's PR URL resets its verified PR state.
+
+Authored PR search is bounded by GitHub's 1,000-result limit. Partial or incomplete responses report an error and retain the previous cache rather than silently presenting a truncated list. GitHub Enterprise hosts, deployment verification, and approval/check gates are not implemented in v1.
+
+## Configuration And Data
+
+The server loads `.env` at startup. Restart it after changing server configuration. The CLI's `FOGGY_URL` comes from its process environment, not from loading `.env` itself.
+
+| Variable                 | Purpose                                                                                                                                              |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GH_TOKEN`               | Optional server-side GitHub token; the server also accepts `GITHUB_TOKEN` as a fallback.                                                             |
+| `FOGGY_PORT`             | Server port; default `4173`. The server binds to loopback.                                                                                           |
+| `FOGGY_DATA_DIR`         | Server data directory; default `~/.local/share/foggybrain`. Contains `foggybrain.sqlite`. Use an explicit absolute path to control where data lives. |
+| `FOGGY_POLL_INTERVAL_MS` | GitHub polling interval while the server runs; default `60000` ms, minimum `15000` ms.                                                               |
+| `FOGGY_URL`              | CLI server origin; default `http://127.0.0.1:4173`. Overridden by `--url`.                                                                           |
+
+For an explicit data location, start the server with, for example:
+
+```sh
+FOGGY_DATA_DIR="$HOME/.local/share/foggybrain" pnpm start
+```
+
+Keep this directory across upgrades. Stop the server before making a filesystem backup of the data directory so the SQLite database and any WAL files are consistent. Removing local data is not an uninstall step and loses your graph. Build output in `dist/` is not your task database. If you change `FOGGY_PORT`, also set the CLI URL; the development Vite proxy is configured for port `4173` and does not automatically follow a changed server port.
+
+## Security Limits
+
+Foggybrain is a **local, trusted-user tool**, not a multi-user service. Loopback binding reduces exposure but is not authentication or authorization. Other processes/users with access to your machine can reach the API and mutate or delete data; access to the data directory also exposes stored task and repository information. Do not publish the API through a tunnel, reverse proxy, public bind, or shared host without adding appropriate authentication and access controls. Do not rely on browser-origin protections as an API authorization boundary. The GitHub token stays server-side and is not included in API responses, but protecting the server environment and local files remains your responsibility.
+
+## Development Checks
+
+```sh
+pnpm test
+pnpm typecheck
+pnpm build
+```
+
+CLI tests spawn the real Commander-based CLI against a fake HTTP server and do not need a running Foggybrain instance or GitHub token. To run just those tests:
+
+```sh
+node --import tsx --test src/cli.test.ts
+```
+
+Browser tests cover desktop and mobile Chromium using a temporary database and no GitHub credentials:
+
+```sh
+pnpm exec playwright install chromium
+pnpm test:e2e
+```
+
+The browser suite builds the app, starts an isolated server on port `4189`, and removes its temporary data at shutdown. Unit and integration tests mock GitHub; a real token is needed to verify access to your actual repositories.
