@@ -6,7 +6,7 @@ A local task graph for untangling work. Group steps into containers, express pre
 
 Contributions are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md). Licensed under
 the [MIT License](LICENSE). Report vulnerabilities using [SECURITY.md](SECURITY.md),
-not public issues. Maintainers should follow the [public-release checklist](docs/repository-security.md).
+not public issues.
 
 Use **Node.js 22, version 22.13.0 or newer** (the server uses Node's built-in SQLite support) and **pnpm 10.14.0**, pinned in `package.json`. If pnpm is not installed, run `corepack enable` with a Corepack-enabled Node installation; Corepack uses the project's pinned version.
 
