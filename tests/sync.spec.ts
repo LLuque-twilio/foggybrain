@@ -33,16 +33,29 @@ async function openSync(page: Page) {
 }
 
 test.beforeEach(async ({ page }) => {
-  await page.route('**/api/state', (route) =>
+  await page.route('**/api/workspaces', (route) =>
+    route.fulfill({
+      json: {
+        workspaces: [
+          { id: 'default', name: 'Personal', type: 'cloud', target, credential: 'dedicated' },
+        ],
+        defaultWorkspaceId: 'default',
+        limit: 3,
+      },
+    }),
+  );
+  await page.route('**/api/workspaces/default/state', (route) =>
     route.fulfill({ json: { tasks: [], dependencies: [], references: [], layouts: [] } }),
   );
-  await page.route('**/api/github/status', (route) =>
+  await page.route('**/api/workspaces/default/github/status', (route) =>
     route.fulfill({
       json: { configured: false, login: null, lastSync: null, error: null, syncing: false },
     }),
   );
-  await page.route('**/api/github/prs', (route) => route.fulfill({ json: [] }));
-  await page.route('**/api/sync/status', (route) => route.fulfill({ json: status }));
+  await page.route('**/api/workspaces/default/github/prs', (route) => route.fulfill({ json: [] }));
+  await page.route('**/api/workspaces/default/sync/status', (route) =>
+    route.fulfill({ json: status }),
+  );
 });
 
 test('manual preview requires confirmation and successful apply refreshes the graph', async ({
@@ -52,7 +65,7 @@ test('manual preview requires confirmation and successful apply refreshes the gr
   let applied = false;
   let stateReads = 0;
   let syncReads = 0;
-  await page.route('**/api/state', (route) => {
+  await page.route('**/api/workspaces/default/state', (route) => {
     stateReads++;
     const snapshot: Snapshot = {
       tasks: applied
@@ -83,7 +96,7 @@ test('manual preview requires confirmation and successful apply refreshes the gr
     };
     return route.fulfill({ json: snapshot });
   });
-  await page.route('**/api/sync/**', (route) => {
+  await page.route('**/api/workspaces/default/sync/**', (route) => {
     const path = new URL(route.request().url()).pathname;
     if (path.endsWith('/status')) {
       syncReads++;
@@ -104,7 +117,7 @@ test('manual preview requires confirmation and successful apply refreshes the gr
   await expect(dialog).toContainText('Local title');
   await expect(dialog).toContainText('old-edge');
   await expect(dialog.getByRole('button', { name: 'Apply sync', exact: true })).toBeDisabled();
-  expect(writes).toEqual([{ path: '/api/sync/preview', body: {} }]);
+  expect(writes).toEqual([{ path: '/api/workspaces/default/sync/preview', body: {} }]);
   expect(
     await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth),
   ).toBeTruthy();
@@ -112,7 +125,7 @@ test('manual preview requires confirmation and successful apply refreshes the gr
   await dialog.getByRole('button', { name: 'Apply sync', exact: true }).click();
   await expect(dialog).toContainText('Workspace sync applied successfully.');
   expect(writes[1]).toEqual({
-    path: '/api/sync/apply',
+    path: '/api/workspaces/default/sync/apply',
     body: { previewId: 'preview-1', confirm: true },
   });
   await dialog.getByRole('button', { name: 'Close dialog' }).click();
@@ -125,7 +138,7 @@ for (const resolution of ['local', 'remote'] as const) {
   }) => {
     const bodies: unknown[] = [];
     let applies = 0;
-    await page.route('**/api/sync/preview', (route) => {
+    await page.route('**/api/workspaces/default/sync/preview', (route) => {
       const body = route.request().postDataJSON() as { resolution?: 'local' | 'remote' };
       bodies.push(body);
       return route.fulfill({
@@ -145,7 +158,7 @@ for (const resolution of ['local', 'remote'] as const) {
         },
       });
     });
-    await page.route('**/api/sync/apply', (route) => {
+    await page.route('**/api/workspaces/default/sync/apply', (route) => {
       applies++;
       expect(route.request().postDataJSON()).toEqual({ previewId: 'resolved', confirm: true });
       return route.fulfill({ json: status });
@@ -174,11 +187,11 @@ for (const failure of ['Sync preview is stale; re-preview', 'GitHub state reques
   test(`${failure} invalidates preview and never retries apply`, async ({ page }) => {
     let applies = 0;
     let previews = 0;
-    await page.route('**/api/sync/preview', (route) => {
+    await page.route('**/api/workspaces/default/sync/preview', (route) => {
       previews++;
       return route.fulfill({ json: { ...preview, previewId: `preview-${previews}` } });
     });
-    await page.route('**/api/sync/apply', (route) => {
+    await page.route('**/api/workspaces/default/sync/apply', (route) => {
       applies++;
       return route.fulfill({
         status: failure.includes('stale') ? 409 : 502,
@@ -207,19 +220,12 @@ test('unconfigured sync gives server-only setup guidance without writes', async 
   page.on('request', (request) => {
     if (request.method() !== 'GET') writes.push(request.url());
   });
-  await page.route('**/api/sync/status', (route) =>
+  await page.route('**/api/workspaces/default/sync/status', (route) =>
     route.fulfill({ json: { ...status, configured: false, target: null } }),
   );
   const dialog = await openSync(page);
   await expect(dialog).toContainText('Set up workspace sync');
-  for (const text of [
-    'FOGGY_SYNC_REPO',
-    'FOGGY_SYNC_TOKEN',
-    'Contents read/write',
-    'FOGGY_SYNC_BRANCH',
-    'FOGGY_SYNC_PATH',
-    'no fallback to GH_TOKEN',
-  ])
+  for (const text of ['FOGGY_SYNC_TOKEN', 'Contents read/write'])
     await expect(dialog).toContainText(text);
   await expect(dialog.getByRole('button', { name: 'Preview sync', exact: true })).toBeDisabled();
   expect(writes).toEqual([]);
@@ -228,14 +234,16 @@ test('unconfigured sync gives server-only setup guidance without writes', async 
 });
 
 test('validation and status errors remain inside the dialog', async ({ page }) => {
-  await page.route('**/api/sync/status', (route) =>
+  await page.route('**/api/workspaces/default/sync/status', (route) =>
     route.fulfill({ status: 503, json: { error: 'Sync configuration is invalid' } }),
   );
   const dialog = await openSync(page);
   await expect(dialog.getByRole('alert')).toContainText('Sync configuration is invalid');
-  await page.route('**/api/sync/status', (route) => route.fulfill({ json: status }));
+  await page.route('**/api/workspaces/default/sync/status', (route) =>
+    route.fulfill({ json: status }),
+  );
   await dialog.getByRole('button', { name: 'Refresh status' }).click();
-  await page.route('**/api/sync/preview', (route) =>
+  await page.route('**/api/workspaces/default/sync/preview', (route) =>
     route.fulfill({
       json: { ...preview, canApply: false, validationError: 'No common sync baseline.' },
     }),

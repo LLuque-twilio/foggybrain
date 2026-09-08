@@ -106,6 +106,70 @@ export interface SyncTarget {
   path: string;
 }
 
+export interface Workspace {
+  id: string;
+  name: string;
+  type: 'local' | 'cloud';
+  target: SyncTarget | null;
+  credential: 'dedicated' | 'github' | null;
+}
+
+export interface WorkspaceList {
+  workspaces: Workspace[];
+  defaultWorkspaceId: string | null;
+  limit: number;
+}
+
+export interface WorkspaceRemovalPreview {
+  workspace: Workspace;
+  taskCount: number;
+  dependencyCount: number;
+  referenceCount: number;
+  dirty: boolean;
+  canRemove: boolean;
+  reason: string | null;
+  revision: string;
+}
+
+export interface WorkspaceRepositories {
+  login: string;
+  repositories: { id: number; fullName: string; defaultBranch: string }[];
+}
+
+export interface WorkspaceBranches {
+  branches: string[];
+}
+
+export interface WorkspaceFiles {
+  paths: string[];
+}
+
+export function safeSyncRef(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    value.length <= 512 &&
+    /^[a-zA-Z0-9_][a-zA-Z0-9_./-]*$/.test(value) &&
+    !value.includes('..') &&
+    !value
+      .split('/')
+      .some((part) => !part || part.startsWith('.') || part.endsWith('.') || part.endsWith('.lock'))
+  );
+}
+
+export interface CreateWorkspaceInput {
+  name: string;
+  type: 'local' | 'cloud';
+  target?: SyncTarget;
+  credential?: 'dedicated' | 'github';
+}
+
+export interface UpdateWorkspaceInput {
+  name?: string;
+  type?: 'cloud';
+  target?: SyncTarget;
+  credential?: 'dedicated' | 'github';
+}
+
 export interface SyncStatus {
   configured: boolean;
   target: SyncTarget | null;

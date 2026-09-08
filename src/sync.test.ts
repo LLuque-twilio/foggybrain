@@ -85,13 +85,21 @@ async function apply(sync: StateSync) {
 
 test('config is explicit, separate from GH_TOKEN, and rejects unsafe targets', () => {
   assert.equal(readSyncConfig({ GH_TOKEN: 'not-sync' }), null);
+  assert.equal(readSyncConfig({ FOGGY_SYNC_TOKEN: token }), null);
+  assert.deepEqual(readSyncConfig({ FOGGY_SYNC_REPO: 'Owner/Repo' }), target);
+  assert.deepEqual(readSyncConfig({ FOGGY_SYNC_REPO: 'Owner/Repo', GH_TOKEN: token }), target);
+  for (const invalid of ['', ' ', 'token\n', 'with space', 'non-ascii-\u00e9']) {
+    assert.throws(() => readSyncConfig({ FOGGY_SYNC_TOKEN: invalid }), /FOGGY_SYNC_TOKEN/);
+    assert.throws(
+      () => readSyncConfig({ FOGGY_SYNC_REPO: 'o/r', FOGGY_SYNC_TOKEN: invalid }),
+      /FOGGY_SYNC_TOKEN/,
+    );
+  }
   assert.deepEqual(
     readSyncConfig({ FOGGY_SYNC_REPO: 'Owner/Repo', FOGGY_SYNC_TOKEN: token }),
     target,
   );
   for (const env of [
-    { FOGGY_SYNC_REPO: 'o/r', GH_TOKEN: token },
-    { FOGGY_SYNC_TOKEN: token },
     { FOGGY_SYNC_BRANCH: 'main' },
     { FOGGY_SYNC_PATH: 'state.json' },
     ...['https://github.com/o/r', 'o/..', 'o/r?q=x', 'o/r/extra'].map((repo) => ({

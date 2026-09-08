@@ -92,7 +92,7 @@ async function fixture(
         ['--import', 'tsx', fileURLToPath(new URL('./cli.ts', import.meta.url)), ...args],
         {
           cwd: fileURLToPath(new URL('..', import.meta.url)),
-          env: { ...process.env, FOGGY_URL: url, NO_COLOR: '1', ...env },
+          env: { ...process.env, FOGGY_URL: url, FOGGY_WORKSPACE: '', NO_COLOR: '1', ...env },
           stdio: ['pipe', 'pipe', 'pipe'],
           timeout: 30_000,
         },
@@ -157,6 +157,213 @@ test('CLI create uses commander, preserves arguments, uses server IDs, and honor
       },
     },
   ]);
+});
+
+test('CLI workspace selection scopes reads and writes, honors flags over env, and never falls back', async (t) => {
+  const { run, requests } = await fixture(t, (request) => ({
+    body: request.path.endsWith('/state') ? snapshot : { ok: true },
+  }));
+  const cases: [string[], NodeJS.ProcessEnv, Request][] = [
+    [
+      ['graph'],
+      { FOGGY_WORKSPACE: 'env-id' },
+      { method: 'GET', path: '/api/workspaces/env-id/state' },
+    ],
+    [
+      ['task', 'create', 'Work', '--workspace', 'a/b ?'],
+      { FOGGY_WORKSPACE: 'ignored' },
+      {
+        method: 'POST',
+        path: '/api/workspaces/a%2Fb%20%3F/tasks',
+        body: { title: 'Work', kind: 'manual' },
+      },
+    ],
+    [
+      ['--workspace', 'selected', 'sync', 'preview'],
+      {},
+      { method: 'POST', path: '/api/workspaces/selected/sync/preview', body: {} },
+    ],
+    [
+      ['github', 'status'],
+      { FOGGY_WORKSPACE: 'selected' },
+      { method: 'GET', path: '/api/workspaces/selected/github/status' },
+    ],
+    [
+      ['reference', 'remove', 'r'],
+      { FOGGY_WORKSPACE: 'selected' },
+      { method: 'DELETE', path: '/api/workspaces/selected/references/r' },
+    ],
+  ];
+  for (const [args, env, expected] of cases) {
+    const result = await run(['--json', ...args], env);
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(result.stderr, '');
+    assert.ok(JSON.parse(result.stdout));
+    assert.deepEqual(requests.at(-1), expected);
+  }
+  const missing = await fixture(t, () => ({ status: 404, body: { error: 'Workspace not found' } }));
+  const result = await missing.run(['--json', '--workspace', 'missing', 'graph']);
+  assert.equal(result.code, 1);
+  assert.equal(result.stdout, '');
+  assert.deepEqual(JSON.parse(result.stderr), { error: 'HTTP 404: Workspace not found' });
+  assert.deepEqual(missing.requests, [{ method: 'GET', path: '/api/workspaces/missing/state' }]);
+});
+
+test('CLI workspace management is unscoped and forwards server results and cloud defaults', async (t) => {
+  const local = {
+    id: 'generated-id',
+    name: 'Personal',
+    type: 'local',
+    target: null,
+    credential: null,
+  };
+  const list = { workspaces: [local], defaultWorkspaceId: 'default', limit: 3 };
+  const { run, requests } = await fixture(t, (request) => ({
+    body: request.method === 'GET' ? list : local,
+  }));
+  const target = { repo: 'owner/private', branch: 'main', path: 'foggybrain/state.json' };
+  const cases: [string[], Request][] = [
+    [['list'], { method: 'GET', path: '/api/workspaces' }],
+    [
+      ['create', 'Personal'],
+      { method: 'POST', path: '/api/workspaces', body: { name: 'Personal', type: 'local' } },
+    ],
+    [
+      ['rename', 'a/b', 'New name'],
+      { method: 'PATCH', path: '/api/workspaces/a%2Fb', body: { name: 'New name' } },
+    ],
+    [
+      ['create', 'Cloud', '--type', 'cloud', '--repo', target.repo],
+      {
+        method: 'POST',
+        path: '/api/workspaces',
+        body: { name: 'Cloud', type: 'cloud', target, credential: 'dedicated' },
+      },
+    ],
+    [
+      ['connect', 'default', '--repo', target.repo],
+      {
+        method: 'PATCH',
+        path: '/api/workspaces/default',
+        body: { type: 'cloud', target, credential: 'dedicated' },
+      },
+    ],
+    [
+      [
+        'connect',
+        'generated-id',
+        '--repo',
+        target.repo,
+        '--branch',
+        'state',
+        '--path',
+        'other.json',
+        '--credential',
+        'github',
+      ],
+      {
+        method: 'PATCH',
+        path: '/api/workspaces/generated-id',
+        body: {
+          type: 'cloud',
+          target: { ...target, branch: 'state', path: 'other.json' },
+          credential: 'github',
+        },
+      },
+    ],
+  ];
+  for (const [args, expected] of cases) {
+    requests.length = 0;
+    const result = await run(['--json', '--workspace', 'ignored-flag', 'workspace', ...args], {
+      FOGGY_WORKSPACE: 'ignored-env',
+    });
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(result.stderr, '');
+    assert.deepEqual(JSON.parse(result.stdout), args[0] === 'list' ? list : local);
+    assert.deepEqual(requests, [expected]);
+  }
+});
+
+test('CLI deletion and sync apply keep the selected workspace throughout confirmation', async (t) => {
+  const { run, requests } = await fixture(t, (request) => ({
+    body: request.path.endsWith('/state')
+      ? snapshot
+      : request.path.endsWith('/deletion-preview')
+        ? preview
+        : { ok: true },
+  }));
+  for (const flags of [['--dry-run'], ['--yes']]) {
+    requests.length = 0;
+    const result = await run([
+      '--json',
+      '--workspace',
+      'selected',
+      'task',
+      'delete',
+      'c',
+      ...flags,
+    ]);
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(result.stderr, '');
+    assert.ok(JSON.parse(result.stdout));
+    assert.deepEqual(requests, [
+      { method: 'GET', path: '/api/workspaces/selected/tasks/c/deletion-preview' },
+      { method: 'GET', path: '/api/workspaces/selected/state' },
+      ...(flags[0] === '--yes'
+        ? [{ method: 'DELETE', path: '/api/workspaces/selected/tasks/c?confirm=true' }]
+        : []),
+    ]);
+  }
+  requests.length = 0;
+  const result = await run(['--json', 'sync', 'apply', 'reviewed-id', '--yes'], {
+    FOGGY_WORKSPACE: 'selected',
+  });
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(result.stderr, '');
+  assert.deepEqual(JSON.parse(result.stdout), { ok: true });
+  assert.deepEqual(requests, [
+    {
+      method: 'POST',
+      path: '/api/workspaces/selected/sync/apply',
+      body: { previewId: 'reviewed-id', confirm: true },
+    },
+  ]);
+});
+
+test('CLI workspace validation and server limit/retarget errors preserve machine semantics', async (t) => {
+  const { run, requests } = await fixture(t);
+  for (const args of [
+    ['workspace'],
+    ['workspace', 'create'],
+    ['workspace', 'rename', 'id'],
+    ['workspace', 'create', 'Cloud', '--type', 'cloud'],
+    ['workspace', 'create', 'Local', '--repo', 'owner/repo'],
+    ['workspace', 'create', 'Local', '--credential', 'dedicated'],
+    ['workspace', 'create', 'X', '--type', 'invalid'],
+    ['workspace', 'connect', 'id'],
+    ['workspace', 'connect', 'id', '--repo', 'owner/repo', '--credential', 'invalid'],
+    ['workspace', 'connect', 'id', '--type', 'local'],
+    ['--workspace', '', 'graph'],
+    ['--workspace', '..', 'graph'],
+    ['--workspace', '.', 'graph'],
+  ]) {
+    const result = await run(['--json', ...args]);
+    assert.equal(result.code, 1, JSON.stringify(args));
+    assert.equal(result.stdout, '');
+    assert.equal(typeof JSON.parse(result.stderr).error, 'string');
+  }
+  assert.deepEqual(requests, []);
+  for (const [args, error] of [
+    [['create', 'Fourth'], 'Workspace limit reached'],
+    [['connect', 'cloud-id', '--repo', 'other/repo'], 'Cloud workspace cannot be retargeted'],
+  ] as const) {
+    const server = await fixture(t, () => ({ status: 409, body: { error } }));
+    const result = await server.run(['--json', 'workspace', ...args]);
+    assert.equal(result.code, 1);
+    assert.equal(result.stdout, '');
+    assert.deepEqual(JSON.parse(result.stderr), { error: `HTTP 409: ${error}` });
+    assert.equal(server.requests.length, 1);
+  }
 });
 
 test('CLI list filters ownership/status; show includes children and relationship IDs; graph scopes shared children', async (t) => {
@@ -546,7 +753,9 @@ test('CLI import is inert and ui passes a single URL argument to a platform open
     const original = childProcess.spawn;
     let calls = 0;
     const opener = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'rundll32.exe' : 'xdg-open';
-    const url = 'http://example.test;touch/';
+    const origin = 'http://example.test;touch/';
+    let url = origin;
+    delete process.env.FOGGY_WORKSPACE;
     childProcess.spawn = (executable, args, options) => {
       if (executable !== opener) return original(executable, args, options);
       calls++;
@@ -562,6 +771,12 @@ test('CLI import is inert and ui passes a single URL argument to a platform open
     assert.equal(calls, 0);
     await main(['node', 'foggy', '--url', url, '--json', 'ui']);
     assert.equal(calls, 1);
+    process.env.FOGGY_WORKSPACE = 'env & workspace';
+    url = origin + '?workspace=env+%26+workspace';
+    await main(['node', 'foggy', '--url', origin, '--json', 'ui']);
+    url = origin + '?workspace=flag%2F%3F%3B%24%28x%29';
+    await main(['node', 'foggy', '--url', origin, '--workspace', 'flag/?;$(x)', '--json', 'ui']);
+    assert.equal(calls, 3);
   `;
   const result = await promisify(execFile)(
     process.execPath,
@@ -572,7 +787,17 @@ test('CLI import is inert and ui passes a single URL argument to a platform open
     },
   );
   assert.equal(result.stderr, '');
-  assert.deepEqual(JSON.parse(result.stdout), { url: 'http://example.test;touch/', opened: true });
+  assert.deepEqual(
+    result.stdout
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line)),
+    [
+      { url: 'http://example.test;touch/', opened: true },
+      { url: 'http://example.test;touch/?workspace=env+%26+workspace', opened: true },
+      { url: 'http://example.test;touch/?workspace=flag%2F%3F%3B%24%28x%29', opened: true },
+    ],
+  );
 });
 
 test('CLI terminal deletion lists deleted and affected IDs/titles; yes confirms and EOF cancels safely', async (t) => {

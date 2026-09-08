@@ -1,5 +1,6 @@
-import type { Store } from './core.js';
-import type { GithubPr, GithubStatus, PrState, TaskView } from './shared.js';
+import { DomainError, type Store } from './core.js';
+import type { GithubPr, GithubStatus, PrState, TaskView, WorkspaceRepositories } from './shared.js';
+import { safeSyncRef, type WorkspaceBranches, type WorkspaceFiles } from './shared.js';
 
 const API_ROOT = 'https://api.github.com';
 const NOT_CONFIGURED = 'GitHub token is not configured. Set GH_TOKEN or GITHUB_TOKEN.';
@@ -64,6 +65,184 @@ export interface GithubPollerOptions {
   timeoutMs?: number;
   fetch?: typeof fetch;
   now?: () => number;
+}
+
+function discoveryRequest(token: string, fetcher: typeof fetch, signal: AbortSignal) {
+  return async (path: string): Promise<unknown> => {
+    const response = await fetcher(`${API_ROOT}${path}`, {
+      headers: {
+        Accept: 'application/vnd.github+json',
+        Authorization: `Bearer ${token}`,
+        'X-GitHub-Api-Version': '2022-11-28',
+        'User-Agent': 'foggybrain',
+      },
+      redirect: 'error',
+      signal,
+    });
+    if (!response.ok) {
+      await response.body?.cancel();
+      if (response.status === 401)
+        throw new GithubError('GitHub authentication failed for the selected server credential.');
+      if (response.status === 403 || response.status === 429)
+        throw new GithubError(
+          'GitHub access denied or rate limited. Check selected credential permissions and retry later.',
+        );
+      throw new GithubError(`GitHub discovery returned HTTP ${response.status}.`);
+    }
+    return response.json();
+  };
+}
+
+export async function discoverOwnedRepositories(
+  token: string,
+  fetcher: typeof fetch = globalThis.fetch,
+): Promise<WorkspaceRepositories> {
+  const signal = AbortSignal.timeout(15_000);
+  const request = discoveryRequest(token, fetcher, signal);
+  try {
+    const user = record(await request('/user'));
+    if (
+      typeof user.login !== 'string' ||
+      !/^[a-z\d][a-z\d-]*$/i.test(user.login) ||
+      !Number.isSafeInteger(user.id) ||
+      (user.id as number) <= 0
+    )
+      throw new GithubError('GitHub returned an invalid user.');
+    const repositories = new Map<number, WorkspaceRepositories['repositories'][number]>();
+    // Construct every page locally; never follow remote Link headers with credentials.
+    for (let page = 1; page <= 10; page++) {
+      const items = await request(
+        `/user/repos?visibility=private&affiliation=owner&sort=full_name&per_page=100&page=${page}`,
+      );
+      if (!Array.isArray(items) || items.length > 100)
+        throw new GithubError('GitHub returned an invalid repository list.');
+      for (const item of items) {
+        const repo = record(item);
+        const owner = record(repo.owner);
+        if (repo.private !== true || owner.id !== user.id || owner.type !== 'User') continue;
+        if (
+          !Number.isSafeInteger(repo.id) ||
+          (repo.id as number) <= 0 ||
+          typeof repo.name !== 'string' ||
+          !/^[a-z\d_.-]+$/i.test(repo.name) ||
+          repo.name === '.' ||
+          repo.name === '..' ||
+          typeof owner.login !== 'string' ||
+          owner.login.toLowerCase() !== user.login.toLowerCase() ||
+          repo.full_name !== `${owner.login}/${repo.name}` ||
+          typeof repo.default_branch !== 'string' ||
+          !repo.default_branch.trim() ||
+          repo.default_branch.length > 255 ||
+          /[\x00-\x1f\x7f]/.test(repo.default_branch)
+        )
+          throw new GithubError('GitHub returned an invalid repository.');
+        repositories.set(repo.id as number, {
+          id: repo.id as number,
+          fullName: repo.full_name as string,
+          defaultBranch: repo.default_branch,
+        });
+      }
+      if (items.length < 100)
+        return {
+          login: user.login,
+          repositories: [...repositories.values()].sort((a, b) =>
+            a.fullName.localeCompare(b.fullName),
+          ),
+        };
+    }
+    throw new GithubError(
+      'Repository discovery reached its 1,000-entry limit. Narrow the selected token repository access and retry.',
+    );
+  } catch (error) {
+    throw new DomainError(
+      signal.aborted ? 'GitHub repository discovery timed out.' : errorMessage(error),
+      502,
+    );
+  }
+}
+
+export async function discoverRepositoryEntries(
+  token: string,
+  repo: string,
+  branch: string | undefined,
+  fetcher: typeof fetch = globalThis.fetch,
+): Promise<WorkspaceBranches | WorkspaceFiles> {
+  const signal = AbortSignal.timeout(15_000);
+  const request = discoveryRequest(token, fetcher, signal);
+  const root = `/repos/${repo.split('/').map(encodeURIComponent).join('/')}`;
+  try {
+    const user = record(await request('/user'));
+    const repository = record(await request(root));
+    const owner = record(repository.owner);
+    if (
+      !Number.isSafeInteger(user.id) ||
+      (user.id as number) <= 0 ||
+      typeof user.login !== 'string' ||
+      repository.private !== true ||
+      owner.type !== 'User' ||
+      owner.id !== user.id ||
+      typeof owner.login !== 'string' ||
+      owner.login.toLowerCase() !== user.login.toLowerCase() ||
+      typeof repository.full_name !== 'string' ||
+      repository.full_name.toLowerCase() !== repo.toLowerCase() ||
+      repo.split('/')[0].toLowerCase() !== user.login.toLowerCase()
+    )
+      throw new GithubError(
+        'Discovery requires a private repository owned by the selected credential account.',
+      );
+    if (branch === undefined) {
+      const branches = new Set<string>();
+      for (let page = 1; page <= 10; page++) {
+        const items = await request(`${root}/branches?per_page=100&page=${page}`);
+        if (!Array.isArray(items) || items.length > 100)
+          throw new GithubError('GitHub returned an invalid branch list.');
+        for (const item of items) {
+          const entry = record(item);
+          if (typeof entry.name !== 'string' || !entry.name || entry.name.length > 512)
+            throw new GithubError('GitHub returned an invalid branch.');
+          if (safeSyncRef(entry.name)) branches.add(entry.name);
+        }
+        if (items.length < 100) return { branches: [...branches].sort() };
+      }
+      throw new GithubError('Branch discovery reached its 1,000-entry limit.');
+    }
+    // Resolve an actual branch first: a tag or arbitrary tree SHA is not a branch selection.
+    const selected = record(await request(`${root}/branches/${encodeURIComponent(branch)}`));
+    const commit = record(selected.commit);
+    if (
+      selected.name !== branch ||
+      typeof commit.sha !== 'string' ||
+      !/^[a-f\d]{40}$/i.test(commit.sha)
+    )
+      throw new GithubError('GitHub returned an invalid branch.');
+    const tree = record(await request(`${root}/git/trees/${commit.sha}?recursive=1`));
+    if (tree.truncated !== false || !Array.isArray(tree.tree) || tree.tree.length > 100_000)
+      throw new GithubError('GitHub file tree is incomplete or exceeds the 100,000-entry limit.');
+    const paths = new Set<string>();
+    for (const item of tree.tree) {
+      const entry = record(item);
+      if (
+        typeof entry.path !== 'string' ||
+        !['blob', 'tree', 'commit'].includes(String(entry.type))
+      )
+        throw new GithubError('GitHub returned an invalid file tree.');
+      if (
+        entry.type === 'blob' &&
+        ['100644', '100755'].includes(String(entry.mode)) &&
+        safeSyncRef(entry.path) &&
+        /\.json$/i.test(entry.path)
+      )
+        paths.add(entry.path);
+      if (paths.size > 2_000)
+        throw new GithubError('File discovery exceeds the 2,000 JSON candidate limit.');
+    }
+    return { paths: [...paths].sort() };
+  } catch (error) {
+    throw new DomainError(
+      signal.aborted ? 'GitHub discovery timed out.' : errorMessage(error),
+      502,
+    );
+  }
 }
 
 export class GithubPoller {

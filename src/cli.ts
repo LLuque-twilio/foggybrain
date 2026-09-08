@@ -4,12 +4,16 @@ import { createInterface } from 'node:readline/promises';
 import { fileURLToPath } from 'node:url';
 import { Command, CommanderError, Option } from 'commander';
 import type {
+  CreateWorkspaceInput,
   DeletionPreview,
   Snapshot,
   SyncPreview,
   SyncStatus,
   TaskView,
   UpdateTaskInput,
+  UpdateWorkspaceInput,
+  Workspace,
+  WorkspaceList,
 } from './shared.js';
 
 export async function main(argv = process.argv): Promise<void> {
@@ -23,6 +27,11 @@ export async function main(argv = process.argv): Promise<void> {
       process.env.FOGGY_URL || 'http://127.0.0.1:4173',
     )
     .option('--json', 'print command results as JSON')
+    .option(
+      '--workspace <id>',
+      'workspace ID (or FOGGY_WORKSPACE)',
+      process.env.FOGGY_WORKSPACE || undefined,
+    )
     .showSuggestionAfterError(false)
     .configureOutput({ writeErr: () => {} })
     .exitOverride();
@@ -51,8 +60,20 @@ export async function main(argv = process.argv): Promise<void> {
     }
     return url;
   };
-  const request = async <T>(path: string, method = 'GET', body?: unknown): Promise<T> => {
-    const url = new URL(`/api${path}`, serverUrl());
+  const request = async <T>(
+    path: string,
+    method = 'GET',
+    body?: unknown,
+    scoped = true,
+  ): Promise<T> => {
+    const workspace = program.opts().workspace;
+    if (scoped && workspace !== undefined && !workspace.trim())
+      throw new Error('--workspace / FOGGY_WORKSPACE must be a nonempty workspace ID.');
+    if (scoped && (workspace === '.' || workspace === '..'))
+      throw new Error('Invalid workspace ID.');
+    const prefix =
+      scoped && workspace !== undefined ? `/workspaces/${encodeURIComponent(workspace)}` : '';
+    const url = new URL(`/api${prefix}${path}`, serverUrl());
     let response: Response;
     let text: string;
     try {
@@ -107,6 +128,86 @@ export async function main(argv = process.argv): Promise<void> {
     throw new Error(`Specify a ${command}command. Run foggy ${command}--help for usage.`);
   };
   program.action(missingCommand(''));
+  const workspace = program
+    .command('workspace')
+    .description('Manage up to three local or local-first cloud workspaces')
+    .action(missingCommand('workspace '));
+  workspace
+    .command('list')
+    .description('List workspaces, the default workspace ID, and the server limit')
+    .action(async () =>
+      output(await request<WorkspaceList>('/workspaces', 'GET', undefined, false)),
+    );
+  workspace
+    .command('rename <id> <name>')
+    .description('Rename a workspace without changing its target')
+    .action(async (id, name) =>
+      output(
+        await request<Workspace>(
+          `/workspaces/${encodeURIComponent(id)}`,
+          'PATCH',
+          { name } satisfies UpdateWorkspaceInput,
+          false,
+        ),
+      ),
+    );
+  for (const name of ['create', 'connect'] as const) {
+    const command = workspace
+      .command(name === 'create' ? 'create <name>' : 'connect <id>')
+      .description(
+        name === 'create'
+          ? 'Create a workspace; does not access remote state'
+          : 'Connect a local workspace to cloud; no remote access or cloud retargeting',
+      )
+      .option('--repo <owner/repo>', 'existing private state repository (required for cloud)')
+      .option('--branch <branch>', 'existing branch (cloud default: main)')
+      .option('--path <path>', 'state JSON path (cloud default: foggybrain/state.json)')
+      .addOption(
+        new Option(
+          '--credential <source>',
+          'server credential (cloud default: dedicated); github explicitly reuses GitHub auth',
+        ).choices(['dedicated', 'github']),
+      );
+    if (name === 'create')
+      command.addOption(
+        new Option('--type <type>', 'workspace type').choices(['local', 'cloud']).default('local'),
+      );
+    command.action(async (value, options) => {
+      const type = name === 'connect' ? 'cloud' : options.type;
+      if (
+        type === 'local' &&
+        [options.repo, options.branch, options.path, options.credential].some(
+          (value) => value !== undefined,
+        )
+      )
+        throw new Error('Cloud configuration requires --type cloud.');
+      if (type === 'cloud' && !options.repo)
+        throw new Error('Cloud configuration requires --repo.');
+      const configuration =
+        type === 'cloud'
+          ? {
+              target: {
+                repo: options.repo,
+                branch: options.branch ?? 'main',
+                path: options.path ?? 'foggybrain/state.json',
+              },
+              credential: options.credential ?? 'dedicated',
+            }
+          : {};
+      const body: CreateWorkspaceInput | UpdateWorkspaceInput =
+        name === 'create'
+          ? { name: value, type, ...configuration }
+          : { type: 'cloud', ...configuration };
+      output(
+        await request<Workspace>(
+          name === 'create' ? '/workspaces' : `/workspaces/${encodeURIComponent(value)}`,
+          name === 'create' ? 'POST' : 'PATCH',
+          body,
+          false,
+        ),
+      );
+    });
+  }
   const task = program
     .command('task')
     .description('Create, inspect, and manage tasks')
@@ -394,7 +495,14 @@ export async function main(argv = process.argv): Promise<void> {
     .command('ui')
     .description('Open the server UI in the default web browser')
     .action(async () => {
-      const url = serverUrl().href;
+      const target = serverUrl();
+      const workspace = program.opts().workspace;
+      if (workspace !== undefined) {
+        if (!workspace.trim())
+          throw new Error('--workspace / FOGGY_WORKSPACE must be a nonempty workspace ID.');
+        target.searchParams.set('workspace', workspace);
+      }
+      const url = target.href;
       // Passing the URL as an argument avoids shell interpretation of untrusted input.
       const executable =
         process.platform === 'darwin'

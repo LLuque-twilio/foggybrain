@@ -5,8 +5,8 @@
 ## Invocation
 
 ```text
-foggy [--url <origin>] [--json] <command>
-pnpm foggy [--url <origin>] [--json] <command>
+foggy [--url <origin>] [--workspace <id>] [--json] <command>
+pnpm foggy [--url <origin>] [--workspace <id>] [--json] <command>
 ```
 
 The `foggy` executable is available after `pnpm build` and optional `pnpm link`. If pnpm reports a missing global bin directory, run `pnpm setup` and reopen your terminal before linking. `pnpm foggy` runs the TypeScript source without requiring a build. CLI arguments follow `foggy` directly, without an extra `--` separator. In scripts that parse stdout, suppress pnpm's banner:
@@ -15,17 +15,54 @@ The `foggy` executable is available after `pnpm build` and optional `pnpm link`.
 pnpm --silent run foggy --json task list
 ```
 
-| Global flag      | Behavior                                                                                                                                                                                 |
-| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--url <origin>` | Overrides `FOGGY_URL`; otherwise defaults to `http://127.0.0.1:4173`. Use an absolute HTTP(S) origin, optionally with a trailing slash, without a path, credentials, query, or fragment. |
-| `--json`         | Print each successful command result as one JSON value followed by a newline. Accepted before or after the subcommand.                                                                   |
-| `-h`, `--help`   | Human-readable help for the current command, even with `--json`. No server required.                                                                                                     |
+| Global flag        | Behavior                                                                                                                                                                                 |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--url <origin>`   | Overrides `FOGGY_URL`; otherwise defaults to `http://127.0.0.1:4173`. Use an absolute HTTP(S) origin, optionally with a trailing slash, without a path, credentials, query, or fragment. |
+| `--json`           | Print each successful command result as one JSON value followed by a newline. Accepted before or after the subcommand.                                                                   |
+| `--workspace <id>` | Overrides process `FOGGY_WORKSPACE` (not loaded from `.env`). Omit both to keep legacy default-workspace API paths.                                                                      |
+| `-h`, `--help`     | Human-readable help for the current command, even with `--json`. No server required.                                                                                                     |
 
 The CLI reads `FOGGY_URL` from the process environment, not `.env`. Task and relationship IDs come from server responses and are stable; do not infer IDs from titles, ordering, or UI positions. Quote titles, descriptions, and URLs in your shell. Use the full returned ID.
 
 Success exits `0`. Command-line, validation, transport, and HTTP errors exit `1`, write nothing to stdout, and write a single `{"error":"message"}` JSON object to stderr, **even without `--json`**. Interactive deletion also writes its preview and prompt to terminal stderr before any cancellation/error. There are no progress logs on stdout. Help text is the exception to JSON output. Requests time out after 15 seconds; redirects are rejected rather than silently targeting a different service. Mutations are not retried automatically. After a timeout on a write, inspect state before retrying: the server may already have committed it.
 
 Normal `task list` and `graph` output is a human-readable tab-separated list with IDs, status, kind, JSON-quoted title, and owning parent (`root` for no owner). Normal graph output also lists dependency and reference IDs. All other successful commands already print JSON in normal mode; use `--json` consistently for scripts.
+
+## Workspaces
+
+```text
+foggy workspace list
+foggy workspace create <name> [--type local|cloud] [--repo owner/repo] [--branch branch] [--path path] [--credential dedicated|github]
+foggy workspace rename <id> <name>
+foggy workspace connect <id> --repo owner/repo [--branch branch] [--path path] [--credential dedicated|github]
+```
+
+The server supports at most **three entries**, each with its own local SQLite graph. Local workspaces have no state-sync target. Cloud workspaces are **local-first**, not hosted databases: edits persist locally and move to/from GitHub only through manual sync. Browser tabs select independently; changing a tab does not change the CLI default or another tab. Keep the same `--workspace ID` (or `FOGGY_WORKSPACE`) across edits, deletion preview/confirmation, and sync preview/apply.
+
+`list` returns `{workspaces, defaultWorkspaceId, limit}`. `defaultWorkspaceId` is a string when a default exists; an empty registry returns `workspaces: []` and `defaultWorkspaceId: null`. Create, rename, and connect return a `Workspace`: `{id, name, type, target, credential}`. Local `target` and `credential` are null; cloud `target` is `{repo, branch, path}`. All management commands print JSON even without `--json` and always use unscoped `/api/workspaces` routes, ignoring global workspace selection. Use server-returned IDs, never names or indexes.
+
+Create defaults to `--type local`; local creation rejects cloud-only flags. Cloud creation and connect require `--repo`, default `--branch main`, `--path foggybrain/state.json`, and **`--credential dedicated`**. Connect converts an existing local workspace to cloud without replacing its graph. Rename works for either type. Cloud retargeting and cloud-to-local demotion are not supported; the server enforces transitions and the entry limit. Local workspace removal is available in UI Settings with preview and confirmation, not through a CLI command. The final workspace can be removed. Removing the default assigns the oldest surviving workspace as the default for unscoped CLI calls, or leaves no default if none remain; explicit removed IDs fail without fallback.
+
+An empty registry remains empty on startup; no workspace is recreated. Unscoped domain requests (task, graph, relationship, GitHub, and sync) return HTTP 404 with the usual CLI error output and exit 1, while workspace management and health remain accessible. Run `workspace create` to create a local or cloud workspace; the first workspace created in the empty registry becomes the default. The empty UI offers **Add/connect workspace**. Clear or replace any explicit removed workspace selection before domain calls; creation does not override `--workspace` or `FOGGY_WORKSPACE`.
+
+The private repository and branch must already exist. Dedicated mode uses server `FOGGY_SYNC_TOKEN` with Contents read/write restricted to the selected private repository. **Only explicit `--credential github` opts into reuse** of server `GH_TOKEN`, `GITHUB_TOKEN`, or `gh auth token`; that credential then needs Contents read/write on the private state repository and any organization/SSO approval. Prefer dedicated credentials so PR access stays read-only. The CLI never retrieves or sends tokens.
+
+Creating or connecting only saves configuration: **no remote reads or writes** occur, and success is not proof of access. To fetch existing remote state, create an empty cloud workspace and review/apply its sync preview. To publish a local graph, connect it to an unused remote file path and review/apply. Two nonempty sides without a baseline remain blocked; never wipe either to bypass the guard.
+
+```sh
+foggy --json workspace list
+foggy --json workspace create "Personal"
+foggy --json workspace create "Shared" --type cloud --repo OWNER/PRIVATE_STATE_REPO
+foggy --json workspace rename WORKSPACE_ID "Release planning"
+foggy --json workspace connect LOCAL_WORKSPACE_ID --repo OWNER/PRIVATE_STATE_REPO --credential dedicated
+foggy --json --workspace WORKSPACE_ID sync status
+foggy --json --workspace WORKSPACE_ID sync preview
+# After reviewing and obtaining authorization:
+foggy --json --workspace WORKSPACE_ID sync apply REVIEWED_PREVIEW_ID --yes
+foggy --workspace WORKSPACE_ID ui
+```
+
+Migration preserves the existing database as workspace `default`; new entries receive generated IDs. Existing CLI invocations without selection use the current persisted default through unscoped endpoints, or fail with 404 when none exists. Explicit selection uses `/api/workspaces/:id/{existing path}` for every task, graph, relationship, GitHub, and sync request; a missing workspace fails without fallback. UI opening uses URL-encoded `?workspace=ID`. Selection flags work before or after subcommands.
 
 ## Task Commands
 
@@ -272,6 +309,7 @@ Opens the configured origin in your default browser using `open` on macOS, `rund
 ```sh
 foggy ui
 foggy --url http://127.0.0.1:5173 ui  # Development UI
+foggy --workspace WORKSPACE_ID ui  # Opens /?workspace=WORKSPACE_ID
 ```
 
 ## Agent Workflow

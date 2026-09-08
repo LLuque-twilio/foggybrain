@@ -38,6 +38,40 @@ foggy ui
 
 `pnpm-lock.yaml` is the dependency lockfile. Use `pnpm install --frozen-lockfile` for reproducible installs. Dependency build scripts are restricted to `esbuild`, which supports Vite and tsx.
 
+## Workspaces
+
+Keep up to **three independent workspaces** on one server. Each stores its graph in local SQLite. A **local** workspace has no state-sync target; a **cloud** workspace is still local-first, with manual preview/apply sync to a private GitHub repository, not a hosted database or automatic sync service.
+
+```sh
+pnpm --silent run foggy --json workspace list
+pnpm --silent run foggy --json workspace create "Personal"
+pnpm --silent run foggy --json workspace create "Shared" --type cloud --repo OWNER/PRIVATE_STATE_REPO
+pnpm --silent run foggy --json workspace rename WORKSPACE_ID "Release planning"
+pnpm --silent run foggy --json workspace connect LOCAL_WORKSPACE_ID --repo OWNER/PRIVATE_STATE_REPO
+pnpm --silent run foggy --json --workspace WORKSPACE_ID graph
+pnpm foggy --workspace WORKSPACE_ID ui
+```
+
+Use the IDs returned by the server. `--workspace ID` overrides process `FOGGY_WORKSPACE`; without either, CLI calls retain legacy default-workspace paths. Explicit selection never falls back if the workspace is missing. Workspace management commands always address the unscoped registry. Browser tabs select independently using `?workspace=ID`; switching one does not change another tab or the CLI default.
+
+Existing installations keep their database as workspace `default`, preserving old unscoped API calls and CLI workflows; additional entries receive generated IDs. Keep the data directory across upgrades. Rename is supported for both types; connect converts local to cloud without replacing local tasks. Cloud retargeting and demotion to local are not supported.
+
+Use **Settings > Remove workspace** to review and confirm permanent removal from this device. This deletes local tasks, relationships, layouts, sync history, backups, and unsynced changes, with no undo. The cloud repository and its state file are untouched. You can remove the final workspace. Removing the default makes the oldest remaining workspace the new default, or leaves no default if none remain. Active state sync blocks removal, and changes after preview require a fresh review. Only run one server against a data directory. No CLI removal command is provided.
+
+With no workspaces, `WorkspaceList` returns `workspaces: []` and `defaultWorkspaceId: null`. Restarting the server preserves the empty registry without recreating a workspace. The UI offers **Add/connect workspace** to start again; the first workspace created becomes the default. Unscoped domain API requests return 404 until a workspace exists, while workspace management and health remain accessible. CLI users can run `workspace list` and `workspace create` to recover without restarting.
+
+Cloud setup requires an existing private repository and branch. Defaults are branch `main`, path `foggybrain/state.json`, and credential `dedicated` (`FOGGY_SYNC_TOKEN` on the server). Explicit `--credential github` instead reuses server `GH_TOKEN`, `GITHUB_TOKEN`, or `gh auth token`; it requires Contents read/write on the selected private state repository and any organization/SSO approval. Dedicated mode never silently falls back. Prefer a dedicated restricted token to keep PR credentials read-only.
+
+In the UI, **Add workspace > Cloud** and **Connect to cloud** use progressive, same-input search dropdowns: select a repository to automatically load branches, then explicitly select an existing branch to load state paths. No default branch is automatically confirmed. Choose the server credential first: discovery shows only that account's private, token-accessible owned repositories, not browser, organization, or collaborator repositories. Dedicated mode uses only `FOGGY_SYNC_TOKEN`; explicit GitHub reuse uses the server's startup-resolved `GH_TOKEN`, `GITHUB_TOKEN`, or `gh auth token`. Changing credentials clears all selections; editing a repository clears branch and path; editing a branch clears path. Use arrow keys and Enter to select, or Escape to dismiss a dropdown.
+
+State paths list safe JSON file candidates from the selected branch, without reading their contents. Filter existing paths or enter a new safe path and select **Use new path** to publish local state. Candidates are not verified FoggyBrain state until sync preview; saving never imports or publishes automatically. Missing credentials, discovery errors, and empty results include retry/guidance. Repository and branch discovery each allow at most 10 pages of 100 entries; incomplete results fail. File discovery rejects truncated trees, trees over 100,000 entries, or over 2,000 JSON candidates. Only sync-supported branch/path names are offered. Discovery does not prove Contents write access or sync readiness.
+
+Open **Settings** to view the selected workspace's name, storage type, repository, branch, state path, and credential mode, or to rename, connect, and add workspaces. Cloud targets remain read-only after connection.
+
+Create/connect API mutations only store configuration, with **no remote reads or writes**; the UI's separate repository discovery performs read-only GitHub requests before saving. After cloud creation or connection, the UI automatically opens and fetches a sync preview. Review the changes and explicitly confirm **Apply sync** to load existing cloud tasks or publish local changes; the graph refreshes after apply. Failed previews leave the connection saved and display an error. For an already-connected workspace, open **Workspace sync** and choose **Preview sync**. Reloading alone does not import remote tasks.
+
+From the CLI, create an empty cloud workspace, then run `--workspace ID sync preview` and apply only after review to fetch existing remote state. To publish local state, connect a local workspace to an unused remote file path, then review/apply. Use the same workspace ID throughout. See [workspace CLI details](docs/cli.md#workspaces) and the safeguards below.
+
 ## A Shared Model
 
 - **Manual** tasks have an own condition you set with `task done` or clear with `task reopen`.
@@ -99,7 +133,7 @@ GitHub is optional; manual tasks and containers do not need a token. Set **`GH_T
 GH_TOKEN=your_token_here
 ```
 
-`.env` and other local `.env.*` files are ignored; `.env.example` is the tracked template. Never commit tokens, paste them into task descriptions, or pass them in `--url`. The CLI reads GitHub status from the server; it does not need the token itself.
+The server loads `.env.local` and `.env` from its working directory. Exported environment variables take precedence, then `.env.local`, then `.env`. Restart the server after changes. Both files and other local `.env.*` files are ignored; `.env.example` is the tracked template. Never commit tokens, paste them into task descriptions, or pass them in `--url`. The CLI reads GitHub status from the server; it does not need the token itself.
 
 Use a token restricted to the repositories you intend to track. For a fine-grained token, grant **Metadata: read** and **Pull requests: read** on those repositories. Some repository access paths or organization policies may also require **Contents: read**, SSO authorization, or organization approval. Exact access depends on the account, repositories, and GitHub policy; these permissions are not a promise that every private repository will be visible. Avoid granting write permissions for this read-only integration.
 
@@ -114,13 +148,32 @@ PR URLs must be HTTPS `github.com/OWNER/REPO/pull/NUMBER` URLs. `github prs` ret
 
 Authored PR search is bounded by GitHub's 1,000-result limit. Partial or incomplete responses report an error and retain the previous cache rather than silently presenting a truncated list. GitHub Enterprise hosts, deployment verification, and approval/check gates are not implemented in v1.
 
+## Create a Dedicated Sync Token
+
+A dedicated sync token is a GitHub Personal Access Token (PAT) created specifically for FoggyBrain state sync, separate from the read-only token used for PR tracking. Prefer **fine-grained tokens**, not **Tokens (classic)**: fine-grained tokens can limit access to selected repositories, while classic tokens generally need the broader `repo` scope for private repositories.
+
+1. Open **GitHub Settings > Developer settings > Personal access tokens > Fine-grained tokens > Generate new token**, or use [GitHub's token creation page](https://github.com/settings/personal-access-tokens/new). This is not in **SSH and GPG keys**: FoggyBrain uses the GitHub API, not SSH Git authentication or GPG commit signing.
+2. Give the token a descriptive name, such as `FoggyBrain state sync`, and choose an expiration you can rotate before it expires.
+3. Select the **Resource owner** that owns the state repository. The UI repository picker currently lists user-owned repositories, not organization repositories.
+4. Under **Repository access**, choose **Only select repositories** and select your private state repository or repositories.
+5. Under **Repository permissions**, grant **Contents: Read and write**. GitHub includes the required **Metadata: Read** permission automatically. No Pull requests write permission is needed. Obtain any required organization approval or SSO authorization.
+6. Generate the token and store it only on the server as `FOGGY_SYNC_TOKEN`, either in its process environment or the ignored project-root `.env.local` or `.env`. Do not paste it into chat, task text, commands, URLs, screenshots, or committed files.
+
+```dotenv
+FOGGY_SYNC_TOKEN=REPLACE_LOCALLY_WITH_YOUR_FINE_GRAINED_PAT
+```
+
+Restart the server, select **Dedicated sync token** in Add workspace or Connect to cloud, and choose your repository. Setting only `FOGGY_SYNC_TOKEN` does not connect a workspace automatically. Repository discovery does not prove write access; review a sync preview before applying changes.
+
+One token can cover multiple workspace files in the same repository. Permissions are repository-wide, not file-specific; use separate repositories when workspaces need different access boundaries. A dedicated token is recommended for ongoing use because it limits the impact of a compromised credential. Explicit GitHub credential reuse remains a convenient alternative if the existing server credential has the required access.
+
 ## Manual State Sync
 
 Optional manual state sync shares a versioned task graph through a **private GitHub state repository**, separate from `github sync` PR polling. The server uses GitHub's Contents API, not a git CLI or local clone; writes create commits in the repository's history.
 
 1. Create or choose a dedicated private state repository and an **existing branch** (default `main`). Initialize the repository first if it has no branch.
-2. Create a dedicated fine-grained token restricted to **only that selected private state repository**, with **Contents: read and write** (and GitHub's required Metadata read access). Obtain organization approval if required. Do not broaden the read-only PR token. `FOGGY_SYNC_TOKEN` must be explicit; there is **no `GH_TOKEN` or `GITHUB_TOKEN` fallback** for state sync.
-3. Configure the server environment or ignored `.env` with the placeholders below replaced locally. Never put actual credentials in commands, task text, source, logs, or URLs. Restart the server after configuration changes; the CLI does not load these settings or access the token.
+2. Prefer a dedicated fine-grained token restricted to **only that selected private state repository**, with **Contents: read and write** (and Metadata read). Obtain organization approval if required. Dedicated mode uses `FOGGY_SYNC_TOKEN` without fallback. Alternatively, workspace create/connect with explicit `--credential github` opts into server GitHub credential reuse (`GH_TOKEN`, `GITHUB_TOKEN`, or `gh auth token`); that credential must have Contents read/write on the state repository. Reuse is never automatic.
+3. Configure credentials in the server environment or ignored `.env`. The legacy target variables below initialize the default workspace or convert an existing local default on restart, preserving its name and data. Once it is cloud, the persisted target and credential take precedence: changing or removing legacy variables does not retarget or demote it. Use workspace create/connect for additional entries. A missing dedicated token does not block startup or local data access; sync preview/apply report a credential error. Malformed supplied tokens and invalid legacy targets remain configuration errors. Never put actual credentials in commands, task text, source, logs, or URLs. Restart after environment changes; the CLI does not load these settings or access the token.
 
 ```dotenv
 FOGGY_SYNC_REPO=OWNER/PRIVATE_STATE_REPO
@@ -164,13 +217,14 @@ The server loads `.env` at startup. Restart it after changing server configurati
 | `FOGGY_DATA_DIR`         | Server data directory; default `~/.local/share/foggybrain`. Contains `foggybrain.sqlite`. Use an explicit absolute path to control where data lives. |
 | `FOGGY_POLL_INTERVAL_MS` | GitHub polling interval while the server runs; default `60000` ms, minimum `15000` ms.                                                               |
 | `FOGGY_URL`              | CLI server origin; default `http://127.0.0.1:4173`. Overridden by `--url`.                                                                           |
+| `FOGGY_WORKSPACE`        | CLI workspace ID from process environment; overridden by `--workspace`. Unset keeps the server default, independently of browser tabs.               |
 
-| Sync variable       | Purpose                                                                                                                   |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `FOGGY_SYNC_REPO`   | Optional state sync target, `owner/repo`; must be private. Required with the dedicated sync token.                        |
-| `FOGGY_SYNC_BRANCH` | Existing target branch; default `main`. Sync does not create branches.                                                    |
-| `FOGGY_SYNC_PATH`   | State JSON path in that branch; default `foggybrain/state.json`.                                                          |
-| `FOGGY_SYNC_TOKEN`  | Dedicated explicit server token, Contents read/write on only the selected private state repository. No PR-token fallback. |
+| Sync variable       | Purpose                                                                                                                                                                           |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `FOGGY_SYNC_REPO`   | Legacy default-workspace state target, `owner/repo`; must be private. Additional targets use workspace create/connect.                                                            |
+| `FOGGY_SYNC_BRANCH` | Existing target branch; default `main`. Sync does not create branches.                                                                                                            |
+| `FOGGY_SYNC_PATH`   | State JSON path in that branch; default `foggybrain/state.json`.                                                                                                                  |
+| `FOGGY_SYNC_TOKEN`  | Server token for dedicated mode, Contents read/write restricted to the selected private state repository. No automatic fallback; GitHub reuse requires explicit workspace opt-in. |
 
 For an explicit data location, start the server with, for example:
 

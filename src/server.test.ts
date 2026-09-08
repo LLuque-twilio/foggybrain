@@ -1,13 +1,15 @@
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { request as httpRequest, type IncomingHttpHeaders } from 'node:http';
+import { createServer } from 'node:net';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
 import { DomainError, Store } from './core.js';
 import { GithubPoller } from './github.js';
-import { createApp, readConfig, type AppOptions } from './server.js';
+import { createApp, readConfig, startServer, type AppOptions } from './server.js';
+import { WorkspaceManager } from './workspaces.js';
 import type { Snapshot, SyncPreview, SyncStatus, TaskView } from './shared.js';
 
 async function fixture(t: TestContext, options: AppOptions = {}) {
@@ -17,7 +19,11 @@ async function fixture(t: TestContext, options: AppOptions = {}) {
       assert.fail('GitHub must never use the network in server tests');
     },
   });
-  const app = createApp(store, github, options);
+  const app = createApp(
+    options.workspaces ? null : store,
+    options.workspaces ? null : github,
+    options,
+  );
   const server = app.listen(0, '127.0.0.1');
   t.after(async () => {
     await github.stop();
@@ -79,6 +85,401 @@ async function fixture(t: TestContext, options: AppOptions = {}) {
   return { store, github, request };
 }
 
+test('workspace removal requires strict reviewed confirmation and reroutes the default across restart', async (t) => {
+  const dataDir = mkdtempSync(join(tmpdir(), 'foggy-removal-api-'));
+  const workspaces = new WorkspaceManager({
+    dataDir,
+    fetch: async () => assert.fail('No remote calls'),
+  });
+  t.after(async () => {
+    await workspaces.close();
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+  const other = workspaces.create({ name: 'Replacement', type: 'local' });
+  const task = workspaces
+    .get(other.id)
+    .store.createTask({ title: 'Replacement task', kind: 'manual' });
+  const { request } = await fixture(t, { workspaces });
+  const path = '/api/workspaces/default';
+  const preview = await request(`${path}/removal-preview`);
+  assert.equal(preview.status, 200);
+  assert.equal(preview.headers['cache-control'], 'no-store');
+  const body = { revision: preview.body.revision };
+  for (const query of ['', '?confirm=false', '?confirm=true&confirm=true', '?confirm=true&extra=x'])
+    assert.equal((await request(path + query, 'DELETE', body)).status, 400);
+  assert.equal((await request(`${path}?confirm=true`, 'DELETE')).status, 415);
+  for (const invalid of [{}, { revision: '' }, { revision: 2 }, { ...body, confirm: true }, []])
+    assert.equal((await request(`${path}?confirm=true`, 'DELETE', invalid)).status, 400);
+  workspaces.update('default', { name: 'Changed' });
+  assert.equal((await request(`${path}?confirm=true`, 'DELETE', body)).status, 409);
+  const reviewed = (await request(`${path}/removal-preview`)).body;
+  const removed = await request(`${path}?confirm=true`, 'DELETE', { revision: reviewed.revision });
+  assert.equal(removed.status, 200);
+  assert.equal(removed.body.defaultWorkspaceId, other.id);
+  assert.equal((await request('/api/state')).body.tasks[0].id, task.id);
+  assert.equal((await request(`${path}/state`)).status, 404);
+  assert.equal((await request(`${path}/removal-preview`)).status, 404);
+  const last = (await request(`/api/workspaces/${other.id}/removal-preview`)).body;
+  assert.equal(last.canRemove, true);
+  assert.equal(
+    (await request(`/api/workspaces/${other.id}`, 'DELETE', { revision: last.revision })).status,
+    400,
+  );
+  assert.equal(
+    (await request(`/api/workspaces/${other.id}?confirm=true`, 'DELETE', { revision: 'stale' }))
+      .status,
+    409,
+  );
+  assert.equal(
+    (
+      await request(`/api/workspaces/${other.id}?confirm=true`, 'DELETE', {
+        revision: last.revision,
+      })
+    ).status,
+    200,
+  );
+  await workspaces.close();
+  const reopened = new WorkspaceManager({ dataDir });
+  t.after(() => reopened.close());
+  const restarted = await fixture(t, { workspaces: reopened });
+  assert.deepEqual((await restarted.request('/api/workspaces')).body, {
+    workspaces: [],
+    defaultWorkspaceId: null,
+    limit: 3,
+  });
+  assert.deepEqual((await restarted.request('/api/health')).body, { ok: true });
+  for (const endpoint of ['/state', '/github/status', '/sync/status']) {
+    const response = await restarted.request(`/api${endpoint}`);
+    assert.equal(response.status, 404);
+    assert.match(response.body.error, /No workspace selected/);
+    assert.equal((await restarted.request(`/api/workspaces/${other.id}${endpoint}`)).status, 404);
+  }
+  assert.equal((await restarted.request('/api/workspaces/repositories')).status, 503);
+  const created = await restarted.request('/api/workspaces', 'POST', {
+    name: 'New first',
+    type: 'local',
+  });
+  assert.equal(created.status, 201);
+  assert.equal(
+    (await restarted.request('/api/workspaces')).body.defaultWorkspaceId,
+    created.body.id,
+  );
+  assert.equal((await restarted.request('/api/state')).status, 200);
+  assert.equal((await restarted.request('/api/workspaces/default/state')).status, 404);
+});
+
+test('startServer serves an empty registry without creating a placeholder database', async (t) => {
+  const dataDir = mkdtempSync(join(tmpdir(), 'foggy-empty-startup-'));
+  t.after(() => rmSync(dataDir, { recursive: true, force: true }));
+  const manager = new WorkspaceManager({ dataDir });
+  try {
+    await manager.remove('default', { revision: manager.removalPreview('default').revision });
+  } finally {
+    await manager.close();
+  }
+  const reservation = createServer().listen(0, '127.0.0.1');
+  await once(reservation, 'listening');
+  const address = reservation.address();
+  assert.ok(address && typeof address !== 'string');
+  await new Promise<void>((resolve, reject) =>
+    reservation.close((error) => (error ? reject(error) : resolve())),
+  );
+  const env = {
+    FOGGY_DATA_DIR: dataDir,
+    FOGGY_PORT: String(address.port),
+    FOGGY_SYNC_REPO: 'owner/state',
+    FOGGY_SYNC_BRANCH: 'main',
+    FOGGY_SYNC_PATH: 'state.json',
+    FOGGY_SYNC_TOKEN: '',
+    GH_TOKEN: '',
+    GITHUB_TOKEN: '',
+    PATH: '',
+    FOGGY_POLL_INTERVAL_MS: '60000',
+  };
+  const previous = Object.fromEntries(Object.keys(env).map((key) => [key, process.env[key]]));
+  Object.assign(process.env, env);
+  delete process.env.FOGGY_SYNC_TOKEN;
+  try {
+    const running = await startServer({ loadEnv: false });
+    try {
+      const base = `http://127.0.0.1:${address.port}/api`;
+      assert.deepEqual(await (await fetch(`${base}/health`)).json(), { ok: true });
+      assert.deepEqual(await (await fetch(`${base}/workspaces`)).json(), {
+        workspaces: [],
+        defaultWorkspaceId: null,
+        limit: 3,
+      });
+      assert.equal((await fetch(`${base}/state`)).status, 404);
+      assert.deepEqual(
+        readdirSync(dataDir).filter((file) => file !== 'workspaces.sqlite'),
+        [],
+      );
+      const response = await fetch(`${base}/workspaces`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'First', type: 'local' }),
+      });
+      assert.equal(response.status, 201);
+      assert.equal((await fetch(`${base}/state`)).status, 200);
+      assert.equal((await fetch(`${base}/workspaces/default/state`)).status, 404);
+    } finally {
+      await running.close();
+    }
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+});
+
+test('repository discovery is unscoped, credential-specific, read-only and sanitized', async (t) => {
+  const dataDir = mkdtempSync(join(tmpdir(), 'foggy-repositories-'));
+  const authorizations: string[] = [];
+  let failure = false;
+  const workspaces = new WorkspaceManager({
+    dataDir,
+    dedicatedToken: 'dedicated-secret',
+    githubToken: 'github-secret',
+    fetch: async (input, init) => {
+      const url = new URL(String(input));
+      assert.equal(url.origin, 'https://api.github.com');
+      assert.equal(init?.redirect, 'error');
+      assert.equal(init?.method ?? 'GET', 'GET');
+      authorizations.push(new Headers(init?.headers).get('Authorization')!);
+      if (failure) throw new Error('dedicated-secret github-secret');
+      if (url.pathname === '/user') return Response.json({ id: 1, login: 'owner' });
+      if (url.pathname === '/repos/owner/state')
+        return Response.json({
+          private: true,
+          full_name: 'owner/state',
+          owner: { id: 1, login: 'owner', type: 'User' },
+        });
+      if (url.pathname === '/repos/owner/state/branches') return Response.json([{ name: 'trunk' }]);
+      if (url.pathname === '/repos/owner/state/branches/trunk')
+        return Response.json({ name: 'trunk', commit: { sha: 'a'.repeat(40) } });
+      if (url.pathname === `/repos/owner/state/git/trees/${'a'.repeat(40)}`)
+        return Response.json({
+          truncated: false,
+          tree: [{ path: 'state.json', type: 'blob', mode: '100644' }],
+        });
+      assert.equal(url.pathname, '/user/repos');
+      assert.equal(url.searchParams.get('affiliation'), 'owner');
+      assert.equal(url.searchParams.get('visibility'), 'private');
+      return Response.json([
+        {
+          id: 2,
+          name: 'state',
+          full_name: 'owner/state',
+          private: true,
+          default_branch: 'trunk',
+          owner: { id: 1, login: 'owner', type: 'User' },
+          secret: 'must-not-return',
+        },
+      ]);
+    },
+  });
+  t.after(async () => {
+    await workspaces.close();
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+  const { request } = await fixture(t, { workspaces });
+  const before = workspaces.list();
+  for (const credential of ['dedicated', 'github']) {
+    authorizations.length = 0;
+    const result = await request(`/api/workspaces/repositories?credential=${credential}`);
+    assert.equal(result.status, 200);
+    assert.equal(result.headers['cache-control'], 'no-store');
+    assert.deepEqual(result.body, {
+      login: 'owner',
+      repositories: [{ id: 2, fullName: 'owner/state', defaultBranch: 'trunk' }],
+    });
+    assert.deepEqual(authorizations, [
+      `Bearer ${credential}-secret`,
+      `Bearer ${credential}-secret`,
+    ]);
+    for (const endpoint of ['branches', 'files']) {
+      authorizations.length = 0;
+      const response = await request(
+        `/api/workspaces/${endpoint}?credential=${credential}&repo=owner/state${endpoint === 'files' ? '&branch=trunk' : ''}`,
+      );
+      assert.equal(response.status, 200);
+      assert.equal(response.headers['cache-control'], 'no-store');
+      assert.deepEqual(
+        response.body,
+        endpoint === 'files' ? { paths: ['state.json'] } : { branches: ['trunk'] },
+      );
+      assert.ok(authorizations.every((value) => value === `Bearer ${credential}-secret`));
+    }
+  }
+  for (const query of [
+    'credential=bad',
+    'credential=github&credential=dedicated',
+    'token=secret',
+    'url=https://evil.example',
+  ])
+    assert.equal((await request(`/api/workspaces/repositories?${query}`)).status, 400);
+  assert.equal((await request('/api/workspaces/default/workspaces/repositories')).status, 404);
+  assert.equal(
+    (
+      await request('/api/workspaces/repositories', 'GET', undefined, {
+        Origin: 'https://evil.example',
+      })
+    ).status,
+    403,
+  );
+  failure = true;
+  const failed = await request('/api/workspaces/repositories');
+  assert.equal(failed.status, 502);
+  assert.equal(failed.text.includes('secret'), false);
+  for (const endpoint of ['branches', 'files']) {
+    const url = `/api/workspaces/${endpoint}?credential=github&repo=owner/state${endpoint === 'files' ? '&branch=trunk' : ''}`;
+    const response = await request(url);
+    assert.equal(response.status, 502);
+    assert.equal(response.text.includes('secret'), false);
+    assert.equal(
+      (await request(url, 'GET', undefined, { Origin: 'https://evil.example' })).status,
+      403,
+    );
+    assert.equal((await request(`/api/workspaces/default/workspaces/${endpoint}`)).status, 404);
+  }
+  assert.deepEqual(workspaces.list(), before);
+});
+
+test('repository discovery does not fall back when the selected credential is unavailable', async (t) => {
+  const dataDir = mkdtempSync(join(tmpdir(), 'foggy-repositories-'));
+  const workspaces = new WorkspaceManager({
+    dataDir,
+    githubToken: 'available',
+    fetch: async () => assert.fail('No fallback'),
+  });
+  t.after(async () => {
+    await workspaces.close();
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+  const { request } = await fixture(t, { workspaces });
+  const result = await request('/api/workspaces/repositories');
+  assert.equal(result.status, 503);
+  assert.match(result.body.error, /FOGGY_SYNC_TOKEN/);
+  for (const endpoint of ['branches', 'files']) {
+    const query = `repo=owner/state&credential=dedicated${endpoint === 'files' ? '&branch=feature%2Fstate' : ''}`;
+    assert.equal((await request(`/api/workspaces/${endpoint}?${query}`)).status, 503);
+    for (const invalid of [
+      '',
+      'repo=owner/state',
+      `${query}&token=secret`,
+      `${query}&credential=github`,
+      query.replace('owner/state', 'owner/..'),
+      query.replace('dedicated', 'invalid'),
+      endpoint === 'files' ? query.replace('feature%2Fstate', '..') : `${query}&branch=main`,
+    ])
+      assert.equal((await request(`/api/workspaces/${endpoint}?${invalid}`)).status, 400);
+  }
+});
+
+test('workspace APIs scope domain state and preserve fixed-default compatibility', async (t) => {
+  const dataDir = mkdtempSync(join(tmpdir(), 'foggy-server-workspaces-'));
+  const workspaces = new WorkspaceManager({
+    dataDir,
+    fetch: async () => assert.fail('No network'),
+  });
+  t.after(async () => {
+    await workspaces.close();
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+  const { request } = await fixture(t, { workspaces });
+  const listed = await request('/api/workspaces');
+  assert.equal(listed.status, 200);
+  assert.equal(listed.body.defaultWorkspaceId, 'default');
+  const created = await request('/api/workspaces', 'POST', { name: 'Work', type: 'local' });
+  assert.equal(created.status, 201);
+  const prefix = `/api/workspaces/${created.body.id}`;
+  const task = await request(`${prefix}/tasks`, 'POST', { title: 'Work only', kind: 'manual' });
+  assert.equal(task.status, 201);
+  assert.equal((await request('/api/state')).body.tasks.length, 0);
+  assert.equal((await request('/api/workspaces/default/state')).body.tasks.length, 0);
+  assert.equal((await request(`${prefix}/state`)).body.tasks[0].id, task.body.id);
+  assert.equal(
+    (await request(`/api/tasks/${task.body.id}`, 'PATCH', { title: 'Wrong workspace' })).status,
+    404,
+  );
+  assert.equal(
+    (await request(`${prefix}/tasks/${task.body.id}/done`, 'POST', { done: true })).body.status,
+    'completed',
+  );
+  assert.equal(
+    (await request('/api/tasks', 'POST', { title: 'Default only', kind: 'manual' })).status,
+    201,
+  );
+  assert.equal(
+    (await request('/api/workspaces/default/state')).body.tasks[0].title,
+    'Default only',
+  );
+  assert.equal((await request(`${prefix}/github/sync`, 'POST')).status, 200);
+  assert.equal((await request(`${prefix}/sync/status`)).body.configured, false);
+  assert.equal((await request(`${prefix}/sync/preview`, 'POST', {})).status, 503);
+  assert.equal((await request('/api/workspaces/missing/state')).status, 404);
+  assert.equal((await request(prefix, 'PATCH', { name: 'Renamed' })).body.name, 'Renamed');
+  assert.equal((await request(prefix, 'PATCH', { secret: 'not-allowed' })).status, 400);
+  assert.equal(
+    (await request('/api/workspaces', 'POST', { name: 'Third', type: 'local' })).status,
+    201,
+  );
+  assert.equal(
+    (await request('/api/workspaces', 'POST', { name: 'Fourth', type: 'local' })).status,
+    409,
+  );
+});
+
+test('legacy cloud restart without its dedicated token serves local APIs and rejects sync operations', async (t) => {
+  const dataDir = mkdtempSync(join(tmpdir(), 'foggy-legacy-restart-'));
+  const env = { FOGGY_DATA_DIR: dataDir, FOGGY_SYNC_REPO: 'owner/state' };
+  const initial = readConfig({ ...env, FOGGY_SYNC_TOKEN: 'dedicated-token' });
+  const first = new WorkspaceManager({
+    dataDir,
+    legacyTarget: initial.syncTarget,
+    dedicatedToken: initial.syncToken,
+  });
+  const task = first
+    .get('default')
+    .store.createTask({ title: 'Available offline', kind: 'manual' });
+  await first.close();
+
+  const settings = readConfig(env);
+  const workspaces = new WorkspaceManager({
+    dataDir: settings.dataDir,
+    legacyTarget: settings.syncTarget,
+    dedicatedToken: settings.syncToken,
+    fetch: async () => assert.fail('Missing credentials must not trigger remote calls'),
+  });
+  t.after(async () => {
+    await workspaces.close();
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+  workspaces.start();
+  const { request } = await fixture(t, { workspaces });
+  assert.equal((await request('/api/workspaces')).body.workspaces[0].type, 'cloud');
+  for (const prefix of ['/api', '/api/workspaces/default']) {
+    assert.equal((await request(`${prefix}/state`)).body.tasks[0].id, task.id);
+    const status = await request(`${prefix}/sync/status`);
+    assert.equal(status.status, 200);
+    assert.equal(status.body.configured, true);
+    assert.deepEqual(status.body.target, initial.syncTarget);
+    for (const [operation, body] of [
+      ['preview', {}],
+      ['apply', { previewId: 'reviewed-id', confirm: true }],
+    ] as const) {
+      const response = await request(`${prefix}/sync/${operation}`, 'POST', body);
+      assert.equal(response.status, 503);
+      assert.match(response.body.error, /Set FOGGY_SYNC_TOKEN/);
+    }
+  }
+  assert.equal(
+    (await request(`/api/tasks/${task.id}`, 'PATCH', { title: 'Edited offline' })).status,
+    200,
+  );
+});
+
 test('server configuration validates ports and intervals, resolves storage, and only accepts env tokens', () => {
   const defaults = readConfig({});
   assert.equal(defaults.port, 4173);
@@ -103,7 +504,12 @@ test('server configuration validates ports and intervals, resolves storage, and 
     assert.throws(() => readConfig({ FOGGY_PORT }));
   assert.throws(() => readConfig({ FOGGY_DATA_DIR: '' }));
   assert.throws(() => readConfig({ FOGGY_POLL_INTERVAL_MS: '14999' }));
-  assert.throws(() => readConfig({ FOGGY_SYNC_REPO: 'owner/state', GH_TOKEN: 'not-a-sync-token' }));
+  const withoutSyncToken = readConfig({
+    FOGGY_SYNC_REPO: 'owner/state',
+    GH_TOKEN: 'not-a-sync-token',
+  });
+  assert.equal(withoutSyncToken.syncTarget?.repo, 'owner/state');
+  assert.equal(withoutSyncToken.syncToken, undefined);
   const sync = readConfig({ FOGGY_SYNC_REPO: 'owner/state', FOGGY_SYNC_TOKEN: 'dedicated-token' });
   assert.deepEqual(sync.syncTarget, {
     repo: 'owner/state',

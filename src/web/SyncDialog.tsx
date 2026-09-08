@@ -1,12 +1,18 @@
 import { useEffect, useRef, useState } from 'react';
-import type { SyncPreview, SyncStatus } from '../shared';
-import { api } from './api';
+import type { SyncPreview, SyncStatus, Workspace } from '../shared';
+import type { WorkspaceApi } from './api';
 import { Dialog, DialogErrorContext } from './Dialogs';
 
 export function SyncDialog({
   close,
   run,
+  api,
+  workspace,
+  initialPreview = false,
 }: {
+  api: WorkspaceApi;
+  workspace: Workspace;
+  initialPreview?: boolean;
   close: () => void;
   run: (operation: () => Promise<unknown>) => Promise<boolean>;
 }) {
@@ -17,25 +23,42 @@ export function SyncDialog({
   const [confirmed, setConfirmed] = useState(false);
   const [success, setSuccess] = useState(false);
   const active = useRef(false);
+  const generation = useRef(0);
+  const previewOnMount = useRef(initialPreview);
 
   useEffect(() => {
-    let cancelled = false;
+    const current = ++generation.current;
+    active.current = false;
+    setBusy(false);
+    setStatus(null);
+    setPreview(null);
+    setConfirmed(false);
+    setError('');
+    setSuccess(false);
     api<SyncStatus>('/sync/status').then(
       (value) => {
-        if (!cancelled) setStatus(value);
+        if (generation.current !== current) return;
+        setStatus(value);
+        if (previewOnMount.current) {
+          previewOnMount.current = false;
+          if (workspace.type === 'cloud' && value.configured && !value.syncing)
+            void request('preview');
+        }
       },
       (error: unknown) => {
-        if (!cancelled)
+        if (generation.current === current)
           setError(error instanceof Error ? error.message : 'Cannot load sync status.');
       },
     );
     return () => {
-      cancelled = true;
+      generation.current++;
     };
-  }, []);
+  }, [api, workspace.id, workspace.type]);
 
   async function request(action: 'status' | 'preview' | 'apply', resolution?: 'local' | 'remote') {
     if (active.current) return;
+    const current = ++generation.current;
+    const isCurrent = () => generation.current === current;
     active.current = true;
     setBusy(true);
     setError('');
@@ -43,26 +66,31 @@ export function SyncDialog({
     setConfirmed(false);
     setPreview(null);
     try {
-      if (action === 'status') setStatus(await api<SyncStatus>('/sync/status'));
-      else if (action === 'preview') {
-        setPreview(
-          await api<SyncPreview>('/sync/preview', 'POST', resolution ? { resolution } : {}),
+      if (action === 'status') {
+        const value = await api<SyncStatus>('/sync/status');
+        if (isCurrent()) setStatus(value);
+      } else if (action === 'preview') {
+        const value = await api<SyncPreview>(
+          '/sync/preview',
+          'POST',
+          resolution ? { resolution } : {},
         );
+        if (isCurrent()) setPreview(value);
       } else if (preview?.canApply && confirmed) {
         let failure = '';
         const applied = await run(async () => {
           try {
-            setStatus(
-              await api<SyncStatus>('/sync/apply', 'POST', {
-                previewId: preview.previewId,
-                confirm: true,
-              }),
-            );
+            const value = await api<SyncStatus>('/sync/apply', 'POST', {
+              previewId: preview.previewId,
+              confirm: true,
+            });
+            if (isCurrent()) setStatus(value);
           } catch (error) {
             failure = `${error instanceof Error ? error.message : 'Sync failed.'} Re-preview before trying again; an upload may already have committed.`;
             throw new Error(failure);
           }
         });
+        if (!isCurrent()) return;
         if (applied) setSuccess(true);
         else
           setError(
@@ -71,26 +99,35 @@ export function SyncDialog({
           );
       }
     } catch (error) {
-      setError(error instanceof Error ? error.message : 'Workspace sync failed.');
+      if (isCurrent()) setError(error instanceof Error ? error.message : 'Workspace sync failed.');
     } finally {
-      active.current = false;
-      setBusy(false);
+      if (isCurrent()) {
+        active.current = false;
+        setBusy(false);
+      }
     }
   }
 
   return (
     <DialogErrorContext value={error}>
       <Dialog
-        title="Workspace sync"
+        title={workspace.type === 'cloud' ? 'Workspace sync' : 'Local workspace'}
         close={() => {
           if (!active.current) close();
         }}
       >
         <div className="workspace-sync" aria-busy={busy}>
-          <p>
-            Manually sync task state with a private GitHub repository. This is separate from pull
-            request refresh. Nothing is applied until you review and confirm.
-          </p>
+          {workspace.type === 'local' ? (
+            <p>
+              This is a local workspace, stored on your device. Use Connect to cloud in the
+              workspace controls to configure manual sync. Your existing tasks stay here.
+            </p>
+          ) : (
+            <p>
+              Manually sync task state with a private GitHub repository. This is separate from pull
+              request refresh. Nothing is applied until you review and confirm.
+            </p>
+          )}
           {!status && !error && <p role="status">Loading sync status...</p>}
           {status && (
             <>
@@ -110,26 +147,29 @@ export function SyncDialog({
                 <dt>Last successful sync</dt>
                 <dd>{status.lastSync ? new Date(status.lastSync).toLocaleString() : 'Never'}</dd>
                 <dt>Local state</dt>
-                <dd>{status.dirty ? 'Unsynced local changes' : 'No unsynced local changes'}</dd>
+                <dd>
+                  {workspace.type === 'local'
+                    ? 'Stored locally'
+                    : status.dirty
+                      ? 'Unsynced local changes'
+                      : 'No unsynced local changes'}
+                </dd>
               </dl>
               {status.syncing && (
                 <p role="status">
                   A workspace sync is already running. Refresh status before continuing.
                 </p>
               )}
-              {!status.configured && (
+              {!status.configured && workspace.type === 'cloud' && (
                 <section>
                   <h3>Set up workspace sync</h3>
                   <p>
-                    Set <code>FOGGY_SYNC_REPO=owner/repo</code> for a private repository and{' '}
-                    <code>FOGGY_SYNC_TOKEN</code> in the server environment, then restart the
-                    server. Use a dedicated token with Contents read/write access to that
-                    repository. There is no fallback to <code>GH_TOKEN</code>; never enter tokens in
-                    this dialog.
-                  </p>
-                  <p>
-                    Optional: <code>FOGGY_SYNC_BRANCH</code> defaults to <code>main</code> and{' '}
-                    <code>FOGGY_SYNC_PATH</code> defaults to <code>foggybrain/state.json</code>.
+                    Configure{' '}
+                    {workspace.credential === 'github'
+                      ? 'GH_TOKEN, GITHUB_TOKEN, or gh auth token'
+                      : 'FOGGY_SYNC_TOKEN'}{' '}
+                    on the server with Contents read/write access to the selected private
+                    repository, then restart. Never enter tokens in this dialog.
                   </p>
                 </section>
               )}
@@ -225,7 +265,7 @@ export function SyncDialog({
             </button>
             <button
               className="button"
-              disabled={busy || !status?.configured || status.syncing}
+              disabled={busy || workspace.type === 'local' || !status?.configured || status.syncing}
               onClick={() => void request('preview')}
             >
               Preview sync

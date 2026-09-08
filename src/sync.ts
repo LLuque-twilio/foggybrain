@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { safeSyncRef } from './shared.js';
 import {
   DomainError,
   emptyPortableState,
@@ -22,19 +23,20 @@ const equal = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b
 class RejectedSyncWrite extends DomainError {}
 
 export function readSyncConfig(env: NodeJS.ProcessEnv): SyncTarget | null {
-  const names = ['FOGGY_SYNC_REPO', 'FOGGY_SYNC_BRANCH', 'FOGGY_SYNC_PATH', 'FOGGY_SYNC_TOKEN'];
+  const token = env.FOGGY_SYNC_TOKEN;
+  if (token !== undefined && !/^[\x21-\x7e]+$/.test(token))
+    throw new DomainError('FOGGY_SYNC_TOKEN must contain only visible ASCII characters');
+  const names = ['FOGGY_SYNC_REPO', 'FOGGY_SYNC_BRANCH', 'FOGGY_SYNC_PATH'];
   if (names.every((name) => env[name] === undefined)) return null;
   const repo = env.FOGGY_SYNC_REPO;
-  const token = env.FOGGY_SYNC_TOKEN;
   const branch = env.FOGGY_SYNC_BRANCH ?? 'main';
   const path = env.FOGGY_SYNC_PATH ?? 'foggybrain/state.json';
-  if (!repo || !token || !/^[\x21-\x7e]+$/.test(token))
-    throw new DomainError('Sync requires FOGGY_SYNC_REPO and a separate FOGGY_SYNC_TOKEN');
+  if (!repo) throw new DomainError('Sync target requires FOGGY_SYNC_REPO');
   validateTarget({ repo, branch, path });
   return { repo: repo.toLowerCase(), branch, path };
 }
 
-function validateTarget(target: SyncTarget): void {
+export function validateTarget(target: SyncTarget): void {
   if (
     !target ||
     typeof target.repo !== 'string' ||
@@ -46,18 +48,7 @@ function validateTarget(target: SyncTarget): void {
     ['branch', target.branch],
     ['path', target.path],
   ]) {
-    if (
-      typeof value !== 'string' ||
-      value.length > 512 ||
-      !/^[a-zA-Z0-9_][a-zA-Z0-9_./-]*$/.test(value) ||
-      value.includes('..') ||
-      value
-        .split('/')
-        .some(
-          (part) => !part || part.startsWith('.') || part.endsWith('.') || part.endsWith('.lock'),
-        )
-    )
-      throw new DomainError(`Unsafe sync ${name}`);
+    if (!safeSyncRef(value)) throw new DomainError(`Unsafe sync ${name}`);
   }
 }
 
@@ -174,7 +165,8 @@ interface SavedPreview {
 
 export class StateSync {
   private readonly target: SyncTarget | null;
-  private readonly token?: string;
+  private token?: string;
+  private readonly resolveToken?: () => string | undefined;
   private readonly fetcher: typeof fetch;
   private saved: SavedPreview | null = null;
   private active: Promise<unknown> | null = null;
@@ -183,11 +175,16 @@ export class StateSync {
 
   constructor(
     private readonly store: Store,
-    options: { target: SyncTarget | null; token?: string; fetch?: typeof fetch },
+    options: {
+      target: SyncTarget | null;
+      token?: string;
+      resolveToken?: () => string | undefined;
+      fetch?: typeof fetch;
+    },
   ) {
     if (options.target) {
       validateTarget(options.target);
-      if (!options.token || !/^[\x21-\x7e]+$/.test(options.token))
+      if (!options.resolveToken && (!options.token || !/^[\x21-\x7e]+$/.test(options.token)))
         throw new DomainError('A separate sync token is required');
     }
     this.target = options.target
@@ -198,6 +195,7 @@ export class StateSync {
         }
       : null;
     this.token = options.token;
+    this.resolveToken = options.resolveToken;
     this.fetcher = options.fetch ?? fetch;
   }
 
@@ -217,6 +215,15 @@ export class StateSync {
     if (this.stopped) return Promise.reject(new DomainError('Sync service is stopped', 503));
     if (!this.target) return Promise.reject(new DomainError('State sync is not configured', 503));
     if (this.active) return Promise.reject(new DomainError('State sync is already running', 409));
+    if (this.resolveToken) {
+      try {
+        this.token = this.resolveToken();
+        if (!this.token || !/^[\x21-\x7e]+$/.test(this.token))
+          throw new DomainError('A sync token is required', 503);
+      } catch (error) {
+        return Promise.reject(error);
+      }
+    }
     const controller = new AbortController();
     this.controller = controller;
     const timer = setTimeout(() => controller.abort(), 10_000);

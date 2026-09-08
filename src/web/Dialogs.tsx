@@ -1,5 +1,14 @@
-import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  type PointerEvent,
+  type ReactNode,
+} from 'react';
 import { AlertTriangle, ArrowRight, Box, GitPullRequest, Link2, ListChecks, X } from 'lucide-react';
+import { LoadingField } from './LoadingField';
 import type {
   CreateTaskInput,
   DeletionPreview,
@@ -25,7 +34,18 @@ export function Dialog({
   danger?: boolean;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
+  const backdropPointer = useRef<number | null>(null);
   const error = useContext(DialogErrorContext);
+  function isBackdrop(event: PointerEvent<HTMLDialogElement>) {
+    const bounds = event.currentTarget.getBoundingClientRect();
+    return (
+      event.target === event.currentTarget &&
+      (event.clientX < bounds.left ||
+        event.clientX > bounds.right ||
+        event.clientY < bounds.top ||
+        event.clientY > bounds.bottom)
+    );
+  }
   useEffect(() => {
     const element = ref.current!;
     element.showModal();
@@ -40,8 +60,17 @@ export function Dialog({
         event.preventDefault();
         close();
       }}
-      onClick={(event) => {
-        if (event.target === event.currentTarget) close();
+      onPointerDown={(event) => {
+        backdropPointer.current =
+          event.isPrimary && event.button === 0 && isBackdrop(event) ? event.pointerId : null;
+      }}
+      onPointerUp={(event) => {
+        const startedOnBackdrop = backdropPointer.current === event.pointerId;
+        backdropPointer.current = null;
+        if (startedOnBackdrop && isBackdrop(event)) close();
+      }}
+      onPointerCancel={() => {
+        backdropPointer.current = null;
       }}
     >
       <header>
@@ -90,6 +119,7 @@ export function TaskDialog({
   const [description, setDescription] = useState(task?.description ?? '');
   const [url, setUrl] = useState(task?.prUrl ?? prUrl ?? '');
   const [parent, setParent] = useState(parentId ?? '');
+  const githubLoading = !github || github.syncing;
   return (
     <Dialog
       title={task ? 'Edit task' : parentId ? 'Add a step' : 'Make a little space'}
@@ -162,24 +192,29 @@ export function TaskDialog({
           <>
             <label>
               Your open pull requests
-              <select
-                value={prs.some((pr) => pr.url === url) ? url : ''}
-                onChange={(event) => {
-                  const selected = prs.find((pr) => pr.url === event.target.value);
-                  setUrl(event.target.value);
-                  if (selected && !title.trim()) setTitle(`Merge ${selected.title}`.slice(0, 300));
-                }}
-              >
-                <option value="">Select a PR or enter a URL below</option>
-                {prs.map((pr) => (
-                  <option key={pr.url} value={pr.url}>
-                    {pr.repository} #{pr.number}: {pr.title}
-                    {pr.draft ? ' (draft)' : ''}
-                  </option>
-                ))}
-              </select>
+              <LoadingField loading={githubLoading}>
+                <select
+                  aria-busy={githubLoading}
+                  aria-describedby="pr-discovery-hint"
+                  value={prs.some((pr) => pr.url === url) ? url : ''}
+                  onChange={(event) => {
+                    const selected = prs.find((pr) => pr.url === event.target.value);
+                    setUrl(event.target.value);
+                    if (selected && !title.trim())
+                      setTitle(`Merge ${selected.title}`.slice(0, 300));
+                  }}
+                >
+                  <option value="">Select a PR or enter a URL below</option>
+                  {prs.map((pr) => (
+                    <option key={pr.url} value={pr.url}>
+                      {pr.repository} #{pr.number}: {pr.title}
+                      {pr.draft ? ' (draft)' : ''}
+                    </option>
+                  ))}
+                </select>
+              </LoadingField>
             </label>
-            <p className="form-hint">
+            <p className="form-hint" id="pr-discovery-hint" role="status">
               {!github
                 ? 'Loading GitHub status... You can also enter a URL below.'
                 : !github.configured

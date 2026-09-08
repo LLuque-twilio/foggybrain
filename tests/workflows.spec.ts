@@ -82,7 +82,7 @@ test('breadcrumbs retain the map and back follows navigation across reload and b
   await page.getByRole('button', { name: 'Open Release graph' }).click();
   const breadcrumbs = page.getByRole('navigation', { name: 'Breadcrumb', exact: true });
   await expect(breadcrumbs.getByRole('button').filter({ hasNot: page.locator('svg') })).toHaveText([
-    'Workspace',
+    'Personal',
     'Map',
     'Release',
   ]);
@@ -105,7 +105,7 @@ test('breadcrumbs retain the map and back follows navigation across reload and b
   await page.getByRole('button', { name: 'Open Release graph' }).click();
   await breadcrumbs.getByRole('button', { name: 'Map', exact: true }).click();
   await expect(page).toHaveURL(/#\/map$/);
-  await breadcrumbs.getByRole('button', { name: 'Workspace', exact: true }).click();
+  await breadcrumbs.getByRole('button', { name: 'Personal', exact: true }).click();
   await page.locator('.card-main').filter({ hasText: 'Release' }).click();
   await page.getByRole('button', { name: 'Back to Overview', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'A little room to think.' })).toBeVisible();
@@ -210,8 +210,8 @@ test('authored PR dropdown creates a merge step and preserves custom summaries',
       updatedAt: '2026-09-08T00:00:00Z',
     },
   ];
-  await page.route('**/api/github/prs', (route) => route.fulfill({ json: prs }));
-  await page.route('**/api/github/status', (route) =>
+  await page.route('**/api/workspaces/default/github/prs', (route) => route.fulfill({ json: prs }));
+  await page.route('**/api/workspaces/default/github/status', (route) =>
     route.fulfill({
       json: {
         configured: true,
@@ -265,8 +265,8 @@ test('authored PR dropdown creates a merge step and preserves custom summaries',
 test('PR dropdown reports empty and stale GitHub results without blocking URL entry', async ({
   page,
 }) => {
-  await page.route('**/api/github/prs', (route) => route.fulfill({ json: [] }));
-  await page.route('**/api/github/status', (route) =>
+  await page.route('**/api/workspaces/default/github/prs', (route) => route.fulfill({ json: [] }));
+  await page.route('**/api/workspaces/default/github/status', (route) =>
     route.fulfill({
       json: {
         configured: true,
@@ -282,7 +282,7 @@ test('PR dropdown reports empty and stale GitHub results without blocking URL en
   const dialog = page.getByRole('dialog');
   await expect(dialog).toContainText('No authored open pull requests found.');
   await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
-  await page.route('**/api/github/status', (route) =>
+  await page.route('**/api/workspaces/default/github/status', (route) =>
     route.fulfill({
       json: {
         configured: true,
@@ -297,6 +297,30 @@ test('PR dropdown reports empty and stale GitHub results without blocking URL en
   await page.getByRole('button', { name: 'Link a PR by URL' }).click();
   await expect(dialog).toContainText('Listed PRs may be stale');
   await expect(dialog.getByLabel('GitHub PR URL')).toBeEditable();
+});
+
+test('PR picker shows in-field refresh progress without blocking manual URL entry', async ({
+  page,
+}) => {
+  await page.route('**/api/workspaces/default/github/status', (route) =>
+    route.fulfill({
+      json: { configured: true, login: 'example', lastSync: null, error: null, syncing: true },
+    }),
+  );
+  await page.goto('/#/prs');
+  await page.getByRole('button', { name: 'Link a PR by URL' }).click();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog.getByLabel('Your open pull requests')).toHaveAttribute('aria-busy', 'true');
+  await expect(dialog.locator('.field-spinner')).toBeVisible();
+  await expect(dialog.getByRole('status')).toContainText('Refreshing your open pull requests');
+  await expect(dialog.getByLabel('GitHub PR URL')).toBeEditable();
+  await page.route('**/api/workspaces/default/github/status', (route) =>
+    route.fulfill({
+      json: { configured: true, login: 'example', lastSync: null, error: null, syncing: false },
+    }),
+  );
+  await expect(dialog.getByLabel('Your open pull requests')).toHaveAttribute('aria-busy', 'false');
+  await expect(dialog.locator('.field-spinner')).toHaveCount(0);
 });
 
 test('invalid PR errors stay inside dialog, PR tab works without credentials', async ({ page }) => {

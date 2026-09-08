@@ -1,4 +1,4 @@
-import { Fragment, startTransition, useEffect, useRef, useState } from 'react';
+import { Fragment, startTransition, useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   ArrowDownRight,
   ArrowLeft,
@@ -34,8 +34,9 @@ import type {
   Snapshot,
   TaskView,
   UpdateTaskInput,
+  Workspace,
 } from '../shared';
-import { api } from './api';
+import { workspaceApi } from './api';
 import { Graph } from './Graph';
 import { Detail } from './Detail';
 import { DeleteDialog, Dialog, DialogErrorContext, ReferenceDialog, TaskDialog } from './Dialogs';
@@ -48,12 +49,26 @@ type Modal =
   | { type: 'reference'; containerId: string }
   | { type: 'delete'; task: TaskView; preview: DeletionPreview }
   | { type: 'help' }
-  | { type: 'sync' }
+  | { type: 'sync'; initialPreview?: boolean }
   | null;
 const empty: Snapshot = { tasks: [], dependencies: [], references: [], layouts: [] };
 const route = () => window.location.hash.slice(1) || '/';
 
-export function App() {
+export function WorkspaceApp({
+  workspace,
+  controls,
+  settings,
+  initialSyncPreview,
+  consumeSyncPreview,
+}: {
+  workspace: Workspace;
+  controls: ReactNode;
+  settings: ReactNode;
+  initialSyncPreview: boolean;
+  consumeSyncPreview: () => void;
+}) {
+  const [api] = useState(() => workspaceApi(workspace.id));
+  const mounted = useRef(false);
   const [snapshot, setSnapshot] = useState<Snapshot>(empty);
   const [github, setGithub] = useState<GithubStatus | null>(null);
   const [prs, setPrs] = useState<GithubPr[]>([]);
@@ -72,6 +87,14 @@ export function App() {
   const [sidebar, setSidebar] = useState(false);
   const refreshId = useRef(0);
   const mutation = useRef(false);
+
+  useEffect(() => {
+    if (!initialSyncPreview) return;
+    setError('');
+    setSidebar(false);
+    setModal({ type: 'sync', initialPreview: true });
+    consumeSyncPreview();
+  }, [initialSyncPreview, consumeSyncPreview]);
 
   async function refresh() {
     const id = ++refreshId.current;
@@ -102,6 +125,7 @@ export function App() {
   }
 
   useEffect(() => {
+    mounted.current = true;
     void refresh();
     const timer = setInterval(() => {
       if (!mutation.current) void refresh();
@@ -116,6 +140,7 @@ export function App() {
     window.addEventListener('hashchange', onHash);
     window.addEventListener('popstate', onHash);
     return () => {
+      mounted.current = false;
       clearInterval(timer);
       window.removeEventListener('hashchange', onHash);
       window.removeEventListener('popstate', onHash);
@@ -131,6 +156,7 @@ export function App() {
     setError('');
     try {
       await operation();
+      if (!mounted.current) return false;
       await refresh();
       return true;
     } catch (error) {
@@ -143,6 +169,7 @@ export function App() {
   }
 
   const navigate = (next: string) => {
+    if (!mounted.current) return;
     if (next !== route()) {
       const from = route();
       window.history.pushState({ foggyFrom: from }, '', `#${next}`);
@@ -182,6 +209,7 @@ export function App() {
   };
   const isGraph = path === '/map' || !!currentId;
   const isPrs = path === '/prs';
+  const isSettings = path === '/settings';
   const viewId = currentId ?? 'root';
   const selected = snapshot.tasks.find(
     (task) =>
@@ -262,13 +290,7 @@ export function App() {
             FoggyBrain<small>A LITTLE CLARITY.</small>
           </span>
         </button>
-        <div className="workspace-label">
-          <span className="workspace-avatar">F</span>
-          <span>
-            Personal workspace<small>Just you. All your moving parts.</small>
-          </span>
-          <span className="local-dot" title="Local workspace" />
-        </div>
+        {controls}
         <div className="nav-label">YOUR SPACE</div>
         <nav aria-label="Main navigation">
           <button
@@ -281,7 +303,7 @@ export function App() {
             }}
           >
             <RefreshCw size={17} />
-            Workspace sync
+            {workspace.type === 'cloud' ? 'Workspace sync' : 'About local storage'}
           </button>
           <button className={path === '/' ? 'active' : ''} onClick={() => navigate('/')}>
             <LayoutGrid size={17} />
@@ -294,6 +316,14 @@ export function App() {
           <button className={isPrs ? 'active' : ''} onClick={() => navigate('/prs')}>
             <GitPullRequest size={17} />
             Pull requests<span className="nav-count">{prs.length}</span>
+          </button>
+          <button
+            className={isSettings ? 'active' : ''}
+            aria-current={isSettings ? 'page' : undefined}
+            onClick={() => navigate('/settings')}
+          >
+            <Settings2 size={17} />
+            Settings
           </button>
         </nav>
         <div className="nav-label task-nav-label">
@@ -354,7 +384,7 @@ export function App() {
             >
               <Menu size={20} />
             </button>
-            <button onClick={() => navigate('/')}>Workspace</button>
+            <button onClick={() => navigate('/')}>{workspace.name}</button>
             <ChevronRight size={13} />
             {isGraph ? (
               <>
@@ -379,7 +409,9 @@ export function App() {
                 ))}
               </>
             ) : (
-              <span className="current">{isPrs ? 'Pull requests' : 'Overview'}</span>
+              <span className="current">
+                {isSettings ? 'Settings' : isPrs ? 'Pull requests' : 'Overview'}
+              </span>
             )}
           </nav>
           <div className="topbar-right">
@@ -411,7 +443,9 @@ export function App() {
             </button>
           </div>
         )}
-        {loading ? (
+        {isSettings ? (
+          settings
+        ) : loading ? (
           <div className="loading">
             <LoaderCircle className="spin" size={24} />
             Finding a little clarity...
@@ -953,7 +987,15 @@ export function App() {
         </div>
       )}
       <DialogErrorContext value={error}>
-        {modal?.type === 'sync' && <SyncDialog close={() => setModal(null)} run={run} />}
+        {modal?.type === 'sync' && (
+          <SyncDialog
+            api={api}
+            workspace={workspace}
+            initialPreview={modal.initialPreview}
+            close={() => setModal(null)}
+            run={run}
+          />
+        )}
         {modal?.type === 'create' && (
           <TaskDialog
             parentId={modal.parentId}

@@ -9,3 +9,10 @@ export async function api<T>(path: string, method = 'GET', body?: unknown): Prom
   if (!response.ok) throw new Error(result.error || `Request failed (${response.status})`);
   return result as T;
 }
+
+export type WorkspaceApi = typeof api;
+
+export function workspaceApi(id: string): WorkspaceApi {
+  const prefix = `/workspaces/${encodeURIComponent(id)}`;
+  return (path, method, body) => api(`${prefix}${path}`, method, body);
+}
