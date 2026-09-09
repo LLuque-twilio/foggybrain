@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -15,6 +15,18 @@ import {
 } from './daemon.js';
 
 const scratch = () => mkdtemp(join(tmpdir(), 'foggy-daemon-'));
+
+// startServer unrefs the child, so an exit listener alone no longer holds the event loop open and
+// the runner can drain before the kill is observed. A ref'd timer keeps it alive until exit lands.
+function exitOf(child: ChildProcess): Promise<void> {
+  return new Promise((done) => {
+    const keepAlive = setInterval(() => {}, 50);
+    child.once('exit', () => {
+      clearInterval(keepAlive);
+      done();
+    });
+  });
+}
 
 test('dataDirectory, pidFilePath, and serverOrigin follow the server environment', () => {
   assert.equal(dataDirectory({ FOGGY_DATA_DIR: '/tmp/foggy-data' }), '/tmp/foggy-data');
@@ -79,7 +91,7 @@ test('startServer fails without a pidfile when the server never answers', async 
   const env = { FOGGY_DATA_DIR: dir, FOGGY_PORT: '4322' };
   // A real child, so the kill this asserts on is the real one and never a stray signal.
   const hung = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], { stdio: 'ignore' });
-  const exited = new Promise<void>((done) => hung.once('exit', () => done()));
+  const exited = exitOf(hung);
   const spawnImpl = ((_command: string, _args: string[], options: Record<string, unknown>) => {
     writeFileSync(join(dir, 'foggy.log'), 'Error: listen EADDRINUSE 127.0.0.1:4322\n');
     assert.equal(options.detached, true);
@@ -102,8 +114,7 @@ test('startServer fails without a pidfile when the server never answers', async 
 function realChild(script: string) {
   // A real child, so the SIGKILL the failure path sends lands on a process that is safe to kill.
   const child = spawn(process.execPath, ['-e', script], { stdio: 'ignore' });
-  const exited = new Promise<void>((done) => child.once('exit', () => done()));
-  return { child, exited, spawnImpl: (() => child) as never };
+  return { child, exited: exitOf(child), spawnImpl: (() => child) as never };
 }
 
 test('startServer refuses a port that another process is already serving', async () => {
