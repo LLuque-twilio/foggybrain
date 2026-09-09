@@ -886,7 +886,21 @@ test('manual layout persists, auto layout restores, and polling sees external up
   await page.getByRole('button', { name: 'Auto layout', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Manual layout', exact: true })).toBeVisible();
   if (info.project.name === 'desktop') {
-    const box = await node(page, a.id).boundingBox();
+    let box = await node(page, a.id).boundingBox();
+    let previous = '';
+    // Switching modes schedules fitView after 80ms, then animates for 250ms.
+    await expect
+      .poll(
+        async () => {
+          box = await node(page, a.id).boundingBox();
+          const current = JSON.stringify(box);
+          const stable = box !== null && current === previous;
+          previous = current;
+          return stable;
+        },
+        { intervals: [400] },
+      )
+      .toBe(true);
     expect(box).toBeTruthy();
     await page.mouse.move(box!.x + 70, box!.y + 30);
     await page.mouse.down();
