@@ -313,3 +313,41 @@ test('uninstall leaves a foggy executable that points outside the install root a
   assert.deepEqual(result.removed, []);
   assert.equal(await readlink(join(binDir, 'foggy')), join(other, 'foggy.mjs'));
 });
+
+test('uninstall on a foreign foggy executable reports a real PATH entry instead of assuming it is gone', async () => {
+  const root = await scratch();
+  const home = await scratch();
+  const other = await scratch();
+  const binDir = join(home, '.local', 'bin');
+  await mkdir(binDir, { recursive: true });
+  await writeFile(join(other, 'foggy.mjs'), '#!/usr/bin/env node\n');
+  await symlink(join(other, 'foggy.mjs'), join(binDir, 'foggy'));
+
+  const profile = join(home, '.profile');
+  const profileContents = `export PATH="${binDir}:$PATH" # foggybrain\n`;
+  await writeFile(profile, profileContents);
+  const linuxResult = await uninstall({
+    root,
+    binDir,
+    home,
+    platform: 'linux',
+    env: { FOGGY_DATA_DIR: other },
+  });
+  assert.deepEqual(linuxResult.removed, []);
+  assert.equal(linuxResult.pathEntry, 'present');
+  assert.equal(await readFile(profile, 'utf8'), profileContents);
+
+  const pathsFile = join(home, 'paths.d-foggy');
+  await writeFile(pathsFile, `${binDir}\n`);
+  const darwinResult = await uninstall({
+    root,
+    binDir,
+    home,
+    platform: 'darwin',
+    pathsFile,
+    env: { FOGGY_DATA_DIR: other },
+  });
+  assert.deepEqual(darwinResult.removed, []);
+  assert.equal(darwinResult.pathEntry, 'present');
+  assert.equal(await readFile(pathsFile, 'utf8'), `${binDir}\n`);
+});
