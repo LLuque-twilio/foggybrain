@@ -10,6 +10,7 @@ import {
   binDirectory,
   currentVersion,
   ensurePathEntry,
+  execute,
   installRoot,
   linkVersion,
   packageVersion,
@@ -97,6 +98,14 @@ test('linkVersion rejects a version that is not installed', async () => {
         run: async () => {},
       }),
     /not installed/,
+  );
+});
+
+test('execute resolves on a zero exit and rejects with the exit status otherwise', async () => {
+  await execute(process.execPath, ['-e', 'process.exit(0)']);
+  await assert.rejects(
+    () => execute(process.execPath, ['-e', 'process.exit(3)']),
+    /exited with status 3/,
   );
 });
 

@@ -1077,6 +1077,20 @@ test('CLI reports the installed version and rejects the removed ui command', asy
   assert.equal(requests.length, 0);
 });
 
+test('CLI --version is recognized only as the first argument and is documented in --help', async (t) => {
+  const { run, requests } = await fixture(t);
+  const short = await run(['-v']);
+  assert.equal(short.code, 0);
+  assert.match(short.stdout.trim(), /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/);
+  const misplaced = await run(['--json', '--version']);
+  assert.equal(misplaced.code, 1);
+  assert.equal(misplaced.stdout, '');
+  assert.equal(typeof JSON.parse(misplaced.stderr).error, 'string');
+  const help = await run(['--help']);
+  assert.match(help.stdout, /-v, --version/);
+  assert.equal(requests.length, 0);
+});
+
 test('CLI stop reports cleanly with no running server and makes no API calls', async (t) => {
   const { run, requests } = await fixture(t);
   const dir = await mkdtemp(join(tmpdir(), 'foggy-cli-stop-'));

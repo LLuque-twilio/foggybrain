@@ -1,6 +1,15 @@
 import { execFile } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { mkdir, readFile, readlink, rename, rm, symlink, writeFile } from 'node:fs/promises';
+import {
+  access,
+  mkdir,
+  readFile,
+  readlink,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -30,7 +39,7 @@ const SYSTEM_PATHS_FILE = '/etc/paths.d/foggy';
 
 export type Runner = (file: string, args: string[], input?: string) => Promise<void>;
 
-const execute: Runner = async (file, args, input) => {
+export const execute: Runner = async (file, args, input) => {
   const child = execFile(file, args, { timeout: 120_000 });
   if (input !== undefined) child.stdin?.end(input);
   await new Promise<void>((done, fail) => {
@@ -132,7 +141,7 @@ export async function linkVersion(options: LinkOptions): Promise<LinkResult> {
   const binDir = options.binDir ?? binDirectory(home);
   const path = versionDirectory(version, root);
   const executable = join(path, 'bin', 'foggy.mjs');
-  await readFile(executable).catch(() => {
+  await access(executable).catch(() => {
     throw new Error(`FoggyBrain ${version} is not installed at ${path}.`);
   });
   await replaceSymlink(path, join(root, 'current'));

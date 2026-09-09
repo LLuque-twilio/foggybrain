@@ -20,9 +20,11 @@ import { startServer, stopServer } from './daemon.js';
 import { linkVersion, packageVersion } from './install.js';
 
 export async function main(argv = process.argv): Promise<void> {
-  // Handled before Commander parsing (rather than via `.version()`) so the flag name
-  // stays free for `link --version`/`upgrade --version`: Commander's global option
-  // scan would otherwise claim any `--version` token wherever it appears in argv.
+  // `-v`/`--version` is recognized only as the first argument, handled before Commander
+  // parsing rather than via `.version()`. Commander's global option scan otherwise claims
+  // a registered `--version` wherever it appears in argv, which would swallow
+  // `link --version`/`upgrade --version` before the subcommand ever sees it. It is
+  // documented in `--help` (below) since it isn't a registered Commander option.
   if (argv[2] === '-v' || argv[2] === '--version') {
     process.stdout.write(`${packageVersion()}\n`);
     return;
@@ -41,6 +43,10 @@ export async function main(argv = process.argv): Promise<void> {
       '--workspace <id>',
       'workspace ID (or FOGGY_WORKSPACE)',
       process.env.FOGGY_WORKSPACE || undefined,
+    )
+    .addHelpText(
+      'after',
+      '\n-v, --version    print the installed FoggyBrain version (must be the first argument)',
     )
     .showSuggestionAfterError(false)
     .configureOutput({ writeErr: () => {} })
