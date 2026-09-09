@@ -13,7 +13,7 @@ pnpm link --global
 pnpm start
 ```
 
-Open **http://127.0.0.1:4173**. Leave the server running; `foggy` does not start it automatically. GitHub credentials are optional for local manual tasks.
+Open **http://127.0.0.1:4173**. Leave the server running, or start it in the background with `foggy start`. GitHub credentials are optional for local manual tasks.
 
 If linking reports a missing global bin directory, run `pnpm setup`, reopen your terminal, and retry `pnpm link --global`. Restart existing agents/editors to pick up the new `PATH`; their environment must include the directory from `pnpm bin -g`.
 
@@ -27,6 +27,7 @@ foggy --json task create "Plan the release" --kind manual
 foggy --json task list --status available
 foggy --json task show TASK_ID
 foggy --json task done TASK_ID
+foggy start
 foggy dashboard
 ```
 

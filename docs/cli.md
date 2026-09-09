@@ -1,6 +1,6 @@
 # CLI Reference
 
-`foggy` is a client of a **running** Foggybrain server. It does not start the server, poll GitHub itself, or maintain fallback local state. Run `pnpm dev` for development, or `pnpm build && pnpm start` for the built app. The API defaults to `http://127.0.0.1:4173`; the development web UI is `http://127.0.0.1:5173`.
+`foggy` is a client of a **running** Foggybrain server. It does not poll GitHub itself or maintain fallback local state. Start a server with `foggy start`, or `pnpm dev` for development. The API defaults to `http://127.0.0.1:4173`; the development web UI is `http://127.0.0.1:5173`.
 
 ## Invocation
 
@@ -350,6 +350,17 @@ Request failures name the phase (`reading repository`, `reading branch`, `readin
 Timeouts identify the server's overall 10-second sync deadline; transport failures suggest checking the server's network, DNS, TLS, and proxy connectivity. Messages intentionally omit upstream bodies, status text, URLs, tokens, and raw exceptions. After a write failure, never blindly retry: the upload may have committed, and retained upload intent may require reconciliation. Obtain authorization before applying a newly reviewed preview.
 
 Credentials are server-only: dedicated mode uses only `FOGGY_SYNC_TOKEN` (without fallback); explicit `github` mode uses server `GH_TOKEN`, `GITHUB_TOKEN`, or `gh auth token`. Both require access to the selected private repository, Contents read/write for publishing, and any organization/SSO approval. Prefer dedicated sync credentials to keep PR access read-only. Never put tokens in CLI arguments, task text, diagnostic reports, or logs. This sync uses the GitHub Contents API, so local git remotes and git CLI tracing do not diagnose its requests.
+
+## Server Lifecycle
+
+```text
+foggy start
+foggy stop
+```
+
+`foggy start` spawns the server detached, writes its process ID to `foggy.pid` in the data directory (`FOGGY_DATA_DIR`, default `~/.local/share/foggybrain`), and returns `{"pid":12345,"url":"http://127.0.0.1:4173","dataDir":"..."}`. Server output is discarded. Starting twice is an error while the recorded process is alive; a stale pidfile is ignored. `FOGGY_PORT` selects the port; `--url` / `FOGGY_URL` do not, since they configure the client, not the server.
+
+`foggy stop` sends `SIGTERM` to the recorded process, waits up to five seconds for it to exit, and removes the pidfile. With no server recorded it returns `{"stopped":false,"pid":null}` and exit `0`.
 
 ## Dashboard
 

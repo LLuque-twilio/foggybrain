@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
+import { mkdtemp } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { test, type TestContext } from 'node:test';
@@ -1071,5 +1074,14 @@ test('CLI reports the installed version and rejects the removed ui command', asy
   assert.equal(removed.code, 1);
   assert.equal(removed.stdout, '');
   assert.equal(typeof JSON.parse(removed.stderr).error, 'string');
+  assert.equal(requests.length, 0);
+});
+
+test('CLI stop reports cleanly with no running server and makes no API calls', async (t) => {
+  const { run, requests } = await fixture(t);
+  const dir = await mkdtemp(join(tmpdir(), 'foggy-cli-stop-'));
+  const result = await run(['--json', 'stop'], { FOGGY_DATA_DIR: dir });
+  assert.equal(result.code, 0);
+  assert.deepEqual(JSON.parse(result.stdout), { stopped: false, pid: null });
   assert.equal(requests.length, 0);
 });

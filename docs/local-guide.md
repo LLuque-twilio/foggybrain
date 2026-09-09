@@ -52,7 +52,7 @@ foggy --json task list
 foggy dashboard
 ```
 
-This is a link to your checkout, not a standalone installation: keep the checkout in place and run `pnpm build` there after source changes. `bin/foggy.mjs` loads the compiled CLI. Linking does not start a server; keep `pnpm dev` or `pnpm start` running from the FoggyBrain checkout. The CLI connects to `http://127.0.0.1:4173` by default, with `--url` or `FOGGY_URL` selecting another server.
+This is a link to your checkout, not a standalone installation: keep the checkout in place and run `pnpm build` there after source changes. `bin/foggy.mjs` loads the compiled CLI. Linking does not start a server; keep `pnpm dev` or `pnpm start` running from the FoggyBrain checkout, or run `foggy start` to start the built server in the background (`foggy stop` to stop it). The CLI connects to `http://127.0.0.1:4173` by default, with `--url` or `FOGGY_URL` selecting another server.
 
 Your current repository does not select a workspace. Use `foggy --json workspace list` to obtain IDs, then pass `--workspace ID` consistently when targeting a specific workspace. Agents should use `--json` for machine-readable output; see [Agents And CLI](#agents-and-cli) for safety rules.
 

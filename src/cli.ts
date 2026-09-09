@@ -16,6 +16,7 @@ import type {
   Workspace,
   WorkspaceList,
 } from './shared.js';
+import { startServer, stopServer } from './daemon.js';
 import { packageVersion } from './install.js';
 
 export async function main(argv = process.argv): Promise<void> {
@@ -554,6 +555,14 @@ export async function main(argv = process.argv): Promise<void> {
         output(await request(`/github/${name}`, name === 'sync' ? 'POST' : 'GET')),
       );
   }
+  program
+    .command('start')
+    .description('Start the Foggybrain server in the background')
+    .action(async () => output(await startServer()));
+  program
+    .command('stop')
+    .description('Stop the background Foggybrain server')
+    .action(async () => output(await stopServer()));
   program
     .command('dashboard')
     .description('Open the server UI in the default web browser')
