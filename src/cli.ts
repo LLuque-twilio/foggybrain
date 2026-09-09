@@ -16,12 +16,14 @@ import type {
   Workspace,
   WorkspaceList,
 } from './shared.js';
+import { packageVersion } from './install.js';
 
 export async function main(argv = process.argv): Promise<void> {
   const program = new Command();
   program
     .name('foggy')
     .description('Manage a running Foggybrain server. No local fallback state.')
+    .version(packageVersion(), '-v, --version', 'print the installed FoggyBrain version')
     .option(
       '--url <url>',
       'server origin (or FOGGY_URL)',
@@ -553,7 +555,7 @@ export async function main(argv = process.argv): Promise<void> {
       );
   }
   program
-    .command('ui')
+    .command('dashboard')
     .description('Open the server UI in the default web browser')
     .action(async () => {
       const target = serverUrl();

@@ -49,14 +49,14 @@ With the server running in another terminal, these commands work from any reposi
 foggy --help
 foggy --json workspace list
 foggy --json task list
-foggy ui
+foggy dashboard
 ```
 
 This is a link to your checkout, not a standalone installation: keep the checkout in place and run `pnpm build` there after source changes. `bin/foggy.mjs` loads the compiled CLI. Linking does not start a server; keep `pnpm dev` or `pnpm start` running from the FoggyBrain checkout. The CLI connects to `http://127.0.0.1:4173` by default, with `--url` or `FOGGY_URL` selecting another server.
 
 Your current repository does not select a workspace. Use `foggy --json workspace list` to obtain IDs, then pass `--workspace ID` consistently when targeting a specific workspace. Agents should use `--json` for machine-readable output; see [Agents And CLI](#agents-and-cli) for safety rules.
 
-Without linking, use `pnpm foggy <command>` from the FoggyBrain checkout, which runs the CLI source. `foggy ui` opens the configured server URL; for the development UI use `pnpm foggy --url http://127.0.0.1:5173 ui` instead. CLI flags follow `foggy` directly; do not insert an extra `--` separator.
+Without linking, use `pnpm foggy <command>` from the FoggyBrain checkout, which runs the CLI source. `foggy dashboard` opens the configured server URL; for the development UI use `pnpm foggy --url http://127.0.0.1:5173 dashboard` instead. CLI flags follow `foggy` directly; do not insert an extra `--` separator.
 
 `pnpm-lock.yaml` is the dependency lockfile. Use `pnpm install --frozen-lockfile` for reproducible installs. Dependency build scripts are restricted to `esbuild`, which supports Vite and tsx.
 

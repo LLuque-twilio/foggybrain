@@ -351,18 +351,18 @@ Timeouts identify the server's overall 10-second sync deadline; transport failur
 
 Credentials are server-only: dedicated mode uses only `FOGGY_SYNC_TOKEN` (without fallback); explicit `github` mode uses server `GH_TOKEN`, `GITHUB_TOKEN`, or `gh auth token`. Both require access to the selected private repository, Contents read/write for publishing, and any organization/SSO approval. Prefer dedicated sync credentials to keep PR access read-only. Never put tokens in CLI arguments, task text, diagnostic reports, or logs. This sync uses the GitHub Contents API, so local git remotes and git CLI tracing do not diagnose its requests.
 
-## UI
+## Dashboard
 
 ```text
-foggy ui
+foggy dashboard
 ```
 
 Opens the configured origin in your default browser using `open` on macOS, `rundll32.exe` on Windows, or `xdg-open` on other platforms. The URL is passed as an argument without a shell. No server is started or probed. Success means the opener exited successfully, not that the browser rendered the page. Result: `{"url":"http://127.0.0.1:4173/","opened":true}`. A missing/failing platform opener is an error; headless agents should use API commands instead.
 
 ```sh
-foggy ui
-foggy --url http://127.0.0.1:5173 ui  # Development UI
-foggy --workspace WORKSPACE_ID ui  # Opens /?workspace=WORKSPACE_ID
+foggy dashboard
+foggy --url http://127.0.0.1:5173 dashboard  # Development UI
+foggy --workspace WORKSPACE_ID dashboard  # Opens /?workspace=WORKSPACE_ID
 ```
 
 ## Agent Workflow

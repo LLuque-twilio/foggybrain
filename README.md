@@ -27,7 +27,7 @@ foggy --json task create "Plan the release" --kind manual
 foggy --json task list --status available
 foggy --json task show TASK_ID
 foggy --json task done TASK_ID
-foggy ui
+foggy dashboard
 ```
 
 Use IDs returned by the server. If no workspace exists, create one with `foggy --json workspace create "Personal"`. For a specific workspace, pass `--workspace ID`; your current repository does not select it.
