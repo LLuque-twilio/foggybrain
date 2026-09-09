@@ -19,3 +19,4 @@ coverage/
 *.sqlite3-wal
 local-exports/
 .claude/worktrees/
+docs/superpowers/
