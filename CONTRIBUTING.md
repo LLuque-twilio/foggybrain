@@ -42,7 +42,7 @@ code. Do not use privileged workflows to execute pull-request code.
 scripts/install-smoke.sh 0.2.0
 ```
 
-The script installs into a throwaway `HOME`, asserts `foggy --version` on a minimal `PATH`, then runs `foggy start` and `foggy stop` on port `4377` with an isolated `FOGGY_DATA_DIR`. It never touches your real `~/.foggybrain` or task data. On macOS it may prompt once for `sudo` to write `/etc/paths.d/foggy`.
+The script installs into a throwaway `HOME`, asserts `foggy --version` on a minimal `PATH`, then runs `foggy --json start` and `foggy --json stop` on port `4377` with an isolated `FOGGY_DATA_DIR`. It never touches your real `~/.foggybrain` or task data. On macOS it may prompt once for `sudo` to write `/etc/paths.d/foggy`.
 
 Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
 Keep discussions respectful and focused on the work.

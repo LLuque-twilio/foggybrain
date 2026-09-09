@@ -23,8 +23,10 @@ sh "$ROOT/scripts/install.sh"
 FOGGY="$HOME/.local/bin/foggy"
 [ -x "$FOGGY" ] || { printf 'smoke: %s is not executable\n' "$FOGGY" >&2; exit 1; }
 
-# A clean PATH proves the installed CLI needs nothing from the developer environment.
-installed=$(env -i HOME="$HOME" PATH="$HOME/.local/bin:/usr/bin:/bin" foggy --version)
+# A clean PATH (repo tree and package managers excluded, node kept since foggy execs via
+# `#!/usr/bin/env node`) proves the installed CLI needs nothing from the developer environment.
+node_dir=$(dirname "$(command -v node)")
+installed=$(env -i HOME="$HOME" PATH="$HOME/.local/bin:$node_dir:/usr/bin:/bin" foggy --version)
 [ "$installed" = "$VERSION" ] || { printf 'smoke: expected %s, got %s\n' "$VERSION" "$installed" >&2; exit 1; }
 
 "$FOGGY" --json start >/dev/null

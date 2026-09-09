@@ -38,6 +38,9 @@ process.stdin.on("end", () => {
 fi
 
 case "$VERSION" in
+  *[!0-9A-Za-z.-]*) fail "Invalid version: $VERSION" ;;
+esac
+case "$VERSION" in
   [0-9]*.[0-9]*.[0-9]*) ;;
   *) fail "Invalid version: $VERSION" ;;
 esac
@@ -45,15 +48,33 @@ esac
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT HUP INT TERM
 
+ASSET="foggybrain-$VERSION.tar.gz"
+
 printf 'Installing FoggyBrain %s...\n' "$VERSION"
-curl -fsSL -o "$TMP/foggybrain.tar.gz" \
-  "https://github.com/$REPO/releases/download/v$VERSION/foggybrain-$VERSION.tar.gz" ||
+curl -fsSL -o "$TMP/$ASSET" \
+  "https://github.com/$REPO/releases/download/v$VERSION/$ASSET" ||
   fail "Cannot download release v$VERSION."
+curl -fsSL -o "$TMP/SHA256SUMS" \
+  "https://github.com/$REPO/releases/download/v$VERSION/SHA256SUMS" ||
+  fail "Cannot download SHA256SUMS for release v$VERSION."
+
+grep -F "  $ASSET" "$TMP/SHA256SUMS" > "$TMP/SHA256SUMS.asset" ||
+  fail "SHA256SUMS has no entry for $ASSET."
+
+if command -v sha256sum >/dev/null 2>&1; then
+  (cd "$TMP" && sha256sum -c SHA256SUMS.asset >/dev/null 2>&1) ||
+    fail "Checksum mismatch for $ASSET: expected $(awk '{print $1}' "$TMP/SHA256SUMS.asset"), got $(sha256sum "$TMP/$ASSET" | awk '{print $1}')."
+elif command -v shasum >/dev/null 2>&1; then
+  (cd "$TMP" && shasum -a 256 -c SHA256SUMS.asset >/dev/null 2>&1) ||
+    fail "Checksum mismatch for $ASSET: expected $(awk '{print $1}' "$TMP/SHA256SUMS.asset"), got $(shasum -a 256 "$TMP/$ASSET" | awk '{print $1}')."
+else
+  fail "Neither sha256sum nor shasum is available; cannot verify release integrity."
+fi
 
 DEST="$FOGGY_HOME/versions/$VERSION"
 rm -rf "$DEST"
 mkdir -p "$DEST"
-tar -xzf "$TMP/foggybrain.tar.gz" -C "$DEST" --strip-components=1
+tar -xzf "$TMP/$ASSET" -C "$DEST" --strip-components=1
 [ -f "$DEST/dist/server/cli.js" ] || fail "Release archive is missing dist/server/cli.js."
 
 FOGGY_HOME="$FOGGY_HOME" node "$DEST/dist/server/cli.js" link --version "$VERSION" >/dev/null ||
