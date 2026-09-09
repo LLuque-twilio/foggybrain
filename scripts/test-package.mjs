@@ -307,6 +307,15 @@ if (process.env.FOGGY_MANAGED === '1') {
     '',
     'Runtime attempted external network access',
   );
+} catch (error) {
+  if (runtimeStarted) {
+    const log = await readFile(
+      join(home, '.local', 'state', 'foggybrain', 'server.log'),
+      'utf8',
+    ).catch(() => '');
+    if (log) console.error(`Isolated package-test server log:\n${log}`);
+  }
+  throw error;
 } finally {
   let safeToRemove = !runtimeStarted;
   try {
