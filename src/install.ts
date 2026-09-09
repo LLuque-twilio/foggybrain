@@ -154,3 +154,88 @@ export async function linkVersion(options: LinkOptions): Promise<LinkResult> {
   });
   return { version, path, bin: join(binDir, 'foggy'), pathEntry };
 }
+
+const LATEST_RELEASE_URL = `https://api.github.com/repos/${REPO}/releases/latest`;
+
+export function releaseAssetUrl(version: string): string {
+  const normalized = assertVersion(version);
+  return `https://github.com/${REPO}/releases/download/v${normalized}/foggybrain-${normalized}.tar.gz`;
+}
+
+export async function resolveLatestVersion(fetchImpl: typeof fetch = fetch): Promise<string> {
+  const response = await fetchImpl(LATEST_RELEASE_URL, {
+    headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'foggybrain-cli' },
+    signal: AbortSignal.timeout(30_000),
+  }).catch((error: unknown) => {
+    throw new Error(
+      `Cannot reach the FoggyBrain release list: ${error instanceof Error ? error.message : String(error)}.`,
+    );
+  });
+  if (!response.ok)
+    throw new Error(`Cannot read the latest FoggyBrain release (HTTP ${response.status}).`);
+  const body: unknown = await response.json().catch(() => undefined);
+  if (
+    !body ||
+    typeof body !== 'object' ||
+    !('tag_name' in body) ||
+    typeof body.tag_name !== 'string'
+  )
+    throw new Error('The latest FoggyBrain release has no tag name.');
+  return assertVersion(body.tag_name);
+}
+
+export async function downloadVersion(
+  version: string,
+  options: { root?: string; fetchImpl?: typeof fetch; run?: Runner } = {},
+): Promise<string> {
+  const normalized = assertVersion(version);
+  const root = options.root ?? installRoot();
+  const url = releaseAssetUrl(normalized);
+  const response = await (options.fetchImpl ?? fetch)(url, {
+    headers: { 'User-Agent': 'foggybrain-cli' },
+    signal: AbortSignal.timeout(300_000),
+  }).catch((error: unknown) => {
+    throw new Error(
+      `Cannot download ${url}: ${error instanceof Error ? error.message : String(error)}.`,
+    );
+  });
+  if (!response.ok)
+    throw new Error(`Cannot download FoggyBrain ${normalized} (HTTP ${response.status}): ${url}`);
+  const staging = join(root, 'tmp');
+  await mkdir(staging, { recursive: true });
+  const tarball = join(staging, `foggybrain-${normalized}.tar.gz`);
+  await writeFile(tarball, Buffer.from(await response.arrayBuffer()));
+  const target = versionDirectory(normalized, root);
+  const partial = `${target}.partial`;
+  await rm(partial, { recursive: true, force: true });
+  await mkdir(partial, { recursive: true });
+  await (options.run ?? execute)('tar', ['-xzf', tarball, '-C', partial, '--strip-components=1']);
+  await readFile(join(partial, 'dist', 'server', 'cli.js')).catch(() => {
+    throw new Error(`The FoggyBrain ${normalized} archive is missing dist/server/cli.js.`);
+  });
+  await rm(target, { recursive: true, force: true });
+  await rename(partial, target);
+  await rm(tarball, { force: true });
+  return target;
+}
+
+export interface UpgradeOptions extends Omit<LinkOptions, 'version'> {
+  version?: string;
+  fetchImpl?: typeof fetch;
+}
+
+export interface UpgradeResult extends LinkResult {
+  previousVersion: string | null;
+}
+
+export async function upgrade(options: UpgradeOptions = {}): Promise<UpgradeResult> {
+  const home = options.home ?? homedir();
+  const root = options.root ?? installRoot(process.env, home);
+  const version = options.version
+    ? assertVersion(options.version)
+    : await resolveLatestVersion(options.fetchImpl);
+  const previousVersion = await currentVersion(root);
+  await downloadVersion(version, { root, fetchImpl: options.fetchImpl, run: options.run });
+  const linked = await linkVersion({ ...options, version, root, home });
+  return { ...linked, previousVersion };
+}

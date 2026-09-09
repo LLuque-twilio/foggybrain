@@ -1109,3 +1109,13 @@ test('CLI link fails clearly for a version that is not installed', async (t) => 
   assert.match(JSON.parse(result.stderr).error, /not installed/);
   assert.equal(requests.length, 0);
 });
+
+test('CLI upgrade rejects a malformed version without any network access', async (t) => {
+  const { run, requests } = await fixture(t);
+  const root = await mkdtemp(join(tmpdir(), 'foggy-cli-upgrade-'));
+  const result = await run(['--json', 'upgrade', '--version', '../evil'], { FOGGY_HOME: root });
+  assert.equal(result.code, 1);
+  assert.equal(result.stdout, '');
+  assert.match(JSON.parse(result.stderr).error, /Invalid FoggyBrain version/);
+  assert.equal(requests.length, 0);
+});

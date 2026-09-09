@@ -351,6 +351,19 @@ Timeouts identify the server's overall 10-second sync deadline; transport failur
 
 Credentials are server-only: dedicated mode uses only `FOGGY_SYNC_TOKEN` (without fallback); explicit `github` mode uses server `GH_TOKEN`, `GITHUB_TOKEN`, or `gh auth token`. Both require access to the selected private repository, Contents read/write for publishing, and any organization/SSO approval. Prefer dedicated sync credentials to keep PR access read-only. Never put tokens in CLI arguments, task text, diagnostic reports, or logs. This sync uses the GitHub Contents API, so local git remotes and git CLI tracing do not diagnose its requests.
 
+## Installation And Upgrades
+
+```text
+foggy upgrade [--version <version>]
+foggy link [--version <version>]
+```
+
+These commands manage a curl-installed FoggyBrain under `~/.foggybrain` (override with `FOGGY_HOME`). They are not used by a `pnpm link --global` development install.
+
+`foggy upgrade` resolves the latest GitHub release (or `--version`), downloads `foggybrain-<version>.tar.gz`, extracts it to `~/.foggybrain/versions/<version>/`, repoints `~/.foggybrain/current` and `~/.local/bin/foggy`, and returns `{"version":"...","path":"...","bin":"...","pathEntry":"present","previousVersion":"..."}`. Old version directories are kept for rollback; remove them with `rm -rf ~/.foggybrain/versions/<old>`.
+
+`foggy link` performs only the symlink and `PATH` steps for an already-extracted version, defaulting to the running CLI's own version. Use it to roll back: `~/.foggybrain/versions/<old>/bin/foggy.mjs link`. `pathEntry` is `created` when the `PATH` entry had to be written (`/etc/paths.d/foggy` on macOS, which prompts for `sudo`; a marked line in `~/.profile` on Linux) and `present` when it was already correct.
+
 ## Server Lifecycle
 
 ```text

@@ -17,7 +17,7 @@ import type {
   WorkspaceList,
 } from './shared.js';
 import { startServer, stopServer } from './daemon.js';
-import { linkVersion, packageVersion } from './install.js';
+import { linkVersion, packageVersion, upgrade } from './install.js';
 
 export async function main(argv = process.argv): Promise<void> {
   // `-v`/`--version` is recognized only as the first argument, handled before Commander
@@ -574,6 +574,11 @@ export async function main(argv = process.argv): Promise<void> {
     .action(async (options) =>
       output(await linkVersion({ version: options.version ?? packageVersion() })),
     );
+  program
+    .command('upgrade')
+    .description('Download a FoggyBrain release and switch this installation to it')
+    .option('--version <version>', 'release version (default: latest)')
+    .action(async (options) => output(await upgrade({ version: options.version })));
   program
     .command('start')
     .description('Start the Foggybrain server in the background')

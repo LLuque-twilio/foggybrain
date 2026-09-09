@@ -1,19 +1,25 @@
 import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, readlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
 import { test } from 'node:test';
 import {
   assertVersion,
   binDirectory,
   currentVersion,
+  downloadVersion,
   ensurePathEntry,
   execute,
   installRoot,
   linkVersion,
   packageVersion,
+  releaseAssetUrl,
+  resolveLatestVersion,
+  upgrade,
   versionDirectory,
 } from './install.js';
 
@@ -128,4 +134,91 @@ test('ensurePathEntry writes /etc/paths.d/foggy through sudo on macOS and skips 
     'present',
   );
   assert.equal(calls.length, 1);
+});
+
+async function archive(version: string): Promise<Buffer> {
+  const stage = await scratch();
+  const top = join(stage, `foggybrain-${version}`);
+  await mkdir(join(top, 'bin'), { recursive: true });
+  await mkdir(join(top, 'dist', 'server'), { recursive: true });
+  await writeFile(join(top, 'bin', 'foggy.mjs'), '#!/usr/bin/env node\n', { mode: 0o755 });
+  await writeFile(join(top, 'dist', 'server', 'cli.js'), `export const version = '${version}';\n`);
+  await writeFile(join(top, 'package.json'), JSON.stringify({ version }));
+  await promisify(execFile)('tar', [
+    '-czf',
+    join(stage, 'a.tar.gz'),
+    '-C',
+    stage,
+    `foggybrain-${version}`,
+  ]);
+  return readFile(join(stage, 'a.tar.gz'));
+}
+
+test('releaseAssetUrl and resolveLatestVersion use the public release endpoints', async () => {
+  assert.equal(
+    releaseAssetUrl('1.2.3'),
+    'https://github.com/LLuque-twilio/foggybrain/releases/download/v1.2.3/foggybrain-1.2.3.tar.gz',
+  );
+  const requested: string[] = [];
+  const fetchImpl = (async (input: string) => {
+    requested.push(String(input));
+    return new Response(JSON.stringify({ tag_name: 'v0.4.1' }), { status: 200 });
+  }) as unknown as typeof fetch;
+  assert.equal(await resolveLatestVersion(fetchImpl), '0.4.1');
+  assert.deepEqual(requested, [
+    'https://api.github.com/repos/LLuque-twilio/foggybrain/releases/latest',
+  ]);
+  const failing = (async () => new Response('nope', { status: 404 })) as unknown as typeof fetch;
+  await assert.rejects(() => resolveLatestVersion(failing), /release/i);
+});
+
+test('upgrade downloads, extracts, links, and reports the previous version', async () => {
+  const root = await scratch();
+  const home = await scratch();
+  const binDir = join(home, '.local', 'bin');
+  const bytes = await archive('0.3.0');
+  const fetchImpl = (async (input: string) => {
+    if (String(input).endsWith('/releases/latest'))
+      return new Response(JSON.stringify({ tag_name: 'v0.3.0' }), { status: 200 });
+    assert.equal(String(input), releaseAssetUrl('0.3.0'));
+    return new Response(new Uint8Array(bytes), { status: 200 });
+  }) as unknown as typeof fetch;
+  const first = await upgrade({ root, home, binDir, platform: 'linux', fetchImpl });
+  assert.equal(first.version, '0.3.0');
+  assert.equal(first.previousVersion, null);
+  assert.equal(await currentVersion(root), '0.3.0');
+  assert.equal(
+    await readFile(join(versionDirectory('0.3.0', root), 'dist', 'server', 'cli.js'), 'utf8'),
+    "export const version = '0.3.0';\n",
+  );
+
+  // Re-running the same version is safe and keeps the old directory in place for rollback.
+  const again = await upgrade({
+    version: 'v0.3.0',
+    root,
+    home,
+    binDir,
+    platform: 'linux',
+    fetchImpl,
+  });
+  assert.equal(again.previousVersion, '0.3.0');
+  assert.equal(await currentVersion(root), '0.3.0');
+});
+
+test('downloadVersion rejects an archive without a compiled CLI', async () => {
+  const root = await scratch();
+  const stage = await scratch();
+  await mkdir(join(stage, 'foggybrain-0.5.0'), { recursive: true });
+  await writeFile(join(stage, 'foggybrain-0.5.0', 'README'), 'x');
+  await promisify(execFile)('tar', [
+    '-czf',
+    join(stage, 'a.tar.gz'),
+    '-C',
+    stage,
+    'foggybrain-0.5.0',
+  ]);
+  const bytes = await readFile(join(stage, 'a.tar.gz'));
+  const fetchImpl = (async () =>
+    new Response(new Uint8Array(bytes), { status: 200 })) as unknown as typeof fetch;
+  await assert.rejects(() => downloadVersion('0.5.0', { root, fetchImpl }), /archive/i);
 });
