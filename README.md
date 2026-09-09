@@ -2,9 +2,24 @@
 
 A local task graph for untangling work. Organize tasks into containers, connect prerequisites, and track GitHub merge gates. The web UI and CLI share the same running server and local data.
 
-## Run Locally
+## Install
 
-Requires **Node.js 22 (22.13.0+)** and **pnpm 10.14.0**. From your cloned FoggyBrain repository:
+Requires **Node.js 22 (22.13.0+)**. Nothing else — no clone, no pnpm.
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/LLuque-twilio/foggybrain/master/scripts/install.sh | bash
+```
+
+This installs the CLI to `~/.foggybrain/versions/<version>/`, links `~/.local/bin/foggy`, and puts that directory on `PATH` for every shell — including the non-interactive shells AI agents spawn. On macOS it prompts once for `sudo` to write `/etc/paths.d/foggy`; on Linux it appends one line to `~/.profile`. Then:
+
+```sh
+foggy start
+foggy dashboard
+```
+
+Open a new terminal first if `foggy` is not yet on your `PATH`. `foggy upgrade` installs the latest release later; re-running the curl command does the same thing. `FOGGY_VERSION=0.2.0` pins a version. `foggy uninstall` removes the CLI, its `PATH` entry, and `~/.foggybrain`, keeping your task data.
+
+## Run From A Clone (Developers)
 
 ```sh
 pnpm install
@@ -13,7 +28,7 @@ pnpm link --global
 pnpm start
 ```
 
-Open **http://127.0.0.1:4173**. Leave the server running, or start it in the background with `foggy start`. GitHub credentials are optional for local manual tasks.
+Open **http://127.0.0.1:4173**. GitHub credentials are optional for local manual tasks.
 
 If linking reports a missing global bin directory, run `pnpm setup`, reopen your terminal, and retry `pnpm link --global`. Restart existing agents/editors to pick up the new `PATH`; their environment must include the directory from `pnpm bin -g`.
 
@@ -46,7 +61,7 @@ See the [CLI reference](docs/cli.md) for all commands and [agent guidance](AGENT
 
 ## Develop And Update
 
-For live server/UI development, use `pnpm dev` **instead of** `pnpm start`. Open **http://127.0.0.1:5173**; the API remains on port `4173`.
+For live server/UI development, use `pnpm dev` **instead of** `pnpm start`. Open **http://127.0.0.1:5173**; the API remains on port `4173`. A curl-installed CLI updates with `foggy upgrade`, independent of any clone. Old versions stay in `~/.foggybrain/versions/` for rollback with `~/.foggybrain/versions/<old>/bin/foggy.mjs link`.
 
 The global CLI links to this checkout's build. Keep the checkout in place and run `pnpm build` after CLI changes; no relinking is needed. Without a build, run the source from this repo with `pnpm --silent run foggy --json task list`.
 

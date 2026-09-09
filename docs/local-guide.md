@@ -32,6 +32,27 @@ pnpm start
 
 The built UI and API are both at **http://127.0.0.1:4173**. `pnpm start` uses the existing build, so rebuild after source changes.
 
+## Install Without A Clone
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/LLuque-twilio/foggybrain/master/scripts/install.sh | bash
+foggy start
+foggy dashboard
+```
+
+The installer needs Node.js 22.13.0+ and nothing else. Layout:
+
+| Path                                | Purpose                                                |
+| ----------------------------------- | ------------------------------------------------------ |
+| `~/.foggybrain/versions/<version>/` | One extracted release; old versions are kept           |
+| `~/.foggybrain/current`             | Symlink to the active version                          |
+| `~/.local/bin/foggy`                | Symlink to `current/bin/foggy.mjs`                     |
+| `/etc/paths.d/foggy` (macOS)        | Puts `~/.local/bin` on `PATH` for every shell          |
+| `~/.profile` (Linux)                | Same, via one marked `export PATH` line                |
+| `~/.local/share/foggybrain/`        | SQLite data and `foggy.pid`, shared with a dev install |
+
+`FOGGY_HOME` relocates `~/.foggybrain`; `FOGGY_VERSION` pins the release the installer fetches. Data lives in `FOGGY_DATA_DIR` (default `~/.local/share/foggybrain`), so a curl install and a `pnpm link --global` install on the same machine see the same workspaces and tasks. Windows is not supported by the installer; use the clone workflow there. See the [CLI reference](cli.md#installation-and-upgrades) for `link`, `upgrade`, and `uninstall`.
+
 ### Use `foggy` From Any Repository
 
 Link the existing CLI globally so you and AI agents can run `foggy` from any directory. No Homebrew installation is required. From your FoggyBrain checkout, run:
@@ -71,7 +92,7 @@ pnpm --silent run foggy --json workspace create "Shared" --type cloud --repo OWN
 pnpm --silent run foggy --json workspace rename WORKSPACE_ID "Release planning"
 pnpm --silent run foggy --json workspace connect LOCAL_WORKSPACE_ID --repo OWNER/PRIVATE_STATE_REPO
 pnpm --silent run foggy --json --workspace WORKSPACE_ID graph
-pnpm foggy --workspace WORKSPACE_ID ui
+pnpm foggy --workspace WORKSPACE_ID dashboard
 ```
 
 Use the IDs returned by the server. `--workspace ID` overrides process `FOGGY_WORKSPACE`; without either, CLI calls retain legacy default-workspace paths. Explicit selection never falls back if the workspace is missing. Workspace management commands always address the unscoped registry. Browser tabs select independently using `?workspace=ID`; switching one does not change another tab or the CLI default.
