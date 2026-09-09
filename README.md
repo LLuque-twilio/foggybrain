@@ -4,25 +4,21 @@ A local task graph for untangling work. Group steps into containers, express pre
 
 ## Getting Started
 
-Contributions are welcome: see [CONTRIBUTING.md](https://github.com/LLuque-twilio/foggybrain/blob/master/CONTRIBUTING.md). Licensed under
-the [MIT License](LICENSE). Report vulnerabilities using [SECURITY.md](https://github.com/LLuque-twilio/foggybrain/blob/master/SECURITY.md),
+Contributions are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md). Licensed under
+the [MIT License](LICENSE). Report vulnerabilities using [SECURITY.md](SECURITY.md),
 not public issues.
 
-### Install
-
-Install with [Homebrew](https://brew.sh) on macOS or Linux. Homebrew manages `node@22` and uses npm internally; you do not need to install Node or pnpm yourself, clone the source, or build the app.
-
-**Installation is not available yet.** The public [Homebrew tap](https://github.com/LLuque-twilio/homebrew-tap) is set up, but no app release has been published. The command below becomes available only after the first [release](https://github.com/LLuque-twilio/foggybrain/releases) is published and its formula is merged into the tap.
+Use **Node.js 22, version 22.13.0 or newer** (the server uses Node's built-in SQLite support) and **pnpm 10.14.0**, pinned in `package.json`. If pnpm is not installed, run `corepack enable` with a Corepack-enabled Node installation; Corepack uses the project's pinned version.
 
 ```sh
-brew install LLuque-twilio/tap/foggybrain
+pnpm install --frozen-lockfile
+pnpm pack
+npm install --global ./foggybrain-0.1.0.tgz
 ```
 
-Homebrew consumes the prebuilt release archive containing the CLI, server, and UI, and fetches runtime dependencies through npm internally. Network access is required; the archive checksum verifies that artifact, not a lock of all transitive dependencies. Do not use sudo or a `curl | sh` installer for FoggyBrain. There is no Homebrew service: the CLI manages the server lifecycle.
+`pnpm pack` builds the CLI, server, and UI via the `prepack` hook. The tarball is a standalone installation, not a link to the checkout; no registry publish is needed, and the package remains private. Node.js is required at runtime, but the checkout and its development dependencies are not.
 
-### First Run
-
-Optionally run `foggy setup` yourself in an interactive terminal to configure credentials and settings, then open the dashboard. Agents must not operate the wizard for you. Manual tasks and containers work without GitHub credentials.
+Use a **user-writable global prefix**, not `sudo`. A Node version manager normally provides one. Otherwise, on macOS/Linux, run `npm config set prefix "$HOME/.local"` and add `export PATH="$HOME/.local/bin:$PATH"` to your shell startup file, then reopen the terminal. Alternatively, run `pnpm setup`, reopen your terminal so its global bin directory is on `PATH`, and install with `pnpm add -g ./foggybrain-0.1.0.tgz`.
 
 ```sh
 foggy setup
@@ -38,34 +34,33 @@ If a legacy FoggyBrain server is already listening, stop it and restart once wit
 
 `foggy setup` is an optional terminal-only wizard for `~/.config/foggybrain/.env`. It hides token input, offers keep/replace/remove choices, and reviews settings before an explicit save. Data stays at `~/.local/share/foggybrain` by default; logs/runtime stay at `~/.local/state/foggybrain`. Selecting a different data directory does not move or migrate data. Setup never contacts GitHub, starts/stops servers, or writes workspaces. After saving changes to an existing installation, run `foggy stop` (user-wide), then your next default API command or `foggy dashboard` loads the configuration. Process environment overrides still apply. See [setup details](docs/cli.md#setup).
 
-### Stop And Upgrade
+### Development
 
 Use `foggy stop` (or `foggy --json stop`) to gracefully stop all registered Foggybrain API instances for your user, across ports and data directories. This also stops the built dashboard served by those APIs. It never starts a server or signals a PID. Foreground APIs started with this version are included; older unregistered servers, browser tabs, Vite, and development watchers are not. Stop `pnpm dev` with Ctrl-C in its terminal to stop the full development stack and prevent watcher restarts. Explicit `--url` / `FOGGY_URL` is rejected by `stop`.
 
-To upgrade once a new release is available in the tap, plan for the **user-wide** interruption and explicitly stop FoggyBrain first:
+For foreground development, use `pnpm dev`: the API runs at **http://127.0.0.1:4173** and the development UI at **http://127.0.0.1:5173**, with Vite proxying `/api`. Stop any managed server using the same port or data directory first. To run the built app in the foreground:
 
 ```sh
-foggy stop
-brew upgrade LLuque-twilio/tap/foggybrain
-foggy dashboard
+pnpm build
+pnpm start
 ```
 
-Inspect stop failures or ignored instances before proceeding; never kill an unknown listener. Stop older unregistered servers in their original terminal. Keep configuration and the entire data directory, including custom data locations, across upgrades. Homebrew upgrades do not require deleting data or rerunning setup. Restart is necessary to use the new server build.
+The built UI and API are both at **http://127.0.0.1:4173**. `pnpm start` uses the existing build, so rebuild after source changes. Use `pnpm foggy <command>` to run the CLI source, or optionally `pnpm link` after building for checkout-linked development. For the development UI use `pnpm foggy --url http://127.0.0.1:5173 ui`. CLI flags follow `foggy` directly; do not insert an extra `--` separator. The remaining `pnpm foggy` examples can also be run as installed `foggy` commands.
 
-For checkout setup, source execution, tests, and maintainer releases, see [CONTRIBUTING.md](https://github.com/LLuque-twilio/foggybrain/blob/master/CONTRIBUTING.md).
+`pnpm-lock.yaml` is the dependency lockfile. Use `pnpm install --frozen-lockfile` for reproducible installs. Dependency build scripts are restricted to `esbuild`, which supports Vite and tsx.
 
 ## Workspaces
 
 Keep up to **three independent workspaces** on one server. Each stores its graph in local SQLite. A **local** workspace has no state-sync target; a **cloud** workspace is still local-first, with manual preview/apply sync to a private GitHub repository, not a hosted database or automatic sync service.
 
 ```sh
-foggy --json workspace list
-foggy --json workspace create "Personal"
-foggy --json workspace create "Shared" --type cloud --repo OWNER/PRIVATE_STATE_REPO
-foggy --json workspace rename WORKSPACE_ID "Release planning"
-foggy --json workspace connect LOCAL_WORKSPACE_ID --repo OWNER/PRIVATE_STATE_REPO
-foggy --json --workspace WORKSPACE_ID graph
-foggy --workspace WORKSPACE_ID ui
+pnpm --silent run foggy --json workspace list
+pnpm --silent run foggy --json workspace create "Personal"
+pnpm --silent run foggy --json workspace create "Shared" --type cloud --repo OWNER/PRIVATE_STATE_REPO
+pnpm --silent run foggy --json workspace rename WORKSPACE_ID "Release planning"
+pnpm --silent run foggy --json workspace connect LOCAL_WORKSPACE_ID --repo OWNER/PRIVATE_STATE_REPO
+pnpm --silent run foggy --json --workspace WORKSPACE_ID graph
+pnpm foggy --workspace WORKSPACE_ID ui
 ```
 
 Use the IDs returned by the server. `--workspace ID` overrides process `FOGGY_WORKSPACE`; without either, CLI calls retain legacy default-workspace paths. Explicit selection never falls back if the workspace is missing. Workspace management commands always address the unscoped registry. Browser tabs select independently using `?workspace=ID`; switching one does not change another tab or the CLI default.
@@ -112,14 +107,14 @@ The UI refreshes server state every four seconds, including changes made by the 
 
 ```sh
 # Replace IDs below with the IDs returned by the server.
-foggy task create "Release" --kind container
-foggy task create "Tests" --parent CONTAINER_ID
-foggy task create "Deploy" --parent CONTAINER_ID
-foggy dependency add TESTS_ID DEPLOY_ID
-foggy task done DEPLOY_ID
-foggy --json task show DEPLOY_ID
+pnpm foggy task create "Release" --kind container
+pnpm foggy task create "Tests" --parent CONTAINER_ID
+pnpm foggy task create "Deploy" --parent CONTAINER_ID
+pnpm foggy dependency add TESTS_ID DEPLOY_ID
+pnpm foggy task done DEPLOY_ID
+pnpm foggy --json task show DEPLOY_ID
 # Deploy is ready until Tests completes.
-foggy task done TESTS_ID
+pnpm foggy task done TESTS_ID
 ```
 
 ## Agents And CLI
@@ -135,7 +130,7 @@ foggy --json task delete TASK_ID --dry-run
 foggy --json task delete TASK_ID --yes
 ```
 
-Human-mode API commands and `dashboard` print a connection notice on stderr. With `--json`, that notice is suppressed: successful commands write one JSON value to stdout. Errors write one `{"error":"message"}` value to stderr and exit nonzero in either output mode. Help remains human-readable text. Use server-returned IDs, not titles or list positions. Use **`foggy --json <command>`** in JSON pipelines.
+Human-mode API commands and `dashboard` print a connection notice on stderr. With `--json`, that notice is suppressed: successful commands write one JSON value to stdout. Errors write one `{"error":"message"}` value to stderr and exit nonzero in either output mode. Help remains human-readable text. Use server-returned IDs, not titles or list positions. To avoid pnpm's script banner in JSON pipelines, use **`pnpm --silent run foggy --json <command>`** or the installed `foggy` executable.
 
 Only deletion can prompt, and only on a terminal. Piped/noninteractive deletion requires `--yes`; `--dry-run` never deletes or prompts. The preview lists deleted tasks, affected tasks, and removed relationships. Deletion cascades through **owned descendants**, not reference targets, and removes touching dependencies and references. Other containers and dependents can change completion, including transitively. Unlink a shared child with `reference remove REFERENCE_ID` when you mean to keep the task. There is no CLI undo; previews are not locks against concurrent edits.
 
@@ -154,10 +149,10 @@ Managed startup loads `~/.config/foggybrain/.env`, with process environment vari
 Use a token restricted to the repositories you intend to track. For a fine-grained token, grant **Metadata: read** and **Pull requests: read** on those repositories. Some repository access paths or organization policies may also require **Contents: read**, SSO authorization, or organization approval. Exact access depends on the account, repositories, and GitHub policy; these permissions are not a promise that every private repository will be visible. Avoid granting write permissions for this read-only integration.
 
 ```sh
-foggy --json github status
-foggy --json github sync
-foggy --json github prs
-foggy task create "Merge the fix" --kind pr --pr https://github.com/OWNER/REPO/pull/123
+pnpm --silent run foggy --json github status
+pnpm --silent run foggy --json github sync
+pnpm --silent run foggy --json github prs
+pnpm foggy task create "Merge the fix" --kind pr --pr https://github.com/OWNER/REPO/pull/123
 ```
 
 PR URLs must be HTTPS `github.com/OWNER/REPO/pull/NUMBER` URLs. `github prs` returns the server's cached **authored open PRs**, not every PR in every repository. Polling runs **only while the server is running**, not while it is shut down and not in a standalone CLI process. `github sync` requests an immediate refresh. Check the returned `configured`, `syncing`, `lastSync`, and `error` fields: a successful HTTP call can still report a GitHub failure in `error`. Poll failures retain the last verified PR state and attach an error; cached data can therefore be stale. Changing a task's PR URL resets its verified PR state.
@@ -201,17 +196,17 @@ FOGGY_SYNC_TOKEN=REPLACE_LOCALLY_WITH_DEDICATED_TOKEN
 4. Inspect configuration and preview changes. These commands do not apply the preview:
 
 ```sh
-foggy --json sync status
-foggy --json sync preview
+pnpm --silent run foggy --json sync status
+pnpm --silent run foggy --json sync preview
 ```
 
 5. Review `localChanges`, `remoteChanges`, `conflicts`, `validationError`, and `canApply`. A conflicted or blocked preview still exits `0`. If appropriate, request a new preview with `sync preview --resolve local` or `--resolve remote` and review it again. Resolution chooses conflicting values, not a force overwrite, and cannot bypass graph validation or a missing baseline.
 6. Only after authorization, apply the exact returned `previewId` from the reviewed preview with `canApply: true`:
 
 ```sh
-foggy --json sync apply REVIEWED_PREVIEW_ID --yes
-foggy --json sync status
-foggy --json graph
+pnpm --silent run foggy --json sync apply REVIEWED_PREVIEW_ID --yes
+pnpm --silent run foggy --json sync status
+pnpm --silent run foggy --json graph
 ```
 
 Apply requires `--yes` even on a terminal, never prompts, and never generates a preview. Preview tokens are process-local and single-use; newer previews replace older ones. Re-preview after restart, edits, failures, or timeouts. Never blindly retry a timed-out apply: GitHub may already have accepted the write. Errors or uncertain outcomes may require reconciliation and explicit review, not force.
@@ -247,7 +242,7 @@ Foreground `pnpm start`/`pnpm dev` instead load working-directory `.env.local` t
 For an explicit data location, start the server with, for example:
 
 ```sh
-FOGGY_DATA_DIR="$HOME/.local/share/foggybrain" foggy dashboard
+FOGGY_DATA_DIR="$HOME/.local/share/foggybrain" pnpm start
 ```
 
 Keep this directory across upgrades. Stop the server before making a filesystem backup of the data directory so the SQLite database and any WAL files are consistent. Removing local data is not an uninstall step and loses your graph. Build output in `dist/` is not your task database. Default managed CLI commands follow configured `FOGGY_PORT`; for a separately managed foreground server, set an explicit CLI URL when needed. The development Vite proxy is configured for port `4173` and does not automatically follow a changed server port.
@@ -261,3 +256,28 @@ Foggybrain is a **local, trusted-user tool**, not a multi-user service. Loopback
 The checked-in [openapi.json](openapi.json) is the authoritative OpenAPI 3.1 HTTP reference for all 45 operations, including explicit-workspace routes. Import it into an OpenAPI 3.1-compatible viewer or code generator; the server does not expose an OpenAPI endpoint or documentation UI. Generation tools are development-only.
 
 [CONTRACT.md](CONTRACT.md) defines semantic guarantees, including completion, workspace isolation, and destructive sync safeguards. DTO field shapes originate in [src/shared.ts](src/shared.ts); the spec does not replace runtime graph/state validation. See the [API maintainer guide](docs/api.md) for generation and ownership and [PR verification](docs/pr-verification.md) for readiness precedence and stale-state handling.
+
+## Development Checks
+
+```sh
+pnpm test
+pnpm typecheck
+pnpm build
+```
+
+After API changes, run `pnpm openapi:generate` and `pnpm openapi:check`; never hand edit `openapi.json`. The check verifies artifact freshness and OpenAPI parser validity. `pnpm test` also checks route inventory, HTTP success responses for all 45 operations, and request boundaries.
+
+CLI tests spawn the real Commander-based CLI against a fake HTTP server and do not need a running Foggybrain instance or GitHub token. To run just those tests:
+
+```sh
+node --import tsx --test src/cli.test.ts
+```
+
+Browser tests cover desktop and mobile Chromium using a temporary database and no GitHub credentials:
+
+```sh
+pnpm exec playwright install chromium
+pnpm test:e2e
+```
+
+The browser suite builds the app, starts an isolated server on port `4189`, and removes its temporary data at shutdown. Unit and integration tests mock GitHub; a real token is needed to verify access to your actual repositories.
