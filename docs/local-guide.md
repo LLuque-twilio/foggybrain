@@ -47,9 +47,16 @@ The installer needs Node.js 22.13.0+ and nothing else. Layout:
 | `~/.foggybrain/versions/<version>/` | One extracted release; old versions are kept                         |
 | `~/.foggybrain/current`             | Symlink to the active version                                        |
 | `~/.local/bin/foggy`                | Symlink to `current/bin/foggy.mjs`                                   |
-| `/etc/paths.d/foggy` (macOS)        | Puts `~/.local/bin` on `PATH` for every shell                        |
-| `~/.profile` (Linux)                | Same, via one marked `export PATH` line                              |
+| `/etc/paths.d/foggy` (macOS)        | Puts `~/.local/bin` on `PATH` for every shell, machine-wide          |
+| `~/.profile` (Linux)                | Same, for your account only, via one marked `export PATH` line       |
 | `~/.local/share/foggybrain/`        | SQLite data, `foggy.pid`, and `foggy.log`, shared with a dev install |
+
+The two `PATH` mechanisms differ in reach and in precedence, deliberately: `/etc/paths.d/foggy` is the only way to reach the non-interactive shells AI agents spawn on macOS without writing a shell rc file, and it has no per-user form.
+
+- **macOS** writes one system file (with `sudo`), so **every user on the machine** gets your `~/.local/bin` on their `PATH`. `path_helper` **appends** `paths.d` entries after `/usr/bin` and friends, so the entry shadows nothing: a `foggy` earlier on the `PATH` still wins. On a shared Mac, `foggy uninstall` removes that shared file, but only when it names your own `~/.local/bin`.
+- **Linux** writes one marked line in your own `~/.profile`, which **prepends** `~/.local/bin`, so it takes precedence over an already-installed `foggy`. It affects only your account, and only login shells.
+
+If the `PATH` step fails (no `sudo` rights, a declined password prompt), the install is still complete and linked: `link` and `upgrade` report `"pathEntry":"failed"` and print the one line to add to `~/.profile` yourself.
 
 `FOGGY_HOME` relocates `~/.foggybrain`; `FOGGY_VERSION` pins the release the installer fetches; `FOGGY_FORCE=1` lets it replace a `~/.local/bin/foggy` that belongs to another installation, such as a `pnpm link --global` one. Data lives in `FOGGY_DATA_DIR` (default `~/.local/share/foggybrain`), so a curl install and a `pnpm link --global` install on the same machine see the same workspaces and tasks. Windows is not supported by the installer; use the clone workflow there. See the [CLI reference](cli.md#installation-and-upgrades) for `link`, `upgrade`, and `uninstall`.
 
