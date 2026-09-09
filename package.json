@@ -29,6 +29,7 @@
     "start": "node dist/server/server.js",
     "foggy": "tsx src/cli.ts",
     "test": "tsx --test src/*.test.ts",
+    "test:package": "node scripts/test-package.mjs",
     "test:e2e": "pnpm run build && playwright test",
     "typecheck": "tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.json && tsc -p tsconfig.tests.json && tsc -p tsconfig.tools.json",
     "openapi:generate": "tsx scripts/openapi.ts",

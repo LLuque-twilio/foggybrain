@@ -6,24 +6,27 @@
 
 ```text
 foggy [--url <origin>] [--workspace <id>] [--json] <command>
-pnpm foggy [--url <origin>] [--workspace <id>] [--json] <command>
 ```
 
-Install a standalone executable from the checkout without publishing:
+Use [Homebrew installation](../README.md#install) on macOS or Linux. Homebrew
+manages `node@22` and npm internally; no separate Node/pnpm installation, checkout,
+or source build is needed. **Installation is unavailable until the first app
+release is published and its formula is merged into the public
+[tap](https://github.com/LLuque-twilio/homebrew-tap).**
 
 ```sh
-pnpm install --frozen-lockfile
-pnpm pack
-npm install --global ./foggybrain-0.1.0.tgz
+brew install LLuque-twilio/tap/foggybrain
+foggy setup # Optional, human-operated terminal wizard
+foggy dashboard
 ```
 
-Packing runs `pnpm build` via `prepack` and includes the compiled CLI, server, and UI. Use Node.js 22.13.0 or newer and pnpm 10.14.0 to build. Use a user-writable npm global prefix (for example via a Node version manager), never `sudo`. On macOS/Linux, an alternative is `npm config set prefix "$HOME/.local"` with `export PATH="$HOME/.local/bin:$PATH"` in your shell startup file. Alternatively, run `pnpm setup`, reopen the terminal, and use `pnpm add -g ./foggybrain-0.1.0.tgz`. The installed package does not depend on the checkout.
+There is no Homebrew service; the CLI owns managed startup and shutdown. Do not
+use sudo or a `curl | sh` installer. For upgrades, explicitly run user-wide
+`foggy stop` before `brew upgrade LLuque-twilio/tap/foggybrain`, then restart with
+`foggy dashboard`, preserving configuration and data. Review the
+[stop and upgrade safeguards](../README.md#stop-and-upgrade) before proceeding.
 
-For development, `pnpm foggy` runs the TypeScript source without requiring a build; `pnpm build` and optional `pnpm link` provide a checkout-linked executable. CLI arguments follow `foggy` directly, without an extra `--` separator. In scripts that parse stdout, suppress pnpm's banner:
-
-```sh
-pnpm --silent run foggy --json task list
-```
+Contributor pnpm instructions are in [development setup and source CLI](https://github.com/LLuque-twilio/foggybrain/blob/master/CONTRIBUTING.md#source-cli).
 
 | Global flag        | Behavior                                                                                                                                                                                                                                           |
 | ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -425,7 +428,7 @@ foggy --workspace WORKSPACE_ID ui  # Opens /?workspace=WORKSPACE_ID
 
 ## Agent Workflow
 
-This POSIX-shell example uses optional `jq` for JSON extraction and an installed `foggy`. Default API commands start/reuse the local server; explicit URL overrides require a separately running server. From the checkout, replace each `foggy` with `pnpm --silent run foggy` if not installed. Store returned IDs and quote expansions. This creates real persisted tasks, not a simulation.
+This POSIX-shell example uses optional `jq` for JSON extraction and an installed `foggy`. Default API commands start/reuse the local server; explicit URL overrides require a separately running server. From the checkout, build once before managed startup and replace each `foggy` with `pnpm --silent run foggy` if not installed; see [source CLI](../CONTRIBUTING.md#source-cli) for the explicit-URL development route. Store returned IDs and quote expansions. This creates real persisted tasks, not a simulation.
 
 ```sh
 set -eu
