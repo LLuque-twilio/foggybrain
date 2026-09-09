@@ -3,6 +3,7 @@ import { existsSync, realpathSync } from 'node:fs';
 import { createInterface } from 'node:readline/promises';
 import { fileURLToPath } from 'node:url';
 import { Command, CommanderError, Option } from 'commander';
+import { ensureLocalServer, resolveDefaultOrigin, stopLocalServers } from './runtime.js';
 import type {
   ConnectTaskInput,
   CreateWorkspaceInput,
@@ -21,7 +22,7 @@ export async function main(argv = process.argv): Promise<void> {
   const program = new Command();
   program
     .name('foggy')
-    .description('Manage a running Foggybrain server. No local fallback state.')
+    .description('Manage Foggybrain. Automatically starts the shared local API when needed.')
     .option(
       '--url <url>',
       'server origin (or FOGGY_URL)',
@@ -61,6 +62,21 @@ export async function main(argv = process.argv): Promise<void> {
     }
     return url;
   };
+  let connected = false;
+  const connect = async () => {
+    if (connected) return;
+    const explicit = program.getOptionValueSource('url') !== 'default' || !!process.env.FOGGY_URL;
+    if (!explicit) {
+      program.setOptionValue('url', await resolveDefaultOrigin());
+      await ensureLocalServer(serverUrl().origin);
+    }
+    const url = serverUrl();
+    if (!program.opts().json) {
+      const local = ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname);
+      process.stderr.write(`Running against ${local ? 'local ' : ''}API at ${url.origin}\n`);
+    }
+    connected = true;
+  };
   const request = async <T>(
     path: string,
     method = 'GET',
@@ -74,6 +90,7 @@ export async function main(argv = process.argv): Promise<void> {
       throw new Error('Invalid workspace ID.');
     const prefix =
       scoped && workspace !== undefined ? `/workspaces/${encodeURIComponent(workspace)}` : '';
+    await connect();
     const url = new URL(`/api${prefix}${path}`, serverUrl());
     let response: Response;
     let text: string;
@@ -129,6 +146,23 @@ export async function main(argv = process.argv): Promise<void> {
     throw new Error(`Specify a ${command}command. Run foggy ${command}--help for usage.`);
   };
   program.action(missingCommand(''));
+  program
+    .command('setup')
+    .description("Interactively configure this user's local Foggybrain installation")
+    .action(async () => {
+      if (program.opts().json)
+        throw new Error(
+          'foggy setup requires an interactive terminal; --json setup is not supported.',
+        );
+      if (program.getOptionValueSource('url') !== 'default' || process.env.FOGGY_URL !== undefined)
+        throw new Error('foggy setup is local-only; remove --url / FOGGY_URL.');
+      if (program.opts().workspace !== undefined || process.env.FOGGY_WORKSPACE !== undefined)
+        throw new Error(
+          'foggy setup configures this user, not a workspace; remove --workspace / FOGGY_WORKSPACE.',
+        );
+      const { setup } = await import('./setup.js');
+      await setup();
+    });
   const workspace = program
     .command('workspace')
     .description('Manage up to three local or local-first cloud workspaces')
@@ -553,36 +587,53 @@ export async function main(argv = process.argv): Promise<void> {
       );
   }
   program
-    .command('ui')
-    .description('Open the server UI in the default web browser')
+    .command('stop')
+    .description('Stop all registered local Foggybrain APIs and built dashboards for this user')
     .action(async () => {
-      const target = serverUrl();
-      const workspace = program.opts().workspace;
-      if (workspace !== undefined) {
-        if (!workspace.trim())
-          throw new Error('--workspace / FOGGY_WORKSPACE must be a nonempty workspace ID.');
-        target.searchParams.set('workspace', workspace);
-      }
-      const url = target.href;
-      // Passing the URL as an argument avoids shell interpretation of untrusted input.
-      const executable =
-        process.platform === 'darwin'
-          ? 'open'
-          : process.platform === 'win32'
-            ? 'rundll32.exe'
-            : 'xdg-open';
-      const args = process.platform === 'win32' ? ['url.dll,FileProtocolHandler', url] : [url];
-      await new Promise<void>((resolve, reject) => {
-        const child = spawn(executable, args, { shell: false, stdio: 'ignore' });
-        child.once('error', reject);
-        child.once('close', (code) =>
-          code === 0
-            ? resolve()
-            : reject(new Error(`Browser opener exited with status ${code}. Open ${url} manually.`)),
+      if (program.getOptionValueSource('url') !== 'default' || process.env.FOGGY_URL)
+        throw new Error('foggy stop is user-wide and local-only; remove --url / FOGGY_URL.');
+      const result = await stopLocalServers();
+      if (program.opts().json) output(result);
+      else
+        process.stdout.write(
+          `Stopped ${result.stopped.length} Foggybrain server(s). Ignored ${result.ignored} stale or unrecognized record(s).\n`,
         );
-      });
-      output({ url, opened: true });
     });
+  for (const name of ['ui', 'dashboard'])
+    program
+      .command(name)
+      .description('Open the server UI in the default web browser')
+      .action(async () => {
+        if (name === 'dashboard') await connect();
+        const target = serverUrl();
+        const workspace = program.opts().workspace;
+        if (workspace !== undefined) {
+          if (!workspace.trim())
+            throw new Error('--workspace / FOGGY_WORKSPACE must be a nonempty workspace ID.');
+          target.searchParams.set('workspace', workspace);
+        }
+        const url = target.href;
+        // Passing the URL as an argument avoids shell interpretation of untrusted input.
+        const executable =
+          process.platform === 'darwin'
+            ? 'open'
+            : process.platform === 'win32'
+              ? 'rundll32.exe'
+              : 'xdg-open';
+        const args = process.platform === 'win32' ? ['url.dll,FileProtocolHandler', url] : [url];
+        await new Promise<void>((resolve, reject) => {
+          const child = spawn(executable, args, { shell: false, stdio: 'ignore' });
+          child.once('error', reject);
+          child.once('close', (code) =>
+            code === 0
+              ? resolve()
+              : reject(
+                  new Error(`Browser opener exited with status ${code}. Open ${url} manually.`),
+                ),
+          );
+        });
+        output({ url, opened: true });
+      });
 
   try {
     await program.parseAsync(argv);

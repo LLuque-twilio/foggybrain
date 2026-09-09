@@ -169,6 +169,8 @@ test('workspace removal requires strict reviewed confirmation and reroutes the d
 });
 
 test('startServer serves an empty registry without creating a placeholder database', async (t) => {
+  const home = mkdtempSync(join(tmpdir(), 'foggy-empty-home-'));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
   const dataDir = mkdtempSync(join(tmpdir(), 'foggy-empty-startup-'));
   t.after(() => rmSync(dataDir, { recursive: true, force: true }));
   const manager = new WorkspaceManager({ dataDir });
@@ -185,6 +187,7 @@ test('startServer serves an empty registry without creating a placeholder databa
     reservation.close((error) => (error ? reject(error) : resolve())),
   );
   const env = {
+    HOME: home,
     FOGGY_DATA_DIR: dataDir,
     FOGGY_PORT: String(address.port),
     FOGGY_SYNC_REPO: 'owner/state',

@@ -191,7 +191,7 @@ test('CLI connect makes one atomic request for either direction, placement, and 
           { FOGGY_URL: 'http://127.0.0.1:1', FOGGY_WORKSPACE: explicit ? 'ignored' : '' },
         );
         assert.equal(result.code, 0, result.stderr);
-        assert.equal(result.stderr, '');
+        assert.equal(result.stderr, split ? '' : `Running against local API at ${url}\n`);
         assert.equal(result.stdout, `${JSON.stringify(connected)}\n`);
         assert.deepEqual(requests.splice(0), [
           {
@@ -644,12 +644,14 @@ test('CLI update/done/reopen and relationship commands send exact endpoint bodie
 });
 
 test('CLI deletion rejects non-TTY confirmation, dry-run never deletes, and --yes always previews first', async (t) => {
-  const { run, requests } = await fixture(t);
+  const { run, requests, url } = await fixture(t);
   for (const prefix of [[], ['--json']]) {
     const result = await run([...prefix, 'task', 'delete', 'c']);
     assert.equal(result.code, 1);
     assert.equal(result.stdout, '');
-    assert.match(JSON.parse(result.stderr).error, /requires --yes/);
+    const notice = prefix.length ? '' : `Running against local API at ${url}\n`;
+    assert.ok(result.stderr.startsWith(notice));
+    assert.match(JSON.parse(result.stderr.slice(notice.length)).error, /requires --yes/);
   }
   assert.ok(requests.every((request) => request.method === 'GET'));
   for (const flags of [['--dry-run'], ['--dry-run', '--yes']]) {
@@ -664,6 +666,19 @@ test('CLI deletion rejects non-TTY confirmation, dry-run never deletes, and --ye
   assert.equal(confirmed.stderr, '');
   assert.deepEqual(JSON.parse(confirmed.stdout), { deleted: ['c', 'a'] });
   assert.deepEqual(requests.slice(-3), [
+    { method: 'GET', path: '/api/tasks/c/deletion-preview' },
+    { method: 'GET', path: '/api/state' },
+    { method: 'DELETE', path: '/api/tasks/c?confirm=true' },
+  ]);
+});
+
+test('CLI human deletion emits the API notice only once across preview, state, and delete requests', async (t) => {
+  const { run, requests, url } = await fixture(t);
+  const result = await run(['task', 'delete', 'c', '--yes']);
+  assert.equal(result.code, 0);
+  assert.equal(result.stderr, `Running against local API at ${url}\n`);
+  assert.equal(result.stdout, `${JSON.stringify({ deleted: ['c', 'a'] })}\n`);
+  assert.deepEqual(requests, [
     { method: 'GET', path: '/api/tasks/c/deletion-preview' },
     { method: 'GET', path: '/api/state' },
     { method: 'DELETE', path: '/api/tasks/c?confirm=true' },
@@ -851,17 +866,24 @@ test('CLI state sync HTTP errors propagate without retries or automatic previews
   }
 });
 
-test('CLI server errors and invalid JSON produce one JSON stderr value and no stdout', async (t) => {
+test('CLI server errors and invalid JSON preserve JSON errors, prefixed only by the human API notice', async (t) => {
   for (const response of [
     { status: 409, body: { error: 'Dependency would create a cycle' } },
     { status: 503, body: '<html>Unavailable</html>', raw: true },
     { status: 200, body: 'not-json', raw: true },
   ]) {
-    const { run } = await fixture(t, () => response);
-    const result = await run(['--json', 'task', 'list']);
-    assert.equal(result.code, 1);
-    assert.equal(result.stdout, '');
-    assert.match(JSON.parse(result.stderr).error, new RegExp(`HTTP ${response.status}`));
+    const { run, url } = await fixture(t, () => response);
+    for (const prefix of [[], ['--json']]) {
+      const result = await run([...prefix, 'task', 'list']);
+      assert.equal(result.code, 1);
+      assert.equal(result.stdout, '');
+      const notice = prefix.length ? '' : `Running against local API at ${url}\n`;
+      assert.ok(result.stderr.startsWith(notice));
+      assert.match(
+        JSON.parse(result.stderr.slice(notice.length)).error,
+        new RegExp(`HTTP ${response.status}`),
+      );
+    }
   }
   const { run, requests } = await fixture(t, () => ({
     status: 404,
@@ -913,10 +935,10 @@ test('CLI commander and local validation errors are JSON, including without --js
 });
 
 test('CLI human graph shows relationship directions and IDs; empty JSON lists remain arrays', async (t) => {
-  const { run } = await fixture(t);
+  const { run, url } = await fixture(t);
   const result = await run(['graph', 'c']);
   assert.equal(result.code, 0);
-  assert.equal(result.stderr, '');
+  assert.equal(result.stderr, `Running against local API at ${url}\n`);
   assert.match(result.stdout, /a\tavailable\tmanual\t"Task a"\tparent=c/);
   assert.match(result.stdout, /dep-1\ta -> b/);
   assert.match(result.stdout, /ref-1\tc -> b/);

@@ -1,6 +1,6 @@
 # CLI Reference
 
-`foggy` is a client of a **running** Foggybrain server. It does not start the server, poll GitHub itself, or maintain fallback local state. Run `pnpm dev` for development, or `pnpm build && pnpm start` for the built app. The API defaults to `http://127.0.0.1:4173`; the development web UI is `http://127.0.0.1:5173`.
+`foggy` is a client of the Foggybrain server. Default API commands automatically start or reuse the local server; the server owns persistence and GitHub polling, with no fallback CLI state. The default origin is `http://127.0.0.1:4173`, following configured `FOGGY_PORT`. Explicit `--url` or process `FOGGY_URL` bypasses auto-start even for localhost. Run those target servers yourself.
 
 ## Invocation
 
@@ -9,24 +9,73 @@ foggy [--url <origin>] [--workspace <id>] [--json] <command>
 pnpm foggy [--url <origin>] [--workspace <id>] [--json] <command>
 ```
 
-The `foggy` executable is available after `pnpm build` and optional `pnpm link`. If pnpm reports a missing global bin directory, run `pnpm setup` and reopen your terminal before linking. `pnpm foggy` runs the TypeScript source without requiring a build. CLI arguments follow `foggy` directly, without an extra `--` separator. In scripts that parse stdout, suppress pnpm's banner:
+Install a standalone executable from the checkout without publishing:
+
+```sh
+pnpm install --frozen-lockfile
+pnpm pack
+npm install --global ./foggybrain-0.1.0.tgz
+```
+
+Packing runs `pnpm build` via `prepack` and includes the compiled CLI, server, and UI. Use Node.js 22.13.0 or newer and pnpm 10.14.0 to build. Use a user-writable npm global prefix (for example via a Node version manager), never `sudo`. On macOS/Linux, an alternative is `npm config set prefix "$HOME/.local"` with `export PATH="$HOME/.local/bin:$PATH"` in your shell startup file. Alternatively, run `pnpm setup`, reopen the terminal, and use `pnpm add -g ./foggybrain-0.1.0.tgz`. The installed package does not depend on the checkout.
+
+For development, `pnpm foggy` runs the TypeScript source without requiring a build; `pnpm build` and optional `pnpm link` provide a checkout-linked executable. CLI arguments follow `foggy` directly, without an extra `--` separator. In scripts that parse stdout, suppress pnpm's banner:
 
 ```sh
 pnpm --silent run foggy --json task list
 ```
 
-| Global flag        | Behavior                                                                                                                                                                                 |
-| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--url <origin>`   | Overrides `FOGGY_URL`; otherwise defaults to `http://127.0.0.1:4173`. Use an absolute HTTP(S) origin, optionally with a trailing slash, without a path, credentials, query, or fragment. |
-| `--json`           | Print each successful command result as one JSON value followed by a newline. Accepted before or after the subcommand.                                                                   |
-| `--workspace <id>` | Overrides process `FOGGY_WORKSPACE` (not loaded from `.env`). Omit both to keep legacy default-workspace API paths.                                                                      |
-| `-h`, `--help`     | Human-readable help for the current command, even with `--json`. No server required.                                                                                                     |
+| Global flag        | Behavior                                                                                                                                                                                                                                           |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--url <origin>`   | Overrides process `FOGGY_URL`; either bypasses auto-start. Otherwise API commands use local configured `FOGGY_PORT` (default `4173`). Use an absolute HTTP(S) origin without a path, credentials, query, or fragment; a trailing slash is allowed. |
+| `--json`           | Print each successful command result as one JSON value followed by a newline. Accepted before or after the subcommand.                                                                                                                             |
+| `--workspace <id>` | Overrides process `FOGGY_WORKSPACE` (not loaded from `.env`). Omit both to keep legacy default-workspace API paths.                                                                                                                                |
+| `-h`, `--help`     | Human-readable help for the current command, even with `--json`. No server required.                                                                                                                                                               |
 
-The CLI reads `FOGGY_URL` from the process environment, not `.env`. Task and relationship IDs come from server responses and are stable; do not infer IDs from titles, ordering, or UI positions. Quote titles, descriptions, and URLs in your shell. Use the full returned ID.
+The CLI reads `FOGGY_URL` from the process environment, not dotenv files. Managed startup loads `~/.config/foggybrain/.env`, with process environment taking precedence, and ignores dotenv files in the invoking directory. Data defaults to `~/.local/share/foggybrain`; managed relative `FOGGY_DATA_DIR` values resolve against `~/.config/foggybrain`, not the current directory. Use an absolute data path for clarity. Restart after configuration changes; a reused server keeps its startup settings.
 
-Success exits `0`. Command-line, validation, transport, and HTTP errors exit `1`, write nothing to stdout, and write a single `{"error":"message"}` JSON object to stderr, **even without `--json`**. Interactive deletion also writes its preview and prompt to terminal stderr before any cancellation/error. There are no progress logs on stdout. Help text is the exception to JSON output. Requests time out after 15 seconds; redirects are rejected rather than silently targeting a different service. Mutations are not retried automatically. After a timeout on a write, inspect state before retrying: the server may already have committed it.
+Foreground `pnpm dev` or `pnpm build && pnpm start` retains working-directory dotenv behavior: process environment, then `.env.local`, then `.env`. The development UI is `http://127.0.0.1:5173`; its Vite proxy targets API port `4173`. Do not run two servers against one data directory. If an older server lacks the compatible health protocol, stop it and restart once with this installation. Auto-start refuses incompatible listeners and does not kill them.
 
-Normal `task list` and `graph` output is a human-readable tab-separated list with IDs, status, kind, JSON-quoted title, and owning parent (`root` for no owner). Normal graph output also lists dependency and reference IDs. All other successful commands already print JSON in normal mode; use `--json` consistently for scripts.
+Managed server output appends to `~/.local/state/foggybrain/server.log`, separate from command output. Startup waits up to 20 seconds. Loopback coordination locks are released automatically when their processes exit; an occupied lock port fails closed rather than allowing duplicate servers. The background server stays running after commands finish. Use `foggy stop` to stop registered servers safely. The next default API command starts one again. Logs are not automatically rotated.
+
+### Setup
+
+Run `foggy setup` from a terminal (or `pnpm --silent run foggy setup` from source). This local-only wizard rejects `--json`, `--url` / process `FOGGY_URL`, and `--workspace` / process `FOGGY_WORKSPACE`. Noninteractive invocation exits 1 with one JSON error on stderr, empty stdout, and no prompts. Agents must not run the interactive wizard on behalf of users.
+
+- Configuration: `~/.config/foggybrain/.env`, atomically saved with mode 0600 in a directory secured to 0700.
+- Default data: `~/.local/share/foggybrain`. An optional absolute override selects a different database, without migration, copying, or deletion. Keep preserves an existing relative override; remove deletes the override and restores the default.
+- Logs/runtime: `~/.local/state/foggybrain`, unchanged by setup.
+- PR credentials: keep preserves existing `GH_TOKEN` and `GITHUB_TOKEN` exactly. Replacement writes canonical `GH_TOKEN` and removes `GITHUB_TOKEN`; remove deletes both. Server precedence remains `GH_TOKEN`, then `GITHUB_TOKEN`, then `gh auth token`. Use repository-limited read-only access and applicable SSO approval.
+- Dedicated state-sync credentials: independently keep, replace, or remove `FOGGY_SYNC_TOKEN`. Removal deletes the entry, never writes an empty token. Dedicated mode has no fallback and requires Contents read/write on the selected private state repository.
+- API port defaults to 4173. Polling is entered in seconds (default 60), from 15 to 2147483.647 with up to three decimal places, and stored as validated integer milliseconds.
+- Advanced legacy `FOGGY_SYNC_REPO`, `FOGGY_SYNC_BRANCH`, and `FOGGY_SYNC_PATH` remain unchanged unless explicitly edited. They can initialize/convert the original default workspace on startup but never retarget an existing cloud workspace. Prefer `workspace create/connect` for new cloud workspaces. In advanced inputs, Enter keeps existing/default values and `-` removes an entry.
+
+Token input is hidden with no input history; every question uses a fresh readline interface so editing buffers (including the Ctrl-U/Ctrl-Y kill ring) cannot carry secrets into later visible prompts. Review shows only credential status, never token values. Process overrides are warned about by name only, not copied into the file. Checkout dotenv files are neither read nor written. Unknown dotenv entries/comments are preserved where possible; unsupported encodings are rejected without displaying their values. Validation is local, not a GitHub access check.
+
+Saving requires typing `yes` after review. No/EOF/Ctrl-C cancels without saving; setup may create/secure the configuration directory even on cancellation. Symlink configuration files/directories are rejected. Setup checks the file contents and metadata again, then revalidates the pathname's device, inode, and metadata immediately before renaming the saved file. Detected concurrent changes abort the save, including an editor's atomic replacement while the inspected descriptor is open. This is not a filesystem compare-and-swap: an external editor can still change the path between the final check and rename. Avoid editing the file during setup. A private `.setup.lock` prevents overlapping wizards, not arbitrary external writers; after a crash it is **not** automatically reclaimed. Verify no setup is running before manually removing that lock directory. No secret backup is created; a crash during saving can leave a private `.env.setup-*` temporary file for manual cleanup after verifying no setup is running.
+
+Setup never starts/stops servers, contacts the network, or writes data/workspaces. After saving, run `foggy stop`, then a default API command or `foggy dashboard`. **Stop is user-wide**, across registered APIs/built dashboards, ports, and data directories; it does not stop old unregistered servers, Vite, or watchers. No automatic restart occurs. Process environment continues to override saved settings. Foreground development still uses checkout dotenv files, not the setup file.
+
+### Stop Servers
+
+```sh
+foggy stop
+foggy --json stop
+```
+
+Stops all registered local Foggybrain APIs for the current user, across ports, data directories, and workspaces, including foreground APIs started with this version. The built dashboard shares the API process and stops with it. No server is auto-started. `--url` and process `FOGGY_URL` are rejected, even for loopback; workspace selection is ignored because shutdown is user-wide.
+
+Private runtime records live in `~/.local/state/foggybrain/instances` (directory mode 0700, files 0600). A separate loopback control connection must prove the record's random instance identity before receiving a shutdown request on that same connection. Shutdown also requires a separate private token from the record, never disclosed by the listener. No PID signals, port scans, HTTP shutdown routes, or remote requests are used. Shutdown drains HTTP requests, stops pollers and state sync, closes databases, releases the data lock, and removes only that instance's record before acknowledging success. Persistent data is unchanged.
+
+JSON success is `{"stopped":["http://127.0.0.1:4173"],"ignored":0}`; human mode prints counts without a connection notice. No running registered servers is a successful no-op. Malformed/stale records and identity-mismatched listeners are counted as ignored and left untouched. An unresponsive control connection or unconfirmed shutdown exits 1 with the usual JSON error, including partial-success counts; no force-kill fallback occurs. The wait is bounded to 20 seconds per instance, in parallel. Inspect before retrying after an uncertain outcome.
+
+Discovery is a snapshot: servers starting concurrently may need a later stop. Old versions without registration are not stopped. Browser tabs, Vite, `tsx watch`, and other supervisors are not killed; a watcher may restart its API on changes. Use Ctrl-C in the `pnpm dev` terminal to stop the entire development stack. Never kill an unknown listener. Registration currently requires POSIX ownership/permissions (macOS/Linux).
+
+Task and relationship IDs come from server responses and are stable; do not infer IDs from titles, ordering, or UI positions. Quote titles, descriptions, and URLs in your shell. Use the full returned ID.
+
+Success exits `0`. Human-mode API commands and `dashboard` print a connection notice on stderr; `--json` suppresses it. Command-line, validation, transport, and HTTP errors exit `1`, write nothing to stdout, and write a single `{"error":"message"}` JSON object to stderr, **even without `--json`** (human mode may already have printed its notice). Interactive deletion also writes its preview and prompt to terminal stderr before any cancellation/error. There are no progress logs on stdout. Help text is the exception to JSON output. Requests time out after 15 seconds; redirects are rejected rather than silently targeting a different service. Mutations are not retried automatically. After a timeout on a write, inspect state before retrying: the server may already have committed it.
+
+Normal `task list` and `graph` output is a human-readable tab-separated list with IDs, status, kind, JSON-quoted title, and owning parent (`root` for no owner). Normal graph output also lists dependency and reference IDs. `setup` writes its guided interaction to stderr and rejects JSON mode; `stop` prints a human summary unless `--json` is selected. Other successful commands already print JSON in normal mode; use `--json` consistently for scripts.
 
 ## Workspaces
 
@@ -282,7 +331,7 @@ Use least-privilege token access to relevant repositories: fine-grained Metadata
 
 ## Manual State Sync
 
-This top-level group syncs portable task state with a private GitHub repository, separate from `github sync` PR polling. All commands call the running server API; the CLI never accesses sync tokens, state files, or a local database. See the [server setup workflow](../README.md#manual-state-sync).
+This top-level group syncs portable task state with a private GitHub repository, separate from `github sync` PR polling. All commands call the server API, auto-starting the default local server when needed. Managed startup passes user configuration to the server; the CLI does not perform sync, send tokens in API requests, or maintain a local database. See the [server setup workflow](../README.md#manual-state-sync).
 
 ```text
 foggy --json sync status
@@ -351,13 +400,22 @@ Timeouts identify the server's overall 10-second sync deadline; transport failur
 
 Credentials are server-only: dedicated mode uses only `FOGGY_SYNC_TOKEN` (without fallback); explicit `github` mode uses server `GH_TOKEN`, `GITHUB_TOKEN`, or `gh auth token`. Both require access to the selected private repository, Contents read/write for publishing, and any organization/SSO approval. Prefer dedicated sync credentials to keep PR access read-only. Never put tokens in CLI arguments, task text, diagnostic reports, or logs. This sync uses the GitHub Contents API, so local git remotes and git CLI tracing do not diagnose its requests.
 
+## Dashboard
+
+```text
+foggy dashboard
+foggy --workspace WORKSPACE_ID dashboard
+```
+
+Starts or reuses the default local server, waits for readiness, and opens the built dashboard in your default browser. The server continues running after the CLI exits. Workspace selection opens `/?workspace=ID`. Explicit `--url` or process `FOGGY_URL` bypasses startup; the opener targets that origin instead. Result: `{"url":"http://127.0.0.1:4173/","opened":true}`. `--json` suppresses the human stderr connection notice. Opener success does not guarantee that the browser rendered the page; headless agents should use API commands.
+
 ## UI
 
 ```text
 foggy ui
 ```
 
-Opens the configured origin in your default browser using `open` on macOS, `rundll32.exe` on Windows, or `xdg-open` on other platforms. The URL is passed as an argument without a shell. No server is started or probed. Success means the opener exited successfully, not that the browser rendered the page. Result: `{"url":"http://127.0.0.1:4173/","opened":true}`. A missing/failing platform opener is an error; headless agents should use API commands instead.
+Opens the configured origin in your default browser using `open` on macOS, `rundll32.exe` on Windows, or `xdg-open` on other platforms. The URL is passed as an argument without a shell. No server is started or probed. Unlike `dashboard`, this existing opener-only command defaults to `http://127.0.0.1:4173` without reading user `FOGGY_PORT`; use `--url` or process `FOGGY_URL` for another origin. Success means the opener exited successfully, not that the browser rendered the page. Result: `{"url":"http://127.0.0.1:4173/","opened":true}`. A missing/failing platform opener is an error; headless agents should use API commands instead.
 
 ```sh
 foggy ui
@@ -367,7 +425,7 @@ foggy --workspace WORKSPACE_ID ui  # Opens /?workspace=WORKSPACE_ID
 
 ## Agent Workflow
 
-This POSIX-shell example uses optional `jq` for JSON extraction and assumes a linked `foggy` and a running server. Without linking, replace each `foggy` with `pnpm --silent run foggy`. Store returned IDs and quote expansions. This creates real persisted tasks, not a simulation.
+This POSIX-shell example uses optional `jq` for JSON extraction and an installed `foggy`. Default API commands start/reuse the local server; explicit URL overrides require a separately running server. From the checkout, replace each `foggy` with `pnpm --silent run foggy` if not installed. Store returned IDs and quote expansions. This creates real persisted tasks, not a simulation.
 
 ```sh
 set -eu

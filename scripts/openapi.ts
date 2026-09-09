@@ -71,6 +71,9 @@ const management: Route[] = [
     id: 'health',
     summary: 'Check server health',
     response: 'OkResponse',
+    errors: [503],
+    description:
+      'Returns 503 while the server initializes. Managed CLI startup requires X-Foggybrain-Protocol: 1 before reusing this server.',
   },
   {
     method: 'get',
@@ -475,6 +478,17 @@ export function generateOpenApi(): OpenApiDocument {
           description: errorDescriptions[status],
           content: content('ErrorResponse'),
         };
+      }
+      if (route.id === 'health') {
+        for (const status of [200, 503]) {
+          responses[status].headers = {
+            ...responses[status].headers,
+            'X-Foggybrain-Protocol': {
+              description: 'Identifies a compatible Foggybrain API for managed CLI startup.',
+              schema: { type: 'string', const: '1' },
+            },
+          };
+        }
       }
       const operation: Operation = {
         operationId: `${route.id}${mount.suffix}`,
