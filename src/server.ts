@@ -1,7 +1,6 @@
 import express, { type ErrorRequestHandler, type Request } from 'express';
 import { config as loadDotenv } from 'dotenv';
-import { execFile } from 'node:child_process';
-import { createServer } from 'node:http';
+import { execFileSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -10,7 +9,6 @@ import { GithubPoller, parsePollInterval } from './github.js';
 import { readSyncConfig, StateSync } from './sync.js';
 import type { CreateTaskInput, Layout, UpdateTaskInput } from './shared.js';
 import { WorkspaceManager } from './workspaces.js';
-import { HEALTH_HEADER, HEALTH_PROTOCOL, lockDataDirectory, registerServer } from './runtime.js';
 
 class HttpError extends Error {
   constructor(
@@ -126,9 +124,7 @@ export function createApp(
     next();
   });
   app.use('/api', express.json({ limit: '256kb', strict: true }));
-  app.get('/api/health', (_req, res) =>
-    res.setHeader(HEALTH_HEADER, HEALTH_PROTOCOL).json({ ok: true }),
-  );
+  app.get('/api/health', (_req, res) => res.json({ ok: true }));
 
   if (options.workspaces) {
     const manager = options.workspaces;
@@ -352,66 +348,49 @@ function domainRoutes(
   return app;
 }
 
-function readTokenFromGhCli(): Promise<string | undefined> {
-  return new Promise((resolve) => {
-    execFile('gh', ['auth', 'token'], { encoding: 'utf8', timeout: 5000 }, (error, stdout) => {
-      resolve(error ? undefined : stdout.trim() || undefined);
-    });
-  });
+function readTokenFromGhCli(): string | undefined {
+  try {
+    return (
+      execFileSync('gh', ['auth', 'token'], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+        timeout: 5000,
+      }).trim() || undefined
+    );
+  } catch {
+    return undefined;
+  }
 }
 
 export async function startServer(options: { loadEnv?: boolean } = {}) {
-  if (options.loadEnv !== false && process.env.FOGGY_MANAGED !== '1') {
-    loadDotenv({ path: ['.env.local', '.env'], quiet: true });
-  }
+  if (options.loadEnv !== false) loadDotenv({ path: ['.env.local', '.env'], quiet: true });
   const settings = readConfig();
-  let app: ReturnType<typeof createApp> | undefined;
-  let ready = false;
-  const server = createServer((req, res) => {
-    if (app && ready) app(req, res);
-    else {
-      res.writeHead(503, {
-        [HEALTH_HEADER]: HEALTH_PROTOCOL,
-        'Cache-Control': 'no-store',
-        'Content-Type': 'application/json',
-      });
-      res.end(JSON.stringify({ error: 'Foggybrain is starting.' }));
-    }
+  const token = settings.token ?? readTokenFromGhCli();
+  const workspaces = new WorkspaceManager({
+    dataDir: settings.dataDir,
+    legacyTarget: settings.syncTarget,
+    dedicatedToken: settings.syncToken,
+    githubToken: token,
+    intervalMs: settings.intervalMs,
   });
-  await new Promise<void>((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(settings.port, '127.0.0.1', () => {
-      server.off('error', reject);
-      resolve();
-    });
-  });
-  let dataLock: Awaited<ReturnType<typeof lockDataDirectory>> | undefined;
-  let manager: WorkspaceManager | undefined;
   try {
-    dataLock = await lockDataDirectory(settings.dataDir);
-    const token = settings.token ?? (await readTokenFromGhCli());
-    const workspaces = (manager = new WorkspaceManager({
-      dataDir: settings.dataDir,
-      legacyTarget: settings.syncTarget,
-      dedicatedToken: settings.syncToken,
-      githubToken: token,
-      intervalMs: settings.intervalMs,
-    }));
     for (const workspace of workspaces.list().workspaces) workspaces.get(workspace.id);
-    app = createApp(null, null, { port: settings.port, workspaces });
-    workspaces.start();
   } catch (error) {
-    server.closeAllConnections();
-    server.close();
-    try {
-      await manager?.close();
-    } finally {
-      dataLock?.close();
-    }
+    await workspaces.close();
     throw error;
   }
-  const workspaces = manager!;
-  let unregister: (() => Promise<void>) | undefined;
+  const app = createApp(null, null, { port: settings.port, workspaces });
+  const server = app.listen(settings.port, '127.0.0.1');
+  try {
+    await new Promise<void>((resolve, reject) => {
+      server.once('listening', resolve);
+      server.once('error', reject);
+    });
+  } catch (error) {
+    await workspaces.close();
+    throw error;
+  }
+  workspaces.start();
   let closing: Promise<void> | null = null;
   const close = (): Promise<void> => {
     if (closing) return closing;
@@ -430,12 +409,8 @@ export async function startServer(options: { loadEnv?: boolean } = {}) {
     closing = connectionsClosed
       .then(() => workspaces.close())
       .then(() => undefined)
-      .finally(async () => {
+      .finally(() => {
         clearTimeout(forceClose);
-        await new Promise<void>((resolve) =>
-          dataLock ? dataLock.close(() => resolve()) : resolve(),
-        );
-        await unregister?.();
       });
     return closing;
   };
@@ -446,13 +421,6 @@ export async function startServer(options: { loadEnv?: boolean } = {}) {
   };
   process.once('SIGINT', onSignal);
   process.once('SIGTERM', onSignal);
-  try {
-    unregister = await registerServer(`http://127.0.0.1:${settings.port}`, close);
-  } catch (error) {
-    await close();
-    throw error;
-  }
-  ready = true;
   console.log(`Foggybrain is listening at http://127.0.0.1:${settings.port}`);
   return { app, server, workspaces, close };
 }

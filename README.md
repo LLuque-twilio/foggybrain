@@ -11,41 +11,34 @@ not public issues.
 Use **Node.js 22, version 22.13.0 or newer** (the server uses Node's built-in SQLite support) and **pnpm 10.14.0**, pinned in `package.json`. If pnpm is not installed, run `corepack enable` with a Corepack-enabled Node installation; Corepack uses the project's pinned version.
 
 ```sh
-pnpm install --frozen-lockfile
-pnpm pack
-npm install --global ./foggybrain-0.1.0.tgz
+pnpm install
+pnpm dev
 ```
 
-`pnpm pack` builds the CLI, server, and UI via the `prepack` hook. The tarball is a standalone installation, not a link to the checkout; no registry publish is needed, and the package remains private. Node.js is required at runtime, but the checkout and its development dependencies are not.
-
-Use a **user-writable global prefix**, not `sudo`. A Node version manager normally provides one. Otherwise, on macOS/Linux, run `npm config set prefix "$HOME/.local"` and add `export PATH="$HOME/.local/bin:$PATH"` to your shell startup file, then reopen the terminal. Alternatively, run `pnpm setup`, reopen your terminal so its global bin directory is on `PATH`, and install with `pnpm add -g ./foggybrain-0.1.0.tgz`.
+Open **http://127.0.0.1:5173** for the development UI. The API runs at **http://127.0.0.1:4173**; Vite proxies `/api` to it. Leave the development processes running while using the CLI in another terminal:
 
 ```sh
-foggy setup
-foggy dashboard
-foggy task create "Plan the release" --kind container
-foggy task list
-foggy --json graph
+pnpm foggy task create "Plan the release" --kind container
+pnpm foggy task list
+pnpm foggy graph
 ```
 
-Default API commands automatically start or reuse the local server at **http://127.0.0.1:4173** (or the configured `FOGGY_PORT`). `foggy dashboard` starts/reuses it and opens the built UI. The server continues running after the command exits. `foggy ui` remains an opener only: it does not start or probe a server. An explicit `--url` or process `FOGGY_URL` bypasses auto-start, even for a loopback URL; you manage that server yourself.
-
-If a legacy FoggyBrain server is already listening, stop it and restart once with this installation. Auto-start refuses incompatible listeners rather than replacing them. Preserve your data directory during upgrades.
-
-`foggy setup` is an optional terminal-only wizard for `~/.config/foggybrain/.env`. It hides token input, offers keep/replace/remove choices, and reviews settings before an explicit save. Data stays at `~/.local/share/foggybrain` by default; logs/runtime stay at `~/.local/state/foggybrain`. Selecting a different data directory does not move or migrate data. Setup never contacts GitHub, starts/stops servers, or writes workspaces. After saving changes to an existing installation, run `foggy stop` (user-wide), then your next default API command or `foggy dashboard` loads the configuration. Process environment overrides still apply. See [setup details](docs/cli.md#setup).
-
-### Development
-
-Use `foggy stop` (or `foggy --json stop`) to gracefully stop all registered Foggybrain API instances for your user, across ports and data directories. This also stops the built dashboard served by those APIs. It never starts a server or signals a PID. Foreground APIs started with this version are included; older unregistered servers, browser tabs, Vite, and development watchers are not. Stop `pnpm dev` with Ctrl-C in its terminal to stop the full development stack and prevent watcher restarts. Explicit `--url` / `FOGGY_URL` is rejected by `stop`.
-
-For foreground development, use `pnpm dev`: the API runs at **http://127.0.0.1:4173** and the development UI at **http://127.0.0.1:5173**, with Vite proxying `/api`. Stop any managed server using the same port or data directory first. To run the built app in the foreground:
+For a built, single-server installation:
 
 ```sh
 pnpm build
 pnpm start
 ```
 
-The built UI and API are both at **http://127.0.0.1:4173**. `pnpm start` uses the existing build, so rebuild after source changes. Use `pnpm foggy <command>` to run the CLI source, or optionally `pnpm link` after building for checkout-linked development. For the development UI use `pnpm foggy --url http://127.0.0.1:5173 ui`. CLI flags follow `foggy` directly; do not insert an extra `--` separator. The remaining `pnpm foggy` examples can also be run as installed `foggy` commands.
+The built UI and API are both at **http://127.0.0.1:4173**. `pnpm start` uses the existing build, so rebuild after source changes. An optional global CLI is available after building:
+
+```sh
+pnpm link
+foggy --json task list
+foggy ui
+```
+
+`bin/foggy.mjs` loads the compiled CLI; linking does not start a server. If pnpm reports a missing global bin directory, run `pnpm setup` and reopen your terminal before linking. Without linking, use `pnpm foggy <command>`, which runs the CLI source. `foggy ui` opens the configured server URL; for the development UI use `pnpm foggy --url http://127.0.0.1:5173 ui` instead. CLI flags follow `foggy` directly; do not insert an extra `--` separator.
 
 `pnpm-lock.yaml` is the dependency lockfile. Use `pnpm install --frozen-lockfile` for reproducible installs. Dependency build scripts are restricted to `esbuild`, which supports Vite and tsx.
 
@@ -119,7 +112,7 @@ pnpm foggy task done TESTS_ID
 
 ## Agents And CLI
 
-The CLI auto-starts or reuses the default local API, using `FOGGY_PORT` from user configuration or the process environment (default `4173`). A global `--url` overrides process `FOGGY_URL`; either explicit origin bypasses auto-start. The server still owns all persistent state; the CLI never maintains a fallback database or substitutes mock state.
+The CLI talks to `FOGGY_URL`, defaulting to `http://127.0.0.1:4173`. A global `--url` overrides the environment. It never creates a private local database or silently substitutes mock state if the server is down.
 
 ```sh
 foggy --url http://127.0.0.1:4173 --json task list --status available
@@ -130,7 +123,7 @@ foggy --json task delete TASK_ID --dry-run
 foggy --json task delete TASK_ID --yes
 ```
 
-Human-mode API commands and `dashboard` print a connection notice on stderr. With `--json`, that notice is suppressed: successful commands write one JSON value to stdout. Errors write one `{"error":"message"}` value to stderr and exit nonzero in either output mode. Help remains human-readable text. Use server-returned IDs, not titles or list positions. To avoid pnpm's script banner in JSON pipelines, use **`pnpm --silent run foggy --json <command>`** or the installed `foggy` executable.
+With `--json`, successful commands write one JSON value to stdout. Errors write one `{"error":"message"}` value to stderr and exit nonzero in either output mode. Help remains human-readable text. Use server-returned IDs, not titles or list positions. To avoid pnpm's script banner in JSON pipelines, use **`pnpm --silent run foggy --json <command>`** or the linked `foggy` executable.
 
 Only deletion can prompt, and only on a terminal. Piped/noninteractive deletion requires `--yes`; `--dry-run` never deletes or prompts. The preview lists deleted tasks, affected tasks, and removed relationships. Deletion cascades through **owned descendants**, not reference targets, and removes touching dependencies and references. Other containers and dependents can change completion, including transitively. Unlink a shared child with `reference remove REFERENCE_ID` when you mean to keep the task. There is no CLI undo; previews are not locks against concurrent edits.
 
@@ -138,13 +131,13 @@ See [the CLI reference](docs/cli.md) for every command, output shape, and a runn
 
 ## GitHub
 
-GitHub is optional; manual tasks and containers do not need a token. Set **`GH_TOKEN` in the server environment**, or put it in `~/.config/foggybrain/.env` before managed startup:
+GitHub is optional; manual tasks and containers do not need a token. Set **`GH_TOKEN` in the server environment**, or put it in a local `.env` file in the repository root before starting the server:
 
 ```dotenv
 GH_TOKEN=your_token_here
 ```
 
-Managed startup loads `~/.config/foggybrain/.env`, with process environment variables taking precedence, and ignores the invoking directory's dotenv files. Foreground `pnpm start` and `pnpm dev` retain working-directory dotenv loading: process environment, then `.env.local`, then `.env`. Restart the server after changes; reusing a server does not reload configuration. Project dotenv files are ignored; `.env.example` is the tracked template. Never commit tokens, paste them into task descriptions, or pass them in `--url`. API requests do not transmit tokens; the server handles GitHub access.
+The server loads `.env.local` and `.env` from its working directory. Exported environment variables take precedence, then `.env.local`, then `.env`. Restart the server after changes. Both files and other local `.env.*` files are ignored; `.env.example` is the tracked template. Never commit tokens, paste them into task descriptions, or pass them in `--url`. The CLI reads GitHub status from the server; it does not need the token itself.
 
 Use a token restricted to the repositories you intend to track. For a fine-grained token, grant **Metadata: read** and **Pull requests: read** on those repositories. Some repository access paths or organization policies may also require **Contents: read**, SSO authorization, or organization approval. Exact access depends on the account, repositories, and GitHub policy; these permissions are not a promise that every private repository will be visible. Avoid granting write permissions for this read-only integration.
 
@@ -168,7 +161,7 @@ A dedicated sync token is a GitHub Personal Access Token (PAT) created specifica
 3. Select the **Resource owner** that owns the state repository. The UI repository picker currently lists user-owned repositories, not organization repositories.
 4. Under **Repository access**, choose **Only select repositories** and select your private state repository or repositories.
 5. Under **Repository permissions**, grant **Contents: Read and write**. GitHub includes the required **Metadata: Read** permission automatically. No Pull requests write permission is needed. Obtain any required organization approval or SSO authorization.
-6. Generate the token and store it only in server configuration as `FOGGY_SYNC_TOKEN`: `~/.config/foggybrain/.env` for managed startup, its process environment, or ignored project-root `.env.local`/`.env` for foreground development. Do not paste it into chat, task text, commands, URLs, screenshots, or committed files.
+6. Generate the token and store it only on the server as `FOGGY_SYNC_TOKEN`, either in its process environment or the ignored project-root `.env.local` or `.env`. Do not paste it into chat, task text, commands, URLs, screenshots, or committed files.
 
 ```dotenv
 FOGGY_SYNC_TOKEN=REPLACE_LOCALLY_WITH_YOUR_FINE_GRAINED_PAT
@@ -184,7 +177,7 @@ Optional manual state sync shares a versioned task graph through a **private Git
 
 1. Create or choose a dedicated private state repository and an **existing branch** (default `main`). Initialize the repository first if it has no branch.
 2. Prefer a dedicated fine-grained token restricted to **only that selected private state repository**, with **Contents: read and write** (and Metadata read). Obtain organization approval if required. Dedicated mode uses `FOGGY_SYNC_TOKEN` without fallback. Alternatively, workspace create/connect with explicit `--credential github` opts into server GitHub credential reuse (`GH_TOKEN`, `GITHUB_TOKEN`, or `gh auth token`); that credential must have Contents read/write on the state repository. Reuse is never automatic.
-3. Configure credentials in the server environment or `~/.config/foggybrain/.env` for managed startup (project dotenv files for foreground development). The legacy target variables below initialize the default workspace or convert an existing local default on restart, preserving its name and data. Once it is cloud, the persisted target and credential take precedence: changing or removing legacy variables does not retarget or demote it. Use workspace create/connect for additional entries. A missing dedicated token does not block startup or local data access; sync preview/apply report a credential error. Malformed supplied tokens and invalid legacy targets remain configuration errors. Never put actual credentials in commands, task text, source, logs, or URLs. Restart after environment changes; managed startup passes configuration to the server, which alone performs sync.
+3. Configure credentials in the server environment or ignored `.env`. The legacy target variables below initialize the default workspace or convert an existing local default on restart, preserving its name and data. Once it is cloud, the persisted target and credential take precedence: changing or removing legacy variables does not retarget or demote it. Use workspace create/connect for additional entries. A missing dedicated token does not block startup or local data access; sync preview/apply report a credential error. Malformed supplied tokens and invalid legacy targets remain configuration errors. Never put actual credentials in commands, task text, source, logs, or URLs. Restart after environment changes; the CLI does not load these settings or access the token.
 
 ```dotenv
 FOGGY_SYNC_REPO=OWNER/PRIVATE_STATE_REPO
@@ -219,9 +212,7 @@ Portable `version: 1` JSON includes editable task fields, dependencies, and refe
 
 ## Configuration And Data
 
-Managed startup uses **`~/.config/foggybrain/.env`**, overridden by the process environment. Create this file if needed and restrict access because it may hold secrets. It is independent of the checkout and current directory. Relative `FOGGY_DATA_DIR` values in managed mode resolve against **`~/.config/foggybrain`**, including values supplied through the process environment; prefer an absolute path. Data defaults to **`~/.local/share/foggybrain`**.
-
-Foreground `pnpm start`/`pnpm dev` instead load working-directory `.env.local` then `.env`, without overriding process variables; relative data paths remain working-directory-relative. Restart the server after changing configuration. CLI routing overrides `FOGGY_URL` and `FOGGY_WORKSPACE` come only from the process environment or flags, not dotenv files.
+The server loads `.env` at startup. Restart it after changing server configuration. The CLI's `FOGGY_URL` comes from its process environment, not from loading `.env` itself.
 
 | Variable                 | Purpose                                                                                                                                              |
 | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -229,7 +220,7 @@ Foreground `pnpm start`/`pnpm dev` instead load working-directory `.env.local` t
 | `FOGGY_PORT`             | Server port; default `4173`. The server binds to loopback.                                                                                           |
 | `FOGGY_DATA_DIR`         | Server data directory; default `~/.local/share/foggybrain`. Contains `foggybrain.sqlite`. Use an explicit absolute path to control where data lives. |
 | `FOGGY_POLL_INTERVAL_MS` | GitHub polling interval while the server runs; default `60000` ms, minimum `15000` ms.                                                               |
-| `FOGGY_URL`              | Explicit CLI server origin from process environment; bypasses auto-start. Overridden by `--url`. Otherwise uses local `FOGGY_PORT` (default `4173`). |
+| `FOGGY_URL`              | CLI server origin; default `http://127.0.0.1:4173`. Overridden by `--url`.                                                                           |
 | `FOGGY_WORKSPACE`        | CLI workspace ID from process environment; overridden by `--workspace`. Unset keeps the server default, independently of browser tabs.               |
 
 | Sync variable       | Purpose                                                                                                                                                                           |
@@ -245,7 +236,7 @@ For an explicit data location, start the server with, for example:
 FOGGY_DATA_DIR="$HOME/.local/share/foggybrain" pnpm start
 ```
 
-Keep this directory across upgrades. Stop the server before making a filesystem backup of the data directory so the SQLite database and any WAL files are consistent. Removing local data is not an uninstall step and loses your graph. Build output in `dist/` is not your task database. Default managed CLI commands follow configured `FOGGY_PORT`; for a separately managed foreground server, set an explicit CLI URL when needed. The development Vite proxy is configured for port `4173` and does not automatically follow a changed server port.
+Keep this directory across upgrades. Stop the server before making a filesystem backup of the data directory so the SQLite database and any WAL files are consistent. Removing local data is not an uninstall step and loses your graph. Build output in `dist/` is not your task database. If you change `FOGGY_PORT`, also set the CLI URL; the development Vite proxy is configured for port `4173` and does not automatically follow a changed server port.
 
 ## Security Limits
 

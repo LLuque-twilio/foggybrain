@@ -15,7 +15,7 @@
       "get": {
         "operationId": "health",
         "summary": "Check server health",
-        "description": "Returns 503 while the server initializes. Managed CLI startup requires X-Foggybrain-Protocol: 1 before reusing this server. Unscoped management endpoint. See CONTRACT.md for state-dependent validation and semantics.",
+        "description": "Unscoped management endpoint. See CONTRACT.md for state-dependent validation and semantics.",
         "parameters": [],
         "responses": {
           "200": {
@@ -24,10 +24,6 @@
               "Cache-Control": {
                 "description": "API responses are not cached, including credential-backed discovery.",
                 "schema": { "type": "string", "const": "no-store" }
-              },
-              "X-Foggybrain-Protocol": {
-                "description": "Identifies a compatible Foggybrain API for managed CLI startup.",
-                "schema": { "type": "string", "const": "1" }
               }
             },
             "content": {
@@ -62,18 +58,6 @@
             "description": "Unexpected internal server error; details are not exposed.",
             "content": {
               "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
-            }
-          },
-          "503": {
-            "description": "Selected credentials/configuration unavailable or workspace service stopped.",
-            "content": {
-              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
-            },
-            "headers": {
-              "X-Foggybrain-Protocol": {
-                "description": "Identifies a compatible Foggybrain API for managed CLI startup.",
-                "schema": { "type": "string", "const": "1" }
-              }
             }
           }
         },

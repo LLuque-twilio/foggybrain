@@ -9,23 +9,12 @@
   "bin": {
     "foggy": "./bin/foggy.mjs"
   },
-  "files": [
-    "bin/",
-    "dist/",
-    "!dist/**/*.test.js",
-    "README.md",
-    "LICENSE",
-    "CONTRACT.md",
-    "openapi.json",
-    "docs/"
-  ],
   "engines": {
     "node": ">=22.13.0"
   },
   "scripts": {
     "dev": "concurrently -k -n server,web \"tsx watch src/server.ts\" \"vite --host 127.0.0.1\"",
     "build": "tsc -p tsconfig.server.json && tsc -p tsconfig.json && vite build",
-    "prepack": "pnpm build",
     "start": "node dist/server/server.js",
     "foggy": "tsx src/cli.ts",
     "test": "tsx --test src/*.test.ts",
