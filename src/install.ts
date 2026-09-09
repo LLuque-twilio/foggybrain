@@ -252,21 +252,34 @@ export async function upgrade(options: UpgradeOptions = {}): Promise<UpgradeResu
   return { ...linked, previousVersion };
 }
 
+// Read-only: whether a PATH entry exists, without touching it. Shared by removePathEntry and
+// uninstall's no-op branch, which must report the real state rather than assume it was removed.
+async function pathEntryState(options: PathOptions = {}): Promise<'present' | 'absent'> {
+  const home = options.home ?? homedir();
+  const binDir = options.binDir ?? binDirectory(home);
+  if ((options.platform ?? process.platform) === 'darwin') {
+    const pathsFile = options.pathsFile ?? SYSTEM_PATHS_FILE;
+    const existing = await readFile(pathsFile, 'utf8').catch(() => null);
+    return existing === null ? 'absent' : 'present';
+  }
+  const profile = join(home, '.profile');
+  const existing = await readFile(profile, 'utf8').catch(() => null);
+  return existing !== null && existing.includes(PATH_MARKER) ? 'present' : 'absent';
+}
+
 export async function removePathEntry(options: PathOptions = {}): Promise<'removed' | 'absent'> {
   const home = options.home ?? homedir();
   const binDir = options.binDir ?? binDirectory(home);
   const run = options.run ?? execute;
+  if ((await pathEntryState({ ...options, home, binDir })) === 'absent') return 'absent';
   if ((options.platform ?? process.platform) === 'darwin') {
     const pathsFile = options.pathsFile ?? SYSTEM_PATHS_FILE;
-    const existing = await readFile(pathsFile, 'utf8').catch(() => null);
-    if (existing === null) return 'absent';
     process.stderr.write(`Removing ${pathsFile} from the system PATH (sudo required).\n`);
     await run('sudo', ['/bin/rm', '-f', pathsFile]);
     return 'removed';
   }
   const profile = join(home, '.profile');
-  const existing = await readFile(profile, 'utf8').catch(() => null);
-  if (existing === null || !existing.includes(PATH_MARKER)) return 'absent';
+  const existing = await readFile(profile, 'utf8');
   const kept = existing
     .split('\n')
     .filter((line) => !line.includes(PATH_MARKER))
@@ -282,7 +295,7 @@ export interface UninstallOptions extends PathOptions {
 
 export interface UninstallResult {
   removed: string[];
-  pathEntry: 'removed' | 'absent';
+  pathEntry: 'removed' | 'absent' | 'present';
   keptDataDir: string;
 }
 
@@ -298,7 +311,10 @@ export async function uninstall(options: UninstallOptions = {}): Promise<Uninsta
   const target = await readlink(executable).catch(() => null);
   const ownsExecutable =
     target === null || resolve(dirname(executable), target).startsWith(`${root}/`);
-  if (!ownsExecutable) return { removed, pathEntry: 'absent', keptDataDir: dataDirectory(env) };
+  if (!ownsExecutable) {
+    const pathEntry = await pathEntryState({ ...options, home, binDir });
+    return { removed, pathEntry, keptDataDir: dataDirectory(env) };
+  }
 
   if ((await readRunningPid(env)) !== null) await stopServer({ env });
 

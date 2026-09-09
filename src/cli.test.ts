@@ -1124,7 +1124,10 @@ test('CLI uninstall refuses to run without --yes outside a terminal and removes 
   const { run, requests } = await fixture(t);
   const root = await mkdtemp(join(tmpdir(), 'foggy-cli-uninstall-'));
   const data = await mkdtemp(join(tmpdir(), 'foggy-cli-uninstall-data-'));
-  const env = { FOGGY_HOME: root, FOGGY_DATA_DIR: data };
+  // Isolate HOME too: uninstall reads ~/.local/bin/foggy via os.homedir(), which honors $HOME on
+  // POSIX, so without this the test would consult whatever foggy is really linked on this machine.
+  const home = await mkdtemp(join(tmpdir(), 'foggy-cli-uninstall-home-'));
+  const env = { FOGGY_HOME: root, FOGGY_DATA_DIR: data, HOME: home };
   const refused = await run(['--json', 'uninstall'], env);
   assert.equal(refused.code, 1);
   assert.equal(refused.stdout, '');
