@@ -85,7 +85,7 @@ FORCE=""
 [ "${FOGGY_FORCE:-}" = "1" ] && FORCE="--force"
 # shellcheck disable=SC2086
 FOGGY_HOME="$FOGGY_HOME" node "$DEST/bin/foggy.mjs" link --version "$VERSION" $FORCE >/dev/null ||
-  fail "Cannot link FoggyBrain $VERSION."
+  fail "Cannot link FoggyBrain $VERSION. If $HOME/.local/bin/foggy belongs to another installation, re-run this installer with FOGGY_FORCE=1 to replace it."
 
 printf 'FoggyBrain %s installed to %s\n' "$VERSION" "$DEST"
 printf 'Run: foggy start && foggy dashboard\n'

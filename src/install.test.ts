@@ -165,17 +165,31 @@ test('linkVersion reports a failed PATH entry instead of failing an install that
   const home = await scratch();
   const binDir = join(home, '.local', 'bin');
   await installed(root, '0.4.0');
-  const result = await linkVersion({
-    version: '0.4.0',
-    root,
-    binDir,
-    home,
-    platform: 'darwin',
-    run: async () => {
-      throw new Error('sudo exited with status 1.');
-    },
-  });
+  const advice: string[] = [];
+  const stderr = process.stderr.write.bind(process.stderr);
+  process.stderr.write = ((chunk: string) => {
+    advice.push(String(chunk));
+    return true;
+  }) as typeof process.stderr.write;
+  let result;
+  try {
+    result = await linkVersion({
+      version: '0.4.0',
+      root,
+      binDir,
+      home,
+      platform: 'darwin',
+      run: async () => {
+        throw new Error('sudo exited with status 1.');
+      },
+    });
+  } finally {
+    process.stderr.write = stderr;
+  }
   assert.equal(result.pathEntry, 'failed');
+  // macOS logs in through zsh, which never reads ~/.profile.
+  assert.match(advice.join(''), /echo 'export PATH="[^"]+"' >> ~\/\.zprofile/);
+  assert.doesNotMatch(advice.join(''), /~\/\.profile/);
   assert.equal(await currentVersion(root), '0.4.0');
   assert.equal(await readlink(join(binDir, 'foggy')), join(root, 'current', 'bin', 'foggy.mjs'));
 });

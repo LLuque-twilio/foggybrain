@@ -192,10 +192,13 @@ export async function linkVersion(options: LinkOptions): Promise<LinkResult> {
     binDir,
     run: options.run,
   }).catch((error: unknown) => {
+    // Only the macOS sudo branch can realistically fail, and macOS logs in through zsh, which
+    // never reads ~/.profile.
+    const profile = (options.platform ?? process.platform) === 'darwin' ? '.zprofile' : '.profile';
     process.stderr.write(
       `Could not add ${binDir} to your PATH: ${error instanceof Error ? error.message : String(error)}\n` +
         `FoggyBrain ${version} is installed and linked. Add it yourself with:\n` +
-        `  echo 'export PATH="${binDir}:$PATH"' >> ~/.profile\n`,
+        `  echo 'export PATH="${binDir}:$PATH"' >> ~/${profile}\n`,
     );
     return 'failed' as const;
   });
