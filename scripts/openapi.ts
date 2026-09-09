@@ -70,7 +70,7 @@ const management: Route[] = [
     path: '/health',
     id: 'health',
     summary: 'Check server health',
-    response: 'OkResponse',
+    response: 'HealthResponse',
   },
   {
     method: 'get',

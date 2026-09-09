@@ -147,7 +147,7 @@ test('workspace removal requires strict reviewed confirmation and reroutes the d
     defaultWorkspaceId: null,
     limit: 3,
   });
-  assert.deepEqual((await restarted.request('/api/health')).body, { ok: true });
+  assert.deepEqual((await restarted.request('/api/health')).body, { ok: true, pid: process.pid });
   for (const endpoint of ['/state', '/github/status', '/sync/status']) {
     const response = await restarted.request(`/api${endpoint}`);
     assert.equal(response.status, 404);
@@ -203,7 +203,10 @@ test('startServer serves an empty registry without creating a placeholder databa
     const running = await startServer({ loadEnv: false });
     try {
       const base = `http://127.0.0.1:${address.port}/api`;
-      assert.deepEqual(await (await fetch(`${base}/health`)).json(), { ok: true });
+      assert.deepEqual(await (await fetch(`${base}/health`)).json(), {
+        ok: true,
+        pid: process.pid,
+      });
       assert.deepEqual(await (await fetch(`${base}/workspaces`)).json(), {
         workspaces: [],
         defaultWorkspaceId: null,
@@ -1143,7 +1146,7 @@ test('GitHub endpoints expose only public status/cache and sync accepts an empty
     (await request('/api/github/sync', 'POST', { token: 'must-not-be-accepted' })).status,
     400,
   );
-  assert.deepEqual((await request('/api/health')).body, { ok: true });
+  assert.deepEqual((await request('/api/health')).body, { ok: true, pid: process.pid });
 });
 
 test('production web root serves the built UI and assets, never swallowing unknown API routes', async (t) => {

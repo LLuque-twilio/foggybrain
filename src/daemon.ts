@@ -57,11 +57,20 @@ export async function readRunningPid(env: NodeJS.ProcessEnv = process.env): Prom
   return pid > 0 && alive(pid) ? pid : null;
 }
 
-async function answersHealth(url: string): Promise<boolean> {
+/** null when nothing answers; otherwise the answering server's process ID, if it reports one. */
+export type HealthAnswer = { pid: number | null } | null;
+
+async function answersHealth(url: string): Promise<HealthAnswer> {
   const response = await fetch(`${url}/api/health`, { signal: AbortSignal.timeout(2000) }).catch(
     () => null,
   );
-  return response?.ok === true;
+  if (response === null || !response.ok) return null;
+  const body: unknown = await response.json().catch(() => null);
+  const pid =
+    body !== null && typeof body === 'object' && 'pid' in body && typeof body.pid === 'number'
+      ? body.pid
+      : null;
+  return { pid };
 }
 
 async function logTail(path: string, lines = 20): Promise<string> {
@@ -76,7 +85,7 @@ async function logTail(path: string, lines = 20): Promise<string> {
 export interface StartOptions {
   env?: NodeJS.ProcessEnv;
   spawnImpl?: typeof spawn;
-  probe?: (url: string) => Promise<boolean>;
+  probe?: (url: string) => Promise<HealthAnswer>;
   readyTimeoutMs?: number;
 }
 
@@ -116,15 +125,23 @@ export async function startServer(
   const probe = options.probe ?? answersHealth;
   const deadline = Date.now() + (options.readyTimeoutMs ?? 20_000);
   let ready = false;
+  let squatter: { pid: number | null } | undefined;
   for (;;) {
-    // A dead child never counts as ready, however healthy the port looks: on a port collision the
-    // answer comes from whoever already owns it.
     if (exit.status !== null) break;
-    ready = await probe(url);
-    if (ready || Date.now() >= deadline) break;
+    const answer = await probe(url);
+    if (answer !== null) {
+      // Health reports the answering process. Only one process can hold the port, so an answer
+      // from anything but our own child means the child cannot have it and is already doomed.
+      if (answer.pid === child.pid) {
+        ready = true;
+        break;
+      }
+      squatter = answer;
+      break;
+    }
+    if (Date.now() >= deadline) break;
     await delay(100);
   }
-  if (exit.status !== null) ready = false;
   if (!ready) {
     if (exit.status === null) {
       try {
@@ -133,7 +150,12 @@ export async function startServer(
         // Already gone; the failure below is what matters.
       }
     }
-    const reason = exit.status === null ? 'it never answered' : `it stopped (${exit.status})`;
+    const reason =
+      squatter !== undefined
+        ? `the port is already served by ${squatter.pid === null ? 'another process' : `process ${squatter.pid}`}`
+        : exit.status === null
+          ? 'it never answered'
+          : `it stopped (${exit.status})`;
     const tail = await logTail(logPath);
     throw new Error(
       `The Foggybrain server did not start on ${url}: ${reason}. See ${logPath}${tail === '' ? '.' : `:\n${tail}`}`,

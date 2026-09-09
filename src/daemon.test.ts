@@ -59,7 +59,7 @@ test('startServer writes a pidfile, unrefs the child, and refuses a second serve
       unrefs++;
     },
   });
-  const probe = async () => true;
+  const probe = async () => ({ pid: process.pid });
   const started = await startServer({ env, spawnImpl, probe });
   assert.equal(started.pid, process.pid);
   assert.equal(started.url, 'http://127.0.0.1:4321');
@@ -86,7 +86,7 @@ test('startServer fails without a pidfile when the server never answers', async 
     return hung;
   }) as never;
   await assert.rejects(
-    () => startServer({ env, spawnImpl, probe: async () => false, readyTimeoutMs: 0 }),
+    () => startServer({ env, spawnImpl, probe: async () => null, readyTimeoutMs: 0 }),
     (error: Error) => {
       assert.match(error.message, /did not start on http:\/\/127\.0\.0\.1:4322/);
       assert.match(error.message, /never answered/);
@@ -99,18 +99,46 @@ test('startServer fails without a pidfile when the server never answers', async 
   await assert.rejects(() => readFile(join(dir, 'foggy.pid'), 'utf8'), /ENOENT/);
 });
 
-test('startServer reports the exit status when the server dies during startup', async () => {
+function realChild(script: string) {
+  // A real child, so the SIGKILL the failure path sends lands on a process that is safe to kill.
+  const child = spawn(process.execPath, ['-e', script], { stdio: 'ignore' });
+  const exited = new Promise<void>((done) => child.once('exit', () => done()));
+  return { child, exited, spawnImpl: (() => child) as never };
+}
+
+test('startServer refuses a port that another process is already serving', async () => {
   const dir = await scratch();
   const env = { FOGGY_DATA_DIR: dir, FOGGY_PORT: '4323' };
-  const { spawnImpl } = fakeSpawn({
-    once: (event, listener) => {
-      if (event === 'exit') listener(1, null);
-    },
-  });
-  // A port collision answers healthily from someone else's server; a dead child is still a failure.
+  // The real shape of a port collision: something already answers, and the child that cannot bind
+  // dies a moment later rather than before the first probe.
+  const { spawnImpl, exited } = realChild('setTimeout(() => process.exit(1), 300)');
   await assert.rejects(
-    () => startServer({ env, spawnImpl, probe: async () => true }),
-    /did not start .*exit code 1/s,
+    () => startServer({ env, spawnImpl, probe: async () => ({ pid: process.pid }) }),
+    new RegExp(`did not start .* already served by process ${process.pid}`, 's'),
+  );
+  await exited;
+  assert.equal(await readRunningPid(env), null);
+  await assert.rejects(() => readFile(join(dir, 'foggy.pid'), 'utf8'), /ENOENT/);
+});
+
+test('startServer refuses a health answer that does not name a process', async () => {
+  const dir = await scratch();
+  const env = { FOGGY_DATA_DIR: dir, FOGGY_PORT: '4324' };
+  const { spawnImpl } = realChild('setTimeout(() => {}, 60000)');
+  await assert.rejects(
+    () => startServer({ env, spawnImpl, probe: async () => ({ pid: null }) }),
+    /already served by another process/,
+  );
+  assert.equal(await readRunningPid(env), null);
+});
+
+test('startServer reports the exit status when the server dies with nothing answering', async () => {
+  const dir = await scratch();
+  const env = { FOGGY_DATA_DIR: dir, FOGGY_PORT: '4325' };
+  const { spawnImpl } = realChild('setTimeout(() => process.exit(1), 50)');
+  await assert.rejects(
+    () => startServer({ env, spawnImpl, probe: async () => null }),
+    /did not start .*it stopped \(exit code 1\)/s,
   );
   assert.equal(await readRunningPid(env), null);
 });
