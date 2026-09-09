@@ -28,12 +28,14 @@
 ### Task 1: `foggy --version` and `ui` → `dashboard`
 
 **Files:**
+
 - Create: `src/install.ts` (only `packageVersion()` in this task)
 - Modify: `src/cli.ts` (add `.version(...)`, rename the `ui` command to `dashboard`)
 - Test: `src/cli.test.ts` (rename `ui` occurrences, add a `--version` assertion)
 - Test: `src/install.test.ts` (new, `packageVersion()`)
 
 **Interfaces:**
+
 - Consumes: nothing.
 - Produces: `packageVersion(): string` from `src/install.ts` — returns `package.json`'s `version` (e.g. `"0.1.0"`), resolved relative to the module's own location so it works from both `src/` (via tsx) and `dist/server/`. Task 3 and Task 4 reuse it.
 
@@ -156,12 +158,14 @@ git commit -m "feat: add foggy --version and rename ui to dashboard"
 ### Task 2: `foggy start` and `foggy stop`
 
 **Files:**
+
 - Create: `src/daemon.ts`
 - Create: `src/daemon.test.ts`
 - Modify: `src/cli.ts` (register `start` and `stop`)
 - Modify: `docs/cli.md`, `README.md`, `AGENTS.md`, `docs/local-guide.md`, `src/web/App.tsx:123`
 
 **Interfaces:**
+
 - Consumes: nothing from Task 1.
 - Produces, from `src/daemon.ts`:
   - `dataDirectory(env?: NodeJS.ProcessEnv): string`
@@ -338,7 +342,9 @@ export async function stopServer(
   const deadline = Date.now() + (options.timeoutMs ?? 5000);
   while (alive(pid) && Date.now() < deadline) await delay(100);
   if (alive(pid))
-    throw new Error(`Foggybrain (pid ${pid}) did not exit after SIGTERM. Inspect it before retrying.`);
+    throw new Error(
+      `Foggybrain (pid ${pid}) did not exit after SIGTERM. Inspect it before retrying.`,
+    );
   await remove();
   return { stopped: true, pid };
 }
@@ -394,14 +400,14 @@ import { startServer, stopServer } from './daemon.js';
 Insert immediately before the `dashboard` command registration:
 
 ```ts
-  program
-    .command('start')
-    .description('Start the Foggybrain server in the background')
-    .action(async () => output(await startServer()));
-  program
-    .command('stop')
-    .description('Stop the background Foggybrain server')
-    .action(async () => output(await stopServer()));
+program
+  .command('start')
+  .description('Start the Foggybrain server in the background')
+  .action(async () => output(await startServer()));
+program
+  .command('stop')
+  .description('Stop the background Foggybrain server')
+  .action(async () => output(await stopServer()));
 ```
 
 - [ ] **Step 8: Add a CLI-level test for the new commands**
@@ -466,12 +472,14 @@ git commit -m "feat: add foggy start and foggy stop"
 ### Task 3: Install layout and `foggy link`
 
 **Files:**
+
 - Modify: `src/install.ts` (add the layout, linking, and `PATH` logic)
 - Modify: `src/install.test.ts`
 - Modify: `src/cli.ts` (register `link`)
 - Test: `src/cli.test.ts` (error path for an unknown version)
 
 **Interfaces:**
+
 - Consumes: `packageVersion()` from Task 1.
 - Produces, from `src/install.ts`:
   - `REPO = 'LLuque-twilio/foggybrain'`
@@ -549,7 +557,14 @@ test('linkVersion flips current, links the executable, and is idempotent', async
   assert.equal(await currentVersion(root), '0.1.0');
   assert.equal(await readlink(join(binDir, 'foggy')), join(root, 'current', 'bin', 'foggy.mjs'));
 
-  const second = await linkVersion({ version: 'v0.2.0', root, binDir, home, platform: 'linux', run });
+  const second = await linkVersion({
+    version: 'v0.2.0',
+    root,
+    binDir,
+    home,
+    platform: 'linux',
+    run,
+  });
   assert.equal(second.version, '0.2.0');
   assert.equal(second.pathEntry, 'present');
   assert.equal(await currentVersion(root), '0.2.0');
@@ -562,7 +577,15 @@ test('linkVersion flips current, links the executable, and is idempotent', async
 test('linkVersion rejects a version that is not installed', async () => {
   const root = await scratch();
   await assert.rejects(
-    () => linkVersion({ version: '9.9.9', root, binDir: join(root, 'bin'), home: root, platform: 'linux', run: async () => {} }),
+    () =>
+      linkVersion({
+        version: '9.9.9',
+        root,
+        binDir: join(root, 'bin'),
+        home: root,
+        platform: 'linux',
+        run: async () => {},
+      }),
     /not installed/,
   );
 });
@@ -581,7 +604,10 @@ test('ensurePathEntry writes /etc/paths.d/foggy through sudo on macOS and skips 
   assert.deepEqual(calls, [
     { file: 'sudo', args: ['/usr/bin/tee', pathsFile], input: `${binDir}\n` },
   ]);
-  assert.equal(await ensurePathEntry({ platform: 'darwin', home, binDir, run, pathsFile }), 'present');
+  assert.equal(
+    await ensurePathEntry({ platform: 'darwin', home, binDir, run, pathsFile }),
+    'present',
+  );
   assert.equal(calls.length, 1);
 });
 ```
@@ -644,7 +670,9 @@ export function binDirectory(home = homedir()): string {
 
 export async function currentVersion(root = installRoot()): Promise<string | null> {
   try {
-    return assertVersion(await readlink(join(root, 'current')).then((target) => target.split('/').pop()!));
+    return assertVersion(
+      await readlink(join(root, 'current')).then((target) => target.split('/').pop()!),
+    );
   } catch {
     return null;
   }
@@ -658,9 +686,7 @@ export interface PathOptions {
   pathsFile?: string;
 }
 
-export async function ensurePathEntry(
-  options: PathOptions = {},
-): Promise<'created' | 'present'> {
+export async function ensurePathEntry(options: PathOptions = {}): Promise<'created' | 'present'> {
   const home = options.home ?? homedir();
   const binDir = options.binDir ?? binDirectory(home);
   const run = options.run ?? execute;
@@ -737,11 +763,13 @@ Expected: PASS (6 tests).
 Add to the import from `./install.js`: `linkVersion`. Then insert before the `start` command:
 
 ```ts
-  program
-    .command('link')
-    .description('Point the foggy executable and current version at an installed version')
-    .option('--version <version>', 'installed version (default: this CLI version)')
-    .action(async (options) => output(await linkVersion({ version: options.version ?? packageVersion() })));
+program
+  .command('link')
+  .description('Point the foggy executable and current version at an installed version')
+  .option('--version <version>', 'installed version (default: this CLI version)')
+  .action(async (options) =>
+    output(await linkVersion({ version: options.version ?? packageVersion() })),
+  );
 ```
 
 - [ ] **Step 6: Add a CLI-level test for the error path**
@@ -782,12 +810,14 @@ git commit -m "feat: add install layout and foggy link"
 ### Task 4: `foggy upgrade`
 
 **Files:**
+
 - Modify: `src/install.ts` (add version resolution, download, extraction, `upgrade`)
 - Modify: `src/install.test.ts`
 - Modify: `src/cli.ts` (register `upgrade`)
 - Modify: `docs/cli.md`
 
 **Interfaces:**
+
 - Consumes: `assertVersion`, `installRoot`, `versionDirectory`, `linkVersion`, `currentVersion`, `Runner`, `REPO` from Task 3.
 - Produces, from `src/install.ts`:
   - `releaseAssetUrl(version: string): string`
@@ -813,7 +843,13 @@ async function archive(version: string): Promise<Buffer> {
   await writeFile(join(top, 'bin', 'foggy.mjs'), '#!/usr/bin/env node\n', { mode: 0o755 });
   await writeFile(join(top, 'dist', 'server', 'cli.js'), `export const version = '${version}';\n`);
   await writeFile(join(top, 'package.json'), JSON.stringify({ version }));
-  await promisify(execFile)('tar', ['-czf', join(stage, 'a.tar.gz'), '-C', stage, `foggybrain-${version}`]);
+  await promisify(execFile)('tar', [
+    '-czf',
+    join(stage, 'a.tar.gz'),
+    '-C',
+    stage,
+    `foggybrain-${version}`,
+  ]);
   return readFile(join(stage, 'a.tar.gz'));
 }
 
@@ -856,7 +892,14 @@ test('upgrade downloads, extracts, links, and reports the previous version', asy
   );
 
   // Re-running the same version is safe and keeps the old directory in place for rollback.
-  const again = await upgrade({ version: 'v0.3.0', root, home, binDir, platform: 'linux', fetchImpl });
+  const again = await upgrade({
+    version: 'v0.3.0',
+    root,
+    home,
+    binDir,
+    platform: 'linux',
+    fetchImpl,
+  });
   assert.equal(again.previousVersion, '0.3.0');
   assert.equal(await currentVersion(root), '0.3.0');
 });
@@ -866,7 +909,13 @@ test('downloadVersion rejects an archive without a compiled CLI', async () => {
   const stage = await scratch();
   await mkdir(join(stage, 'foggybrain-0.5.0'), { recursive: true });
   await writeFile(join(stage, 'foggybrain-0.5.0', 'README'), 'x');
-  await promisify(execFile)('tar', ['-czf', join(stage, 'a.tar.gz'), '-C', stage, 'foggybrain-0.5.0']);
+  await promisify(execFile)('tar', [
+    '-czf',
+    join(stage, 'a.tar.gz'),
+    '-C',
+    stage,
+    'foggybrain-0.5.0',
+  ]);
   const bytes = await readFile(join(stage, 'a.tar.gz'));
   const fetchImpl = (async () => new Response(bytes, { status: 200 })) as unknown as typeof fetch;
   await assert.rejects(() => downloadVersion('0.5.0', { root, fetchImpl }), /archive/i);
@@ -902,7 +951,12 @@ export async function resolveLatestVersion(fetchImpl: typeof fetch = fetch): Pro
   if (!response.ok)
     throw new Error(`Cannot read the latest FoggyBrain release (HTTP ${response.status}).`);
   const body: unknown = await response.json().catch(() => undefined);
-  if (!body || typeof body !== 'object' || !('tag_name' in body) || typeof body.tag_name !== 'string')
+  if (
+    !body ||
+    typeof body !== 'object' ||
+    !('tag_name' in body) ||
+    typeof body.tag_name !== 'string'
+  )
     throw new Error('The latest FoggyBrain release has no tag name.');
   return assertVersion(body.tag_name);
 }
@@ -974,11 +1028,11 @@ Expected: PASS (9 tests).
 Add `upgrade` to the `./install.js` import, then insert directly after the `link` command:
 
 ```ts
-  program
-    .command('upgrade')
-    .description('Download a FoggyBrain release and switch this installation to it')
-    .option('--version <version>', 'release version (default: latest)')
-    .action(async (options) => output(await upgrade({ version: options.version })));
+program
+  .command('upgrade')
+  .description('Download a FoggyBrain release and switch this installation to it')
+  .option('--version <version>', 'release version (default: latest)')
+  .action(async (options) => output(await upgrade({ version: options.version })));
 ```
 
 - [ ] **Step 6: Add a CLI-level test for the invalid-version error path**
@@ -1038,12 +1092,14 @@ git commit -m "feat: add foggy upgrade"
 ### Task 5: `foggy uninstall`
 
 **Files:**
+
 - Modify: `src/install.ts` (add `removePathEntry` and `uninstall`)
 - Modify: `src/install.test.ts`
 - Modify: `src/cli.ts` (register `uninstall`)
 - Modify: `docs/cli.md`
 
 **Interfaces:**
+
 - Consumes: `installRoot`, `binDirectory`, `versionDirectory`, `PathOptions`, `Runner` from Task 3; `dataDirectory` and `stopServer` from Task 2.
 - Produces, from `src/install.ts`:
   - `removePathEntry(options?: PathOptions): Promise<'removed' | 'absent'>`
@@ -1066,13 +1122,22 @@ test('removePathEntry deletes the macOS paths.d file and strips only the marked 
     calls.push([file, ...args]);
     await rm(args.at(-1)!, { force: true });
   };
-  assert.equal(await removePathEntry({ platform: 'darwin', home, binDir, run, pathsFile }), 'removed');
+  assert.equal(
+    await removePathEntry({ platform: 'darwin', home, binDir, run, pathsFile }),
+    'removed',
+  );
   assert.deepEqual(calls, [['sudo', '/bin/rm', '-f', pathsFile]]);
-  assert.equal(await removePathEntry({ platform: 'darwin', home, binDir, run, pathsFile }), 'absent');
+  assert.equal(
+    await removePathEntry({ platform: 'darwin', home, binDir, run, pathsFile }),
+    'absent',
+  );
   assert.equal(calls.length, 1);
 
   const profile = join(home, '.profile');
-  await writeFile(profile, `# mine\nexport EDITOR=vi\nexport PATH="${binDir}:$PATH" # foggybrain\nexport LANG=C\n`);
+  await writeFile(
+    profile,
+    `# mine\nexport EDITOR=vi\nexport PATH="${binDir}:$PATH" # foggybrain\nexport LANG=C\n`,
+  );
   assert.equal(await removePathEntry({ platform: 'linux', home, binDir, run }), 'removed');
   assert.equal(await readFile(profile, 'utf8'), '# mine\nexport EDITOR=vi\nexport LANG=C\n');
   assert.equal(await removePathEntry({ platform: 'linux', home, binDir, run }), 'absent');
@@ -1106,7 +1171,13 @@ test('uninstall removes the install root, its executable, and the PATH entry, ke
   assert.equal(await readFile(join(dataDir, 'foggybrain.sqlite'), 'utf8'), 'data');
   assert.equal(await readFile(profile, 'utf8'), '');
 
-  const repeat = await uninstall({ root, binDir, home, platform: 'linux', env: { FOGGY_DATA_DIR: dataDir } });
+  const repeat = await uninstall({
+    root,
+    binDir,
+    home,
+    platform: 'linux',
+    env: { FOGGY_DATA_DIR: dataDir },
+  });
   assert.deepEqual(repeat.removed, []);
   assert.equal(repeat.pathEntry, 'absent');
 });
@@ -1119,7 +1190,13 @@ test('uninstall leaves a foggy executable that points outside the install root a
   await mkdir(binDir, { recursive: true });
   await writeFile(join(other, 'foggy.mjs'), '#!/usr/bin/env node\n');
   await symlink(join(other, 'foggy.mjs'), join(binDir, 'foggy'));
-  const result = await uninstall({ root, binDir, home, platform: 'linux', env: { FOGGY_DATA_DIR: other } });
+  const result = await uninstall({
+    root,
+    binDir,
+    home,
+    platform: 'linux',
+    env: { FOGGY_DATA_DIR: other },
+  });
   assert.deepEqual(result.removed, []);
   assert.equal(await readlink(join(binDir, 'foggy')), join(other, 'foggy.mjs'));
 });
@@ -1220,29 +1297,29 @@ Expected: PASS (all install tests, including the three new ones).
 Add `binDirectory`, `installRoot`, and `uninstall` to the `./install.js` import and `dataDirectory` to the `./daemon.js` import. Then insert directly after the `upgrade` command:
 
 ```ts
-  program
-    .command('uninstall')
-    .description('Remove the installed foggy executable, its PATH entry, and ~/.foggybrain')
-    .option('--yes', 'explicitly confirm removal without a prompt')
-    .action(async (options) => {
-      const root = installRoot();
-      if (!options.yes) {
-        if (!process.stdin.isTTY || !process.stderr.isTTY)
-          throw new Error('Uninstall requires --yes without a terminal.');
-        process.stderr.write(
-          `Will remove ${root}, ${join(binDirectory(), 'foggy')}, and the FoggyBrain PATH entry.\nTask data in ${dataDirectory()} is kept.\n`,
-        );
-        const terminal = createInterface({ input: process.stdin, output: process.stderr });
-        let answer: string;
-        try {
-          answer = await terminal.question('Uninstall FoggyBrain? Type yes to confirm: ');
-        } finally {
-          terminal.close();
-        }
-        if (answer.trim().toLowerCase() !== 'yes') throw new Error('Uninstall cancelled.');
+program
+  .command('uninstall')
+  .description('Remove the installed foggy executable, its PATH entry, and ~/.foggybrain')
+  .option('--yes', 'explicitly confirm removal without a prompt')
+  .action(async (options) => {
+    const root = installRoot();
+    if (!options.yes) {
+      if (!process.stdin.isTTY || !process.stderr.isTTY)
+        throw new Error('Uninstall requires --yes without a terminal.');
+      process.stderr.write(
+        `Will remove ${root}, ${join(binDirectory(), 'foggy')}, and the FoggyBrain PATH entry.\nTask data in ${dataDirectory()} is kept.\n`,
+      );
+      const terminal = createInterface({ input: process.stdin, output: process.stderr });
+      let answer: string;
+      try {
+        answer = await terminal.question('Uninstall FoggyBrain? Type yes to confirm: ');
+      } finally {
+        terminal.close();
       }
-      output(await uninstall());
-    });
+      if (answer.trim().toLowerCase() !== 'yes') throw new Error('Uninstall cancelled.');
+    }
+    output(await uninstall());
+  });
 ```
 
 Add `import { join } from 'node:path';` to `src/cli.ts` if it is not already imported.
@@ -1279,9 +1356,9 @@ Expected: PASS.
 
 In the `## Installation And Upgrades` section, add `foggy uninstall [--yes]` to the `text` block and this paragraph at the end of the section:
 
-````markdown
+```markdown
 `foggy uninstall` stops a running server, removes `~/.local/bin/foggy` (only when it points inside the install root, so a `pnpm link --global` executable is left alone), removes the `PATH` entry (`sudo rm -f /etc/paths.d/foggy` on macOS, the marked `~/.profile` line on Linux), and deletes `~/.foggybrain` including every kept version. It returns `{"removed":[...],"pathEntry":"removed","keptDataDir":"..."}`. **Task data is kept**: `~/.local/share/foggybrain` (SQLite state and config) is never touched, so reinstalling restores the same workspaces. Delete that directory by hand to remove your data. Without a terminal, `--yes` is required; with one, the command prompts and expects `yes`.
-````
+```
 
 - [ ] **Step 9: Verify all checks**
 
@@ -1300,11 +1377,13 @@ git commit -m "feat: add foggy uninstall"
 ### Task 6: `scripts/install.sh` and its smoke test
 
 **Files:**
+
 - Create: `scripts/install.sh` (executable, `chmod +x`)
 - Create: `scripts/install-smoke.sh` (executable)
 - Modify: `CONTRIBUTING.md` (document the manual smoke test)
 
 **Interfaces:**
+
 - Consumes: the extracted CLI's `link --version <version>` command from Task 3, and the release asset name/layout from the Global Constraints.
 - Produces: `scripts/install.sh` honoring `FOGGY_VERSION` and `FOGGY_HOME`; `scripts/install-smoke.sh <version>` running it against a real release in a throwaway `HOME`.
 
@@ -1465,10 +1544,12 @@ git commit -m "feat: add curl installer and its smoke test"
 ### Task 7: Release workflow
 
 **Files:**
+
 - Create: `.github/workflows/release.yml`
 - Modify: `.github/workflows/ci.yml` (add `workflow_call` so the release can reuse it)
 
 **Interfaces:**
+
 - Consumes: `scripts/install.sh`'s expectations — asset named `foggybrain-<version>.tar.gz`, one top-level `foggybrain-<version>/` directory containing `dist/`, `bin/`, `node_modules/`, and `package.json`, with no symlinks.
 - Produces: a GitHub Release for tag `v<version>` carrying that asset plus `SHA256SUMS`.
 
@@ -1606,11 +1687,13 @@ git commit -m "ci: publish a release tarball on version tags"
 ### Task 8: End-user documentation
 
 **Files:**
+
 - Modify: `README.md` (new install section, developer section relabeled)
 - Modify: `docs/local-guide.md` (install path for end users)
 - Modify: `AGENTS.md` (one line on the installed CLI)
 
 **Interfaces:**
+
 - Consumes: the commands and layout from Tasks 1–7.
 - Produces: no code.
 
@@ -1669,14 +1752,14 @@ foggy dashboard
 
 The installer needs Node.js 22.13.0+ and nothing else. Layout:
 
-| Path                                  | Purpose                                              |
-| ------------------------------------- | ---------------------------------------------------- |
-| `~/.foggybrain/versions/<version>/`   | One extracted release; old versions are kept         |
-| `~/.foggybrain/current`               | Symlink to the active version                        |
-| `~/.local/bin/foggy`                  | Symlink to `current/bin/foggy.mjs`                   |
-| `/etc/paths.d/foggy` (macOS)          | Puts `~/.local/bin` on `PATH` for every shell        |
-| `~/.profile` (Linux)                  | Same, via one marked `export PATH` line              |
-| `~/.local/share/foggybrain/`          | SQLite data and `foggy.pid`, shared with a dev install |
+| Path                                | Purpose                                                |
+| ----------------------------------- | ------------------------------------------------------ |
+| `~/.foggybrain/versions/<version>/` | One extracted release; old versions are kept           |
+| `~/.foggybrain/current`             | Symlink to the active version                          |
+| `~/.local/bin/foggy`                | Symlink to `current/bin/foggy.mjs`                     |
+| `/etc/paths.d/foggy` (macOS)        | Puts `~/.local/bin` on `PATH` for every shell          |
+| `~/.profile` (Linux)                | Same, via one marked `export PATH` line                |
+| `~/.local/share/foggybrain/`        | SQLite data and `foggy.pid`, shared with a dev install |
 
 `FOGGY_HOME` relocates `~/.foggybrain`; `FOGGY_VERSION` pins the release the installer fetches. Data lives in `FOGGY_DATA_DIR` (default `~/.local/share/foggybrain`), so a curl install and a `pnpm link --global` install on the same machine see the same workspaces and tasks. Windows is not supported by the installer; use the clone workflow there.
 ````
