@@ -1,6 +1,6 @@
 # CLI Reference
 
-`foggy` is a client of a **running** Foggybrain server. It does not start the server, poll GitHub itself, or maintain fallback local state. Run `pnpm dev` for development, or `pnpm build && pnpm start` for the built app. The API defaults to `http://127.0.0.1:4173`; the development web UI is `http://127.0.0.1:5173`.
+`foggy` is a client of a **running** Foggybrain server. It does not poll GitHub itself or maintain fallback local state. Start a server with `foggy start`, or `pnpm dev` for development. The API defaults to `http://127.0.0.1:4173`; the development web UI is `http://127.0.0.1:5173`.
 
 ## Invocation
 
@@ -351,18 +351,47 @@ Timeouts identify the server's overall 10-second sync deadline; transport failur
 
 Credentials are server-only: dedicated mode uses only `FOGGY_SYNC_TOKEN` (without fallback); explicit `github` mode uses server `GH_TOKEN`, `GITHUB_TOKEN`, or `gh auth token`. Both require access to the selected private repository, Contents read/write for publishing, and any organization/SSO approval. Prefer dedicated sync credentials to keep PR access read-only. Never put tokens in CLI arguments, task text, diagnostic reports, or logs. This sync uses the GitHub Contents API, so local git remotes and git CLI tracing do not diagnose its requests.
 
-## UI
+## Installation And Upgrades
 
 ```text
-foggy ui
+foggy upgrade [--version <version>] [--force]
+foggy link [--version <version>] [--force]
+foggy uninstall [--yes]
+```
+
+These commands manage a curl-installed FoggyBrain under `~/.foggybrain` (override with `FOGGY_HOME`). They are not used by a `pnpm link --global` development install.
+
+`foggy upgrade` resolves the latest GitHub release (or `--version`), downloads `SHA256SUMS` and `foggybrain-<version>.tar.gz` from that release, aborts unless the archive's SHA-256 matches its `SHA256SUMS` entry (the same check `scripts/install.sh` makes), extracts it to `~/.foggybrain/versions/<version>/`, repoints `~/.foggybrain/current` and `~/.local/bin/foggy`, and returns `{"version":"...","path":"...","bin":"...","pathEntry":"present","previousVersion":"..."}`. Old version directories are kept for rollback; remove them with `rm -rf ~/.foggybrain/versions/<old>`. A server started before the upgrade keeps running the old code out of its still-present version directory, so restart it with `foggy stop && foggy start`.
+
+`foggy link` performs only the symlink and `PATH` steps for an already-extracted version, defaulting to the running CLI's own version. Use it to roll back: `~/.foggybrain/versions/<old>/bin/foggy.mjs link`. `pathEntry` is `created` when the `PATH` entry had to be written (`/etc/paths.d/foggy` on macOS, which prompts for `sudo`; a marked line in `~/.profile` on Linux), `present` when it was already correct, and `failed` when writing it did not work — a declined or unavailable `sudo`, typically. `failed` is not a failed install: the version is linked and `~/.local/bin/foggy` works, and the command prints the one line to add yourself before exiting `0` (naming `~/.zprofile` on macOS, since zsh never reads `~/.profile`, and `~/.profile` on Linux).
+
+`link` and `upgrade` refuse to replace a `~/.local/bin/foggy` that is not a symlink into the install root — a `pnpm link --global` executable, or any other shim — and name what it points at. This is the same notion of ownership `uninstall` uses. Pass `--force` to replace it and take over the name.
+
+`foggy uninstall` stops a running server, removes `~/.local/bin/foggy`, removes the `PATH` entry (`sudo rm -f /etc/paths.d/foggy` on macOS, the marked `~/.profile` line on Linux), and deletes `~/.foggybrain` including every kept version. It returns `{"removed":[...],"pathEntry":"removed","keptDataDir":"..."}`. If `~/.local/bin/foggy` is not a symlink into the install root — a `pnpm link --global` executable or a shell shim, for example — this is a foreign install and `uninstall` does nothing at all: it reports `removed: []` and the PATH entry's real state (`"present"` or `"absent"`) without touching it. **Task data is kept**: `~/.local/share/foggybrain` (SQLite state and config) is never touched, so reinstalling restores the same workspaces. Delete that directory by hand to remove your data. Without a terminal, `--yes` is required; with one, the command prompts and expects `yes`.
+
+## Server Lifecycle
+
+```text
+foggy start
+foggy stop
+```
+
+`foggy start` spawns the server detached, waits for it to answer `/api/health` **with its own process ID**, writes that ID to `foggy.pid` in the data directory (`FOGGY_DATA_DIR`, default `~/.local/share/foggybrain`), and returns `{"pid":12345,"url":"http://127.0.0.1:4173","dataDir":"..."}`. Server output goes to `foggy.log` in the same directory, truncated on each start. If the server exits during startup or never answers within twenty seconds, `start` kills it, writes no pidfile, and fails with the exit status and the tail of `foggy.log`; a port already in use is the usual cause. Because only one process can hold the port, a health answer naming any other process means the child cannot have bound it: `start` fails immediately with `the port is already served by process <pid>` rather than reporting success for someone else's server. `/api/health` therefore returns `{"ok":true,"pid":<pid>}`. Starting twice is an error while the recorded process is alive; a stale pidfile is ignored. `FOGGY_PORT` selects the port; `--url` / `FOGGY_URL` do not, since they configure the client, not the server.
+
+`foggy stop` sends `SIGTERM` to the recorded process, waits up to five seconds for it to exit, and removes the pidfile. With no server recorded it returns `{"stopped":false,"pid":null}` and exit `0`.
+
+## Dashboard
+
+```text
+foggy dashboard
 ```
 
 Opens the configured origin in your default browser using `open` on macOS, `rundll32.exe` on Windows, or `xdg-open` on other platforms. The URL is passed as an argument without a shell. No server is started or probed. Success means the opener exited successfully, not that the browser rendered the page. Result: `{"url":"http://127.0.0.1:4173/","opened":true}`. A missing/failing platform opener is an error; headless agents should use API commands instead.
 
 ```sh
-foggy ui
-foggy --url http://127.0.0.1:5173 ui  # Development UI
-foggy --workspace WORKSPACE_ID ui  # Opens /?workspace=WORKSPACE_ID
+foggy dashboard
+foggy --url http://127.0.0.1:5173 dashboard  # Development UI
+foggy --workspace WORKSPACE_ID dashboard  # Opens /?workspace=WORKSPACE_ID
 ```
 
 ## Agent Workflow

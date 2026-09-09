@@ -18,3 +18,5 @@ coverage/
 *.sqlite3-shm
 *.sqlite3-wal
 local-exports/
+.claude/worktrees/
+docs/superpowers/

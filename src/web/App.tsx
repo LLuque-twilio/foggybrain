@@ -120,7 +120,7 @@ export function WorkspaceApp({
     } catch {
       if (id === refreshId.current) {
         setConnectionError(
-          'Cannot reach the local server. Keep pnpm dev or pnpm start running; your last loaded graph is shown.',
+          'Cannot reach the local server. Keep foggy start, pnpm dev, or pnpm start running; your last loaded graph is shown.',
         );
         setLoading(false);
       }

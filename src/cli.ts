@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { existsSync, realpathSync } from 'node:fs';
+import { join } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { fileURLToPath } from 'node:url';
 import { Command, CommanderError, Option } from 'commander';
@@ -16,8 +17,26 @@ import type {
   Workspace,
   WorkspaceList,
 } from './shared.js';
+import { dataDirectory, startServer, stopServer } from './daemon.js';
+import {
+  binDirectory,
+  installRoot,
+  linkVersion,
+  packageVersion,
+  uninstall,
+  upgrade,
+} from './install.js';
 
 export async function main(argv = process.argv): Promise<void> {
+  // `-v`/`--version` is recognized only as the first argument, handled before Commander
+  // parsing rather than via `.version()`. Commander's global option scan otherwise claims
+  // a registered `--version` wherever it appears in argv, which would swallow
+  // `link --version`/`upgrade --version` before the subcommand ever sees it. It is
+  // documented in `--help` (below) since it isn't a registered Commander option.
+  if (argv[2] === '-v' || argv[2] === '--version') {
+    process.stdout.write(`${packageVersion()}\n`);
+    return;
+  }
   const program = new Command();
   program
     .name('foggy')
@@ -32,6 +51,10 @@ export async function main(argv = process.argv): Promise<void> {
       '--workspace <id>',
       'workspace ID (or FOGGY_WORKSPACE)',
       process.env.FOGGY_WORKSPACE || undefined,
+    )
+    .addHelpText(
+      'after',
+      '\n-v, --version    print the installed FoggyBrain version (must be the first argument)',
     )
     .showSuggestionAfterError(false)
     .configureOutput({ writeErr: () => {} })
@@ -553,7 +576,56 @@ export async function main(argv = process.argv): Promise<void> {
       );
   }
   program
-    .command('ui')
+    .command('link')
+    .description('Point the foggy executable and current version at an installed version')
+    .option('--version <version>', 'installed version (default: this CLI version)')
+    .option('--force', 'replace a foggy executable that belongs to another installation')
+    .action(async (options) =>
+      output(
+        await linkVersion({ version: options.version ?? packageVersion(), force: options.force }),
+      ),
+    );
+  program
+    .command('upgrade')
+    .description('Download a FoggyBrain release and switch this installation to it')
+    .option('--version <version>', 'release version (default: latest)')
+    .option('--force', 'replace a foggy executable that belongs to another installation')
+    .action(async (options) =>
+      output(await upgrade({ version: options.version, force: options.force })),
+    );
+  program
+    .command('uninstall')
+    .description('Remove the installed foggy executable, its PATH entry, and ~/.foggybrain')
+    .option('--yes', 'explicitly confirm removal without a prompt')
+    .action(async (options) => {
+      const root = installRoot();
+      if (!options.yes) {
+        if (!process.stdin.isTTY || !process.stderr.isTTY)
+          throw new Error('Uninstall requires --yes without a terminal.');
+        process.stderr.write(
+          `Will remove ${root}, ${join(binDirectory(), 'foggy')}, and the FoggyBrain PATH entry.\nTask data in ${dataDirectory()} is kept.\n`,
+        );
+        const terminal = createInterface({ input: process.stdin, output: process.stderr });
+        let answer: string;
+        try {
+          answer = await terminal.question('Uninstall FoggyBrain? Type yes to confirm: ');
+        } finally {
+          terminal.close();
+        }
+        if (answer.trim().toLowerCase() !== 'yes') throw new Error('Uninstall cancelled.');
+      }
+      output(await uninstall());
+    });
+  program
+    .command('start')
+    .description('Start the Foggybrain server in the background')
+    .action(async () => output(await startServer()));
+  program
+    .command('stop')
+    .description('Stop the background Foggybrain server')
+    .action(async () => output(await stopServer()));
+  program
+    .command('dashboard')
     .description('Open the server UI in the default web browser')
     .action(async () => {
       const target = serverUrl();

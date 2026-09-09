@@ -32,6 +32,34 @@ pnpm start
 
 The built UI and API are both at **http://127.0.0.1:4173**. `pnpm start` uses the existing build, so rebuild after source changes.
 
+## Install Without A Clone
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/LLuque-twilio/foggybrain/master/scripts/install.sh | bash
+foggy start
+foggy dashboard
+```
+
+The installer needs Node.js 22.13.0+ and nothing else. Layout:
+
+| Path                                | Purpose                                                              |
+| ----------------------------------- | -------------------------------------------------------------------- |
+| `~/.foggybrain/versions/<version>/` | One extracted release; old versions are kept                         |
+| `~/.foggybrain/current`             | Symlink to the active version                                        |
+| `~/.local/bin/foggy`                | Symlink to `current/bin/foggy.mjs`                                   |
+| `/etc/paths.d/foggy` (macOS)        | Puts `~/.local/bin` on `PATH` for every shell, machine-wide          |
+| `~/.profile` (Linux)                | Same, for your account only, via one marked `export PATH` line       |
+| `~/.local/share/foggybrain/`        | SQLite data, `foggy.pid`, and `foggy.log`, shared with a dev install |
+
+The two `PATH` mechanisms differ in reach and in precedence, deliberately: `/etc/paths.d/foggy` is the only way to reach the non-interactive shells AI agents spawn on macOS without writing a shell rc file, and it has no per-user form.
+
+- **macOS** writes one system file (with `sudo`), so **every user on the machine** gets your `~/.local/bin` on their `PATH`. `path_helper` **appends** `paths.d` entries after `/usr/bin` and friends, so the entry shadows nothing: a `foggy` earlier on the `PATH` still wins. On a shared Mac, `foggy uninstall` removes that shared file, but only when it names your own `~/.local/bin`.
+- **Linux** writes one marked line in your own `~/.profile`, which **prepends** `~/.local/bin`, so it takes precedence over an already-installed `foggy`. It affects only your account, and only login shells.
+
+If the `PATH` step fails (no `sudo` rights, a declined password prompt), the install is still complete and linked: `link` and `upgrade` report `"pathEntry":"failed"` and print the one line to add yourself, to `~/.zprofile` on macOS (the platform whose `sudo` step can fail, and whose default zsh never reads `~/.profile`) or `~/.profile` on Linux.
+
+`FOGGY_HOME` relocates `~/.foggybrain`; `FOGGY_VERSION` pins the release the installer fetches; `FOGGY_FORCE=1` lets it replace a `~/.local/bin/foggy` that belongs to another installation, such as a `pnpm link --global` one. Data lives in `FOGGY_DATA_DIR` (default `~/.local/share/foggybrain`), so a curl install and a `pnpm link --global` install on the same machine see the same workspaces and tasks. Windows is not supported by the installer; use the clone workflow there. See the [CLI reference](cli.md#installation-and-upgrades) for `link`, `upgrade`, and `uninstall`.
+
 ### Use `foggy` From Any Repository
 
 Link the existing CLI globally so you and AI agents can run `foggy` from any directory. No Homebrew installation is required. From your FoggyBrain checkout, run:
@@ -49,14 +77,14 @@ With the server running in another terminal, these commands work from any reposi
 foggy --help
 foggy --json workspace list
 foggy --json task list
-foggy ui
+foggy dashboard
 ```
 
-This is a link to your checkout, not a standalone installation: keep the checkout in place and run `pnpm build` there after source changes. `bin/foggy.mjs` loads the compiled CLI. Linking does not start a server; keep `pnpm dev` or `pnpm start` running from the FoggyBrain checkout. The CLI connects to `http://127.0.0.1:4173` by default, with `--url` or `FOGGY_URL` selecting another server.
+This is a link to your checkout, not a standalone installation: keep the checkout in place and run `pnpm build` there after source changes. `bin/foggy.mjs` loads the compiled CLI. Linking does not start a server; keep `pnpm dev` or `pnpm start` running from the FoggyBrain checkout, or run `foggy start` to start the built server in the background (`foggy stop` to stop it). The CLI connects to `http://127.0.0.1:4173` by default, with `--url` or `FOGGY_URL` selecting another server.
 
 Your current repository does not select a workspace. Use `foggy --json workspace list` to obtain IDs, then pass `--workspace ID` consistently when targeting a specific workspace. Agents should use `--json` for machine-readable output; see [Agents And CLI](#agents-and-cli) for safety rules.
 
-Without linking, use `pnpm foggy <command>` from the FoggyBrain checkout, which runs the CLI source. `foggy ui` opens the configured server URL; for the development UI use `pnpm foggy --url http://127.0.0.1:5173 ui` instead. CLI flags follow `foggy` directly; do not insert an extra `--` separator.
+Without linking, use `pnpm foggy <command>` from the FoggyBrain checkout, which runs the CLI source. `foggy dashboard` opens the configured server URL; for the development UI use `pnpm foggy --url http://127.0.0.1:5173 dashboard` instead. CLI flags follow `foggy` directly; do not insert an extra `--` separator.
 
 `pnpm-lock.yaml` is the dependency lockfile. Use `pnpm install --frozen-lockfile` for reproducible installs. Dependency build scripts are restricted to `esbuild`, which supports Vite and tsx.
 
@@ -71,7 +99,7 @@ pnpm --silent run foggy --json workspace create "Shared" --type cloud --repo OWN
 pnpm --silent run foggy --json workspace rename WORKSPACE_ID "Release planning"
 pnpm --silent run foggy --json workspace connect LOCAL_WORKSPACE_ID --repo OWNER/PRIVATE_STATE_REPO
 pnpm --silent run foggy --json --workspace WORKSPACE_ID graph
-pnpm foggy --workspace WORKSPACE_ID ui
+pnpm foggy --workspace WORKSPACE_ID dashboard
 ```
 
 Use the IDs returned by the server. `--workspace ID` overrides process `FOGGY_WORKSPACE`; without either, CLI calls retain legacy default-workspace paths. Explicit selection never falls back if the workspace is missing. Workspace management commands always address the unscoped registry. Browser tabs select independently using `?workspace=ID`; switching one does not change another tab or the CLI default.

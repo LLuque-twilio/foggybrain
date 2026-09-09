@@ -124,7 +124,7 @@ export function createApp(
     next();
   });
   app.use('/api', express.json({ limit: '256kb', strict: true }));
-  app.get('/api/health', (_req, res) => res.json({ ok: true }));
+  app.get('/api/health', (_req, res) => res.json({ ok: true, pid: process.pid }));
 
   if (options.workspaces) {
     const manager = options.workspaces;

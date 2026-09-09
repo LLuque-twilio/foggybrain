@@ -264,6 +264,12 @@ export interface OkResponse {
   ok: true;
 }
 
+/** Health also names the process, so `foggy start` can tell its own child from a port squatter. */
+export interface HealthResponse {
+  ok: true;
+  pid: number;
+}
+
 export interface RemoveWorkspaceInput {
   /** @pattern \S */
   revision: string;

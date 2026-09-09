@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
+import { mkdtemp } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { test, type TestContext } from 'node:test';
@@ -887,7 +890,7 @@ test('CLI commander and local validation errors are JSON, including without --js
     ['task', 'show', 'a', 'extra'],
     ['task', 'update', 'a'],
     ['--url', 'file:///tmp', 'task', 'list'],
-    ['--url', 'not a URL', 'ui'],
+    ['--url', 'not a URL', 'dashboard'],
     ['--url', 'http://user:secret@localhost', 'task', 'list'],
   ]) {
     const result = await run(args);
@@ -980,13 +983,13 @@ test('CLI import is inert and ui passes a single URL argument to a platform open
     syncBuiltinESMExports();
     const { main } = await import('./src/cli.ts');
     assert.equal(calls, 0);
-    await main(['node', 'foggy', '--url', url, '--json', 'ui']);
+    await main(['node', 'foggy', '--url', url, '--json', 'dashboard']);
     assert.equal(calls, 1);
     process.env.FOGGY_WORKSPACE = 'env & workspace';
     url = origin + '?workspace=env+%26+workspace';
-    await main(['node', 'foggy', '--url', origin, '--json', 'ui']);
+    await main(['node', 'foggy', '--url', origin, '--json', 'dashboard']);
     url = origin + '?workspace=flag%2F%3F%3B%24%28x%29';
-    await main(['node', 'foggy', '--url', origin, '--workspace', 'flag/?;$(x)', '--json', 'ui']);
+    await main(['node', 'foggy', '--url', origin, '--workspace', 'flag/?;$(x)', '--json', 'dashboard']);
     assert.equal(calls, 3);
   `;
   const result = await promisify(execFile)(
@@ -1060,4 +1063,79 @@ test('CLI terminal deletion lists deleted and affected IDs/titles; yes confirms 
     }
   }
   assert.equal(requests.filter((request) => request.method === 'DELETE').length, 1);
+});
+
+test('CLI reports the installed version and rejects the removed ui command', async (t) => {
+  const { run, requests } = await fixture(t);
+  const version = await run(['--version']);
+  assert.equal(version.code, 0);
+  assert.match(version.stdout.trim(), /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/);
+  const removed = await run(['ui']);
+  assert.equal(removed.code, 1);
+  assert.equal(removed.stdout, '');
+  assert.equal(typeof JSON.parse(removed.stderr).error, 'string');
+  assert.equal(requests.length, 0);
+});
+
+test('CLI --version is recognized only as the first argument and is documented in --help', async (t) => {
+  const { run, requests } = await fixture(t);
+  const short = await run(['-v']);
+  assert.equal(short.code, 0);
+  assert.match(short.stdout.trim(), /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/);
+  const misplaced = await run(['--json', '--version']);
+  assert.equal(misplaced.code, 1);
+  assert.equal(misplaced.stdout, '');
+  assert.equal(typeof JSON.parse(misplaced.stderr).error, 'string');
+  const help = await run(['--help']);
+  assert.match(help.stdout, /-v, --version/);
+  assert.equal(requests.length, 0);
+});
+
+test('CLI stop reports cleanly with no running server and makes no API calls', async (t) => {
+  const { run, requests } = await fixture(t);
+  const dir = await mkdtemp(join(tmpdir(), 'foggy-cli-stop-'));
+  const result = await run(['--json', 'stop'], { FOGGY_DATA_DIR: dir });
+  assert.equal(result.code, 0);
+  assert.deepEqual(JSON.parse(result.stdout), { stopped: false, pid: null });
+  assert.equal(requests.length, 0);
+});
+
+test('CLI link fails clearly for a version that is not installed', async (t) => {
+  const { run, requests } = await fixture(t);
+  const root = await mkdtemp(join(tmpdir(), 'foggy-cli-link-'));
+  const result = await run(['--json', 'link', '--version', '9.9.9'], { FOGGY_HOME: root });
+  assert.equal(result.code, 1);
+  assert.equal(result.stdout, '');
+  assert.match(JSON.parse(result.stderr).error, /not installed/);
+  assert.equal(requests.length, 0);
+});
+
+test('CLI upgrade rejects a malformed version without any network access', async (t) => {
+  const { run, requests } = await fixture(t);
+  const root = await mkdtemp(join(tmpdir(), 'foggy-cli-upgrade-'));
+  const result = await run(['--json', 'upgrade', '--version', '../evil'], { FOGGY_HOME: root });
+  assert.equal(result.code, 1);
+  assert.equal(result.stdout, '');
+  assert.match(JSON.parse(result.stderr).error, /Invalid FoggyBrain version/);
+  assert.equal(requests.length, 0);
+});
+
+test('CLI uninstall refuses to run without --yes outside a terminal and removes the install root with it', async (t) => {
+  const { run, requests } = await fixture(t);
+  const root = await mkdtemp(join(tmpdir(), 'foggy-cli-uninstall-'));
+  const data = await mkdtemp(join(tmpdir(), 'foggy-cli-uninstall-data-'));
+  // Isolate HOME too: uninstall reads ~/.local/bin/foggy via os.homedir(), which honors $HOME on
+  // POSIX, so without this the test would consult whatever foggy is really linked on this machine.
+  const home = await mkdtemp(join(tmpdir(), 'foggy-cli-uninstall-home-'));
+  const env = { FOGGY_HOME: root, FOGGY_DATA_DIR: data, HOME: home };
+  const refused = await run(['--json', 'uninstall'], env);
+  assert.equal(refused.code, 1);
+  assert.equal(refused.stdout, '');
+  assert.match(JSON.parse(refused.stderr).error, /--yes/);
+  const confirmed = await run(['--json', 'uninstall', '--yes'], env);
+  assert.equal(confirmed.code, 0);
+  const result = JSON.parse(confirmed.stdout) as { removed: string[]; keptDataDir: string };
+  assert.deepEqual(result.removed, [root]);
+  assert.equal(result.keptDataDir, data);
+  assert.equal(requests.length, 0);
 });

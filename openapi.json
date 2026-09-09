@@ -27,7 +27,7 @@
               }
             },
             "content": {
-              "application/json": { "schema": { "$ref": "#/components/schemas/OkResponse" } }
+              "application/json": { "schema": { "$ref": "#/components/schemas/HealthResponse" } }
             }
           },
           "400": {
@@ -4212,6 +4212,13 @@
         "properties": { "ok": { "type": "boolean", "const": true } },
         "required": ["ok"],
         "additionalProperties": false
+      },
+      "HealthResponse": {
+        "type": "object",
+        "properties": { "ok": { "type": "boolean", "const": true }, "pid": { "type": "number" } },
+        "required": ["ok", "pid"],
+        "additionalProperties": false,
+        "description": "Health also names the process, so `foggy start` can tell its own child from a port squatter."
       },
       "RemoveWorkspaceInput": {
         "type": "object",
