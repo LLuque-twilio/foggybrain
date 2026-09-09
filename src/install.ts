@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import {
   access,
@@ -203,9 +204,40 @@ export async function linkVersion(options: LinkOptions): Promise<LinkResult> {
 
 const LATEST_RELEASE_URL = `https://api.github.com/repos/${REPO}/releases/latest`;
 
+export function releaseAssetName(version: string): string {
+  return `foggybrain-${assertVersion(version)}.tar.gz`;
+}
+
 export function releaseAssetUrl(version: string): string {
   const normalized = assertVersion(version);
-  return `https://github.com/${REPO}/releases/download/v${normalized}/foggybrain-${normalized}.tar.gz`;
+  return `https://github.com/${REPO}/releases/download/v${normalized}/${releaseAssetName(normalized)}`;
+}
+
+export function releaseChecksumUrl(version: string): string {
+  return `https://github.com/${REPO}/releases/download/v${assertVersion(version)}/SHA256SUMS`;
+}
+
+// SHA256SUMS lines are `<64 lowercase hex><two spaces><bare asset name>`, as `sha256sum` writes
+// them; the `*` marks a binary-mode digest of the same bytes.
+export function checksumFor(sums: string, asset: string): string | null {
+  for (const line of sums.split('\n')) {
+    const match = /^([0-9a-f]{64}) [ *](.+)$/.exec(line.trimEnd());
+    if (match && match[2] === asset) return match[1]!;
+  }
+  return null;
+}
+
+async function download(url: string, what: string, fetchImpl: typeof fetch): Promise<Response> {
+  const response = await fetchImpl(url, {
+    headers: { 'User-Agent': 'foggybrain-cli' },
+    signal: AbortSignal.timeout(300_000),
+  }).catch((error: unknown) => {
+    throw new Error(
+      `Cannot download ${url}: ${error instanceof Error ? error.message : String(error)}.`,
+    );
+  });
+  if (!response.ok) throw new Error(`Cannot download ${what} (HTTP ${response.status}): ${url}`);
+  return response;
 }
 
 export async function resolveLatestVersion(fetchImpl: typeof fetch = fetch): Promise<string> {
@@ -236,21 +268,30 @@ export async function downloadVersion(
 ): Promise<string> {
   const normalized = assertVersion(version);
   const root = options.root ?? installRoot();
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const asset = releaseAssetName(normalized);
+  const sums = await (
+    await download(
+      releaseChecksumUrl(normalized),
+      `the checksums for FoggyBrain ${normalized}`,
+      fetchImpl,
+    )
+  ).text();
+  const expected = checksumFor(sums, asset);
+  if (expected === null)
+    throw new Error(`The SHA256SUMS for FoggyBrain ${normalized} has no entry for ${asset}.`);
   const url = releaseAssetUrl(normalized);
-  const response = await (options.fetchImpl ?? fetch)(url, {
-    headers: { 'User-Agent': 'foggybrain-cli' },
-    signal: AbortSignal.timeout(300_000),
-  }).catch((error: unknown) => {
+  const response = await download(url, `FoggyBrain ${normalized}`, fetchImpl);
+  const bytes = Buffer.from(await response.arrayBuffer());
+  const digest = createHash('sha256').update(bytes).digest('hex');
+  if (digest !== expected)
     throw new Error(
-      `Cannot download ${url}: ${error instanceof Error ? error.message : String(error)}.`,
+      `Checksum mismatch for ${asset}: expected ${expected}, got ${digest}. Refusing to install ${url}.`,
     );
-  });
-  if (!response.ok)
-    throw new Error(`Cannot download FoggyBrain ${normalized} (HTTP ${response.status}): ${url}`);
   const staging = join(root, 'tmp');
   await mkdir(staging, { recursive: true });
-  const tarball = join(staging, `foggybrain-${normalized}.tar.gz`);
-  await writeFile(tarball, Buffer.from(await response.arrayBuffer()));
+  const tarball = join(staging, asset);
+  await writeFile(tarball, bytes);
   const target = versionDirectory(normalized, root);
   const partial = `${target}.partial`;
   await rm(partial, { recursive: true, force: true });

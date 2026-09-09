@@ -7,8 +7,10 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { test } from 'node:test';
+import { createHash } from 'node:crypto';
 import {
   assertVersion,
+  checksumFor,
   binDirectory,
   currentVersion,
   downloadVersion,
@@ -18,6 +20,7 @@ import {
   linkVersion,
   packageVersion,
   releaseAssetUrl,
+  releaseChecksumUrl,
   removePathEntry,
   resolveLatestVersion,
   uninstall,
@@ -249,6 +252,26 @@ async function archive(version: string): Promise<Buffer> {
   return readFile(join(stage, 'a.tar.gz'));
 }
 
+function releaseFetch(assets: Record<string, Buffer>, latest?: string): typeof fetch {
+  const sums = Object.entries(assets)
+    .map(
+      ([version, bytes]) =>
+        `${createHash('sha256').update(bytes).digest('hex')}  foggybrain-${version}.tar.gz`,
+    )
+    .join('\n');
+  return (async (input: string) => {
+    const url = String(input);
+    if (url.endsWith('/releases/latest'))
+      return new Response(JSON.stringify({ tag_name: `v${latest ?? Object.keys(assets)[0]}` }), {
+        status: 200,
+      });
+    if (url.endsWith('/SHA256SUMS')) return new Response(`${sums}\n`, { status: 200 });
+    const version = Object.keys(assets).find((key) => url === releaseAssetUrl(key));
+    if (version === undefined) return new Response('not found', { status: 404 });
+    return new Response(new Uint8Array(assets[version]!), { status: 200 });
+  }) as unknown as typeof fetch;
+}
+
 test('releaseAssetUrl and resolveLatestVersion use the public release endpoints', async () => {
   assert.equal(
     releaseAssetUrl('1.2.3'),
@@ -271,13 +294,7 @@ test('upgrade downloads, extracts, links, and reports the previous version', asy
   const root = await scratch();
   const home = await scratch();
   const binDir = join(home, '.local', 'bin');
-  const bytes = await archive('0.3.0');
-  const fetchImpl = (async (input: string) => {
-    if (String(input).endsWith('/releases/latest'))
-      return new Response(JSON.stringify({ tag_name: 'v0.3.0' }), { status: 200 });
-    assert.equal(String(input), releaseAssetUrl('0.3.0'));
-    return new Response(new Uint8Array(bytes), { status: 200 });
-  }) as unknown as typeof fetch;
+  const fetchImpl = releaseFetch({ '0.3.0': await archive('0.3.0') });
   const first = await upgrade({ root, home, binDir, platform: 'linux', fetchImpl });
   assert.equal(first.version, '0.3.0');
   assert.equal(first.previousVersion, null);
@@ -313,9 +330,87 @@ test('downloadVersion rejects an archive without a compiled CLI', async () => {
     'foggybrain-0.5.0',
   ]);
   const bytes = await readFile(join(stage, 'a.tar.gz'));
-  const fetchImpl = (async () =>
-    new Response(new Uint8Array(bytes), { status: 200 })) as unknown as typeof fetch;
+  const fetchImpl = releaseFetch({ '0.5.0': bytes });
   await assert.rejects(() => downloadVersion('0.5.0', { root, fetchImpl }), /archive/i);
+});
+
+test('checksumFor reads only an exact asset entry out of a SHA256SUMS file', () => {
+  const digest = 'a'.repeat(64);
+  const other = 'b'.repeat(64);
+  const sums = [
+    `${other}  foggybrain-1.0.0.tar.gz.asc`,
+    `${digest}  foggybrain-1.0.0.tar.gz`,
+    `${other} *foggybrain-1.1.0.tar.gz`,
+  ].join('\n');
+  assert.equal(checksumFor(sums, 'foggybrain-1.0.0.tar.gz'), digest);
+  assert.equal(checksumFor(sums, 'foggybrain-1.1.0.tar.gz'), other);
+  assert.equal(checksumFor(sums, 'foggybrain-2.0.0.tar.gz'), null);
+  assert.equal(
+    checksumFor(`${'A'.repeat(64)}  foggybrain-1.0.0.tar.gz`, 'foggybrain-1.0.0.tar.gz'),
+    null,
+  );
+});
+
+test('downloadVersion refuses an archive whose digest does not match SHA256SUMS', async () => {
+  const root = await scratch();
+  const bytes = await archive('0.6.0');
+  const tampered = Buffer.from(bytes);
+  tampered[tampered.length - 1] ^= 0xff;
+  const expected = createHash('sha256').update(bytes).digest('hex');
+  const got = createHash('sha256').update(tampered).digest('hex');
+  const fetchImpl = (async (input: string) => {
+    const url = String(input);
+    if (url === releaseChecksumUrl('0.6.0'))
+      return new Response(`${expected}  foggybrain-0.6.0.tar.gz\n`, { status: 200 });
+    return new Response(new Uint8Array(tampered), { status: 200 });
+  }) as unknown as typeof fetch;
+  await assert.rejects(
+    () => downloadVersion('0.6.0', { root, fetchImpl }),
+    new RegExp(`Checksum mismatch for foggybrain-0.6.0.tar.gz: expected ${expected}, got ${got}`),
+  );
+  await assert.rejects(() => stat(versionDirectory('0.6.0', root)), /ENOENT/);
+});
+
+test('downloadVersion refuses a release whose SHA256SUMS omits the asset', async () => {
+  const root = await scratch();
+  const bytes = await archive('0.7.0');
+  const fetchImpl = (async (input: string) => {
+    if (String(input) === releaseChecksumUrl('0.7.0'))
+      return new Response(`${'c'.repeat(64)}  foggybrain-0.7.1.tar.gz\n`, { status: 200 });
+    return new Response(new Uint8Array(bytes), { status: 200 });
+  }) as unknown as typeof fetch;
+  await assert.rejects(() => downloadVersion('0.7.0', { root, fetchImpl }), /no entry for/);
+});
+
+test('downloadVersion fails when the release has no SHA256SUMS at all', async () => {
+  const root = await scratch();
+  const fetchImpl = (async (input: string) =>
+    String(input).endsWith('/SHA256SUMS')
+      ? new Response('missing', { status: 404 })
+      : new Response(new Uint8Array(await archive('0.8.0')), {
+          status: 200,
+        })) as unknown as typeof fetch;
+  await assert.rejects(() => downloadVersion('0.8.0', { root, fetchImpl }), /checksums.*HTTP 404/);
+});
+
+test('upgrading to a different version keeps the previous version directory for rollback', async () => {
+  const root = await scratch();
+  const home = await scratch();
+  const binDir = join(home, '.local', 'bin');
+  const fetchImpl = releaseFetch(
+    { '0.9.0': await archive('0.9.0'), '0.9.1': await archive('0.9.1') },
+    '0.9.1',
+  );
+  const options = { root, home, binDir, platform: 'linux' as const, fetchImpl };
+  await upgrade({ ...options, version: '0.9.0' });
+  const moved = await upgrade(options);
+  assert.equal(moved.version, '0.9.1');
+  assert.equal(moved.previousVersion, '0.9.0');
+  assert.equal(await currentVersion(root), '0.9.1');
+  assert.equal(
+    await readFile(join(versionDirectory('0.9.0', root), 'dist', 'server', 'cli.js'), 'utf8'),
+    "export const version = '0.9.0';\n",
+  );
 });
 
 test('removePathEntry deletes the macOS paths.d file and strips only the marked profile line', async () => {
