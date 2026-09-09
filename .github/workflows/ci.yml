@@ -26,6 +26,7 @@ jobs:
         with:
           node-version: '22'
       - run: pnpm install --frozen-lockfile
+      - run: pnpm openapi:check
       - run: pnpm test
       - run: pnpm typecheck
       - run: pnpm build

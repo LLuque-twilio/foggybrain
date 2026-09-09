@@ -61,6 +61,7 @@ export interface Snapshot {
 }
 
 export interface CreateTaskInput {
+  /** @pattern \S */
   title: string;
   description?: string;
   kind: TaskKind;
@@ -72,10 +73,13 @@ export interface ConnectTaskInput {
   direction: 'prerequisite' | 'dependent';
   taskId?: string;
   task?: CreateTaskInput;
+  /** @pattern \S */
   dependencyId?: string;
 }
 
+/** @minProperties 1 */
 export interface UpdateTaskInput {
+  /** @pattern \S */
   title?: string;
   description?: string;
   prUrl?: string | null;
@@ -118,10 +122,19 @@ export interface PortableState {
   references: TaskReference[];
 }
 
+/** @pattern ^[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?/(?!\.{1,2}$)[a-zA-Z0-9_.-]+$ */
+export type SyncRepository = string;
+
+/**
+ * @maxLength 512
+ * @pattern ^(?!.*\.\.)(?!.*\/\/)(?!.*\/\.)(?!.*\.(?:lock)?(?:/|$))(?!.*\/$)[a-zA-Z0-9_][a-zA-Z0-9_./-]*$
+ */
+export type SyncRef = string;
+
 export interface SyncTarget {
-  repo: string;
-  branch: string;
-  path: string;
+  repo: SyncRepository;
+  branch: SyncRef;
+  path: SyncRef;
 }
 
 export interface Workspace {
@@ -175,6 +188,9 @@ export function safeSyncRef(value: unknown): value is string {
 }
 
 export interface CreateWorkspaceInput {
+  /** The server enforces a trimmed length of 1 to 100 UTF-16 code units.
+   * @pattern \S
+   */
   name: string;
   type: 'local' | 'cloud';
   target?: SyncTarget;
@@ -182,6 +198,9 @@ export interface CreateWorkspaceInput {
 }
 
 export interface UpdateWorkspaceInput {
+  /** The server enforces a trimmed length of 1 to 100 UTF-16 code units.
+   * @pattern \S
+   */
   name?: string;
   type?: 'cloud';
   target?: SyncTarget;
@@ -220,4 +239,64 @@ export interface SyncPreview {
   validationError: string | null;
   canApply: boolean;
   resolution: 'local' | 'remote' | null;
+}
+
+export type GithubPrList = GithubPr[];
+
+export type EmptyBody = Record<string, never>;
+
+export interface SetDoneInput {
+  done: boolean;
+}
+
+export type CreateDependencyInput = Pick<Dependency, 'prerequisiteId' | 'dependentId'>;
+export type CreateReferenceInput = Pick<TaskReference, 'containerId' | 'taskId'>;
+
+export interface DeleteTaskResponse {
+  deleted: string[];
+}
+
+export interface ErrorResponse {
+  error: string;
+}
+
+export interface OkResponse {
+  ok: true;
+}
+
+export interface RemoveWorkspaceInput {
+  /** @pattern \S */
+  revision: string;
+}
+
+export interface SyncPreviewInput {
+  mode?: 'merge' | 'revert';
+  resolution?: 'local' | 'remote';
+}
+
+export interface SyncApplyInput {
+  /** @pattern \S */
+  previewId: string;
+  confirm: true;
+}
+
+export interface ConfirmDeletionQuery {
+  confirm: 'true';
+}
+
+export interface RepositoryDiscoveryQuery {
+  /** Dedicated uses only server FOGGY_SYNC_TOKEN (default); github explicitly reuses
+   * server GH_TOKEN, GITHUB_TOKEN, or gh auth token. Never accepts browser credentials.
+   */
+  credential?: 'dedicated' | 'github';
+}
+
+export interface BranchDiscoveryQuery {
+  /** Dedicated uses only server FOGGY_SYNC_TOKEN; github explicitly opts into server GitHub credentials. */
+  credential: 'dedicated' | 'github';
+  repo: SyncTarget['repo'];
+}
+
+export interface FileDiscoveryQuery extends BranchDiscoveryQuery {
+  branch: SyncTarget['branch'];
 }

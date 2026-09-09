@@ -1,6 +1,6 @@
 # Working In FoggyBrain
 
-Read `CONTRACT.md` and `src/shared.ts` before changing API consumers or domain behavior. The server owns persistent state, IDs, validation, and derived completion. Do not implement a second completion algorithm or fallback local state in the CLI or UI.
+Read `openapi.json`, `CONTRACT.md`, and `src/shared.ts` before changing API consumers or domain behavior. The generated spec is the HTTP reference; the contract defines semantic guarantees. The server owns persistent state, IDs, validation, and derived completion. Do not implement a second completion algorithm or fallback local state in the CLI or UI.
 
 ## Setup And Checks
 
@@ -23,6 +23,8 @@ For UI changes, run `pnpm test:e2e` as well (install Chromium with `pnpm exec pl
 CLI tests use subprocesses and a fake HTTP server. They require neither a live application server nor a GitHub token. Test the real Commander invocation, stdout/stderr, and exit codes, not just mocked command handlers. The CLI can be imported without running commands; preserve the entry guard and support for `bin/foggy.mjs` importing the compiled CLI.
 
 For manual integration work, `pnpm dev` starts the API on `127.0.0.1:4173` and the development UI on `127.0.0.1:5173`. For the built app, `pnpm build && pnpm start` serves both API and UI on `127.0.0.1:4173`. `pnpm start` does not rebuild. Keep a server running for CLI usage. Use an explicit temporary `FOGGY_DATA_DIR` for manual experiments rather than mutating a user's real graph. The dev Vite proxy targets `4173` and does not follow a changed `FOGGY_PORT` automatically.
+
+For API changes, regenerate `openapi.json` with `pnpm openapi:generate` and run `pnpm openapi:check` as well. Never hand edit the artifact. DTO field shapes come from `src/shared.ts`; `scripts/openapi.ts` owns route metadata and focused conditional schema refinements. The spec is not a runtime validator. See `docs/api.md` for ownership and contract-test coverage, and `docs/pr-verification.md` for PR readiness precedence.
 
 ## Agent CLI Usage
 

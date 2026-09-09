@@ -4,7 +4,8 @@ Use Node.js 22 (at least 22.13.0) and pnpm 10.14.0. Install dependencies with
 `pnpm install --frozen-lockfile`; maintain `pnpm-lock.yaml`, not another lockfile.
 
 Read [AGENTS.md](AGENTS.md) for development and safety rules. Before changing API
-consumers or domain behavior, read [CONTRACT.md](CONTRACT.md) and `src/shared.ts`.
+consumers or domain behavior, read [openapi.json](openapi.json),
+[CONTRACT.md](CONTRACT.md), and `src/shared.ts`.
 The server owns persistence, validation, IDs, and completion.
 
 Submit focused pull requests and run:
@@ -14,6 +15,12 @@ pnpm test
 pnpm typecheck
 pnpm build
 ```
+
+For API changes, run `pnpm openapi:generate`, review the generated `openapi.json`,
+and run `pnpm openapi:check` as well. Never hand edit the spec. Shared DTOs own
+field shapes; `scripts/openapi.ts` owns route metadata and focused conditional
+schema refinements. Runtime validation still owns graph/state rules. See the
+[API maintainer guide](docs/api.md) for ownership and contract-test coverage.
 
 For UI changes, also run `pnpm exec playwright install chromium` once and
 `pnpm test:e2e`. Format changed files with Prettier. Report checks you could not run.

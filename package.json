@@ -19,7 +19,9 @@
     "foggy": "tsx src/cli.ts",
     "test": "tsx --test src/*.test.ts",
     "test:e2e": "pnpm run build && playwright test",
-    "typecheck": "tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.json && tsc -p tsconfig.tests.json",
+    "typecheck": "tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.json && tsc -p tsconfig.tests.json && tsc -p tsconfig.tools.json",
+    "openapi:generate": "tsx scripts/openapi.ts",
+    "openapi:check": "tsx scripts/openapi.ts --check",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },
@@ -41,6 +43,7 @@
     "react-dom": "^19.1.1"
   },
   "devDependencies": {
+    "@apidevtools/swagger-parser": "^13.0.0",
     "@playwright/test": "^1.63.0",
     "@types/dagre": "^0.7.53",
     "@types/express": "^5.0.3",
@@ -48,8 +51,10 @@
     "@types/react": "^19.1.12",
     "@types/react-dom": "^19.1.9",
     "@vitejs/plugin-react": "^5.0.2",
+    "ajv": "^8.20.0",
     "concurrently": "^10.0.5",
     "prettier": "^3.9.6",
+    "ts-json-schema-generator": "^2.9.0",
     "tsx": "^4.20.5",
     "typescript": "^5.9.2",
     "vite": "^8.2.2"
