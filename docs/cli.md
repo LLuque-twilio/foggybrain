@@ -282,7 +282,7 @@ Use least-privilege token access to relevant repositories: fine-grained Metadata
 
 ## Manual State Sync
 
-This top-level group syncs portable task state with a private GitHub repository, separate from `github sync` PR polling. All commands call the running server API; the CLI never accesses sync tokens, state files, or a local database. See the [server setup workflow](../README.md#manual-state-sync).
+This top-level group syncs portable task state with a private GitHub repository, separate from `github sync` PR polling. All commands call the running server API; the CLI never accesses sync tokens, state files, or a local database. See the [server setup workflow](local-guide.md#manual-state-sync).
 
 ```text
 foggy --json sync status

@@ -24,5 +24,5 @@ source repository public does not make task data safe to publish.
 
 Keep credentials server-side and least-privilege. Never give public CI access to
 personal GitHub tokens, sync credentials, or working databases. See the
-[README](README.md#security-limits) and [agent guidance](AGENTS.md) for
+[local usage guide](docs/local-guide.md#security-limits) and [agent guidance](AGENTS.md) for
 operational constraints.
