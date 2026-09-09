@@ -1,7 +1,8 @@
 #!/bin/sh
 # Installs the FoggyBrain CLI from a GitHub release. Usage:
 #   curl -fsSL https://raw.githubusercontent.com/LLuque-twilio/foggybrain/master/scripts/install.sh | bash
-# Environment: FOGGY_VERSION pins a release (default: latest), FOGGY_HOME relocates ~/.foggybrain.
+# Environment: FOGGY_VERSION pins a release (default: latest), FOGGY_HOME relocates ~/.foggybrain,
+# FOGGY_FORCE=1 replaces a ~/.local/bin/foggy that belongs to another installation.
 set -eu
 
 REPO="LLuque-twilio/foggybrain"
@@ -58,7 +59,10 @@ curl -fsSL -o "$TMP/SHA256SUMS" \
   "https://github.com/$REPO/releases/download/v$VERSION/SHA256SUMS" ||
   fail "Cannot download SHA256SUMS for release v$VERSION."
 
-grep -F "  $ASSET" "$TMP/SHA256SUMS" > "$TMP/SHA256SUMS.asset" ||
+# An exact name match: a substring match would also accept a future $ASSET.asc line and then fail
+# as a bogus checksum mismatch.
+awk -v asset="$ASSET" '{ name = $2; sub(/^\*/, "", name); if (name == asset) { print; found = 1 } }
+END { exit found ? 0 : 1 }' "$TMP/SHA256SUMS" > "$TMP/SHA256SUMS.asset" ||
   fail "SHA256SUMS has no entry for $ASSET."
 
 if command -v sha256sum >/dev/null 2>&1; then
@@ -75,9 +79,12 @@ DEST="$FOGGY_HOME/versions/$VERSION"
 rm -rf "$DEST"
 mkdir -p "$DEST"
 tar -xzf "$TMP/$ASSET" -C "$DEST" --strip-components=1
-[ -f "$DEST/dist/server/cli.js" ] || fail "Release archive is missing dist/server/cli.js."
+[ -f "$DEST/bin/foggy.mjs" ] || fail "Release archive is missing bin/foggy.mjs."
 
-FOGGY_HOME="$FOGGY_HOME" node "$DEST/dist/server/cli.js" link --version "$VERSION" >/dev/null ||
+FORCE=""
+[ "${FOGGY_FORCE:-}" = "1" ] && FORCE="--force"
+# shellcheck disable=SC2086
+FOGGY_HOME="$FOGGY_HOME" node "$DEST/bin/foggy.mjs" link --version "$VERSION" $FORCE >/dev/null ||
   fail "Cannot link FoggyBrain $VERSION."
 
 printf 'FoggyBrain %s installed to %s\n' "$VERSION" "$DEST"

@@ -317,7 +317,7 @@ test('upgrade downloads, extracts, links, and reports the previous version', asy
   assert.equal(await currentVersion(root), '0.3.0');
 });
 
-test('downloadVersion rejects an archive without a compiled CLI', async () => {
+test('downloadVersion rejects an archive without the foggy executable', async () => {
   const root = await scratch();
   const stage = await scratch();
   await mkdir(join(stage, 'foggybrain-0.5.0'), { recursive: true });

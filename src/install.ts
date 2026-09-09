@@ -297,8 +297,9 @@ export async function downloadVersion(
   await rm(partial, { recursive: true, force: true });
   await mkdir(partial, { recursive: true });
   await (options.run ?? execute)('tar', ['-xzf', tarball, '-C', partial, '--strip-components=1']);
-  await readFile(join(partial, 'dist', 'server', 'cli.js')).catch(() => {
-    throw new Error(`The FoggyBrain ${normalized} archive is missing dist/server/cli.js.`);
+  // The same file linkVersion requires, so a bad archive fails here rather than at link time.
+  await access(join(partial, 'bin', 'foggy.mjs')).catch(() => {
+    throw new Error(`The FoggyBrain ${normalized} archive is missing bin/foggy.mjs.`);
   });
   await rm(target, { recursive: true, force: true });
   await rename(partial, target);

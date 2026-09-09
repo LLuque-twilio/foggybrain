@@ -51,7 +51,7 @@ The installer needs Node.js 22.13.0+ and nothing else. Layout:
 | `~/.profile` (Linux)                | Same, via one marked `export PATH` line                              |
 | `~/.local/share/foggybrain/`        | SQLite data, `foggy.pid`, and `foggy.log`, shared with a dev install |
 
-`FOGGY_HOME` relocates `~/.foggybrain`; `FOGGY_VERSION` pins the release the installer fetches. Data lives in `FOGGY_DATA_DIR` (default `~/.local/share/foggybrain`), so a curl install and a `pnpm link --global` install on the same machine see the same workspaces and tasks. Windows is not supported by the installer; use the clone workflow there. See the [CLI reference](cli.md#installation-and-upgrades) for `link`, `upgrade`, and `uninstall`.
+`FOGGY_HOME` relocates `~/.foggybrain`; `FOGGY_VERSION` pins the release the installer fetches; `FOGGY_FORCE=1` lets it replace a `~/.local/bin/foggy` that belongs to another installation, such as a `pnpm link --global` one. Data lives in `FOGGY_DATA_DIR` (default `~/.local/share/foggybrain`), so a curl install and a `pnpm link --global` install on the same machine see the same workspaces and tasks. Windows is not supported by the installer; use the clone workflow there. See the [CLI reference](cli.md#installation-and-upgrades) for `link`, `upgrade`, and `uninstall`.
 
 ### Use `foggy` From Any Repository
 
