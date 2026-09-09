@@ -1085,3 +1085,13 @@ test('CLI stop reports cleanly with no running server and makes no API calls', a
   assert.deepEqual(JSON.parse(result.stdout), { stopped: false, pid: null });
   assert.equal(requests.length, 0);
 });
+
+test('CLI link fails clearly for a version that is not installed', async (t) => {
+  const { run, requests } = await fixture(t);
+  const root = await mkdtemp(join(tmpdir(), 'foggy-cli-link-'));
+  const result = await run(['--json', 'link', '--version', '9.9.9'], { FOGGY_HOME: root });
+  assert.equal(result.code, 1);
+  assert.equal(result.stdout, '');
+  assert.match(JSON.parse(result.stderr).error, /not installed/);
+  assert.equal(requests.length, 0);
+});

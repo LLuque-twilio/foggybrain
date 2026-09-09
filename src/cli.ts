@@ -17,14 +17,20 @@ import type {
   WorkspaceList,
 } from './shared.js';
 import { startServer, stopServer } from './daemon.js';
-import { packageVersion } from './install.js';
+import { linkVersion, packageVersion } from './install.js';
 
 export async function main(argv = process.argv): Promise<void> {
+  // Handled before Commander parsing (rather than via `.version()`) so the flag name
+  // stays free for `link --version`/`upgrade --version`: Commander's global option
+  // scan would otherwise claim any `--version` token wherever it appears in argv.
+  if (argv[2] === '-v' || argv[2] === '--version') {
+    process.stdout.write(`${packageVersion()}\n`);
+    return;
+  }
   const program = new Command();
   program
     .name('foggy')
     .description('Manage a running Foggybrain server. No local fallback state.')
-    .version(packageVersion(), '-v, --version', 'print the installed FoggyBrain version')
     .option(
       '--url <url>',
       'server origin (or FOGGY_URL)',
@@ -555,6 +561,13 @@ export async function main(argv = process.argv): Promise<void> {
         output(await request(`/github/${name}`, name === 'sync' ? 'POST' : 'GET')),
       );
   }
+  program
+    .command('link')
+    .description('Point the foggy executable and current version at an installed version')
+    .option('--version <version>', 'installed version (default: this CLI version)')
+    .action(async (options) =>
+      output(await linkVersion({ version: options.version ?? packageVersion() })),
+    );
   program
     .command('start')
     .description('Start the Foggybrain server in the background')
