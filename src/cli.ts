@@ -579,14 +579,20 @@ export async function main(argv = process.argv): Promise<void> {
     .command('link')
     .description('Point the foggy executable and current version at an installed version')
     .option('--version <version>', 'installed version (default: this CLI version)')
+    .option('--force', 'replace a foggy executable that belongs to another installation')
     .action(async (options) =>
-      output(await linkVersion({ version: options.version ?? packageVersion() })),
+      output(
+        await linkVersion({ version: options.version ?? packageVersion(), force: options.force }),
+      ),
     );
   program
     .command('upgrade')
     .description('Download a FoggyBrain release and switch this installation to it')
     .option('--version <version>', 'release version (default: latest)')
-    .action(async (options) => output(await upgrade({ version: options.version })));
+    .option('--force', 'replace a foggy executable that belongs to another installation')
+    .action(async (options) =>
+      output(await upgrade({ version: options.version, force: options.force })),
+    );
   program
     .command('uninstall')
     .description('Remove the installed foggy executable, its PATH entry, and ~/.foggybrain')

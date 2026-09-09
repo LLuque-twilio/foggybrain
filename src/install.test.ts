@@ -109,6 +109,99 @@ test('linkVersion rejects a version that is not installed', async () => {
   );
 });
 
+test('linkVersion refuses a foggy executable from another installation unless forced', async () => {
+  const root = await scratch();
+  const home = await scratch();
+  const other = await scratch();
+  const binDir = join(home, '.local', 'bin');
+  await installed(root, '0.1.0');
+  await mkdir(binDir, { recursive: true });
+  await writeFile(join(other, 'foggy.mjs'), '#!/usr/bin/env node\n');
+  await symlink(join(other, 'foggy.mjs'), join(binDir, 'foggy'));
+  const link = (force?: boolean) =>
+    linkVersion({
+      version: '0.1.0',
+      root,
+      binDir,
+      home,
+      platform: 'linux',
+      run: async () => {},
+      force,
+    });
+  await assert.rejects(link(), new RegExp(`belongs to another FoggyBrain installation.*${other}`));
+  assert.equal(await readlink(join(binDir, 'foggy')), join(other, 'foggy.mjs'));
+  assert.equal(await currentVersion(root), null);
+
+  assert.equal((await link(true)).version, '0.1.0');
+  assert.equal(await readlink(join(binDir, 'foggy')), join(root, 'current', 'bin', 'foggy.mjs'));
+});
+
+test('linkVersion treats a regular-file foggy shim as another installation', async () => {
+  const root = await scratch();
+  const home = await scratch();
+  const binDir = join(home, '.local', 'bin');
+  await installed(root, '0.1.0');
+  await mkdir(binDir, { recursive: true });
+  await writeFile(join(binDir, 'foggy'), '#!/bin/sh\nexec other-foggy "$@"\n', { mode: 0o755 });
+  await assert.rejects(
+    () =>
+      linkVersion({
+        version: '0.1.0',
+        root,
+        binDir,
+        home,
+        platform: 'linux',
+        run: async () => {},
+      }),
+    /belongs to another FoggyBrain installation/,
+  );
+});
+
+test('linkVersion reports a failed PATH entry instead of failing an install that worked', async () => {
+  const root = await scratch();
+  const home = await scratch();
+  const binDir = join(home, '.local', 'bin');
+  await installed(root, '0.4.0');
+  const result = await linkVersion({
+    version: '0.4.0',
+    root,
+    binDir,
+    home,
+    platform: 'darwin',
+    run: async () => {
+      throw new Error('sudo exited with status 1.');
+    },
+  });
+  assert.equal(result.pathEntry, 'failed');
+  assert.equal(await currentVersion(root), '0.4.0');
+  assert.equal(await readlink(join(binDir, 'foggy')), join(root, 'current', 'bin', 'foggy.mjs'));
+});
+
+test('ensurePathEntry appends one marked line to ~/.profile on Linux and skips an existing one', async () => {
+  const home = await scratch();
+  const binDir = join(home, '.local', 'bin');
+  const profile = join(home, '.profile');
+  await writeFile(profile, 'export EDITOR=vi');
+  assert.equal(await ensurePathEntry({ platform: 'linux', home, binDir }), 'created');
+  assert.equal(
+    await readFile(profile, 'utf8'),
+    `export EDITOR=vi\nexport PATH="${binDir}:$PATH" # foggybrain\n`,
+  );
+  assert.equal(await ensurePathEntry({ platform: 'linux', home, binDir }), 'present');
+  assert.equal(
+    (await readFile(profile, 'utf8')).match(/# foggybrain/g)?.length,
+    1,
+    'a second run must not duplicate the line',
+  );
+
+  const fresh = await scratch();
+  assert.equal(
+    await ensurePathEntry({ platform: 'linux', home: fresh, binDir: join(fresh, '.local', 'bin') }),
+    'created',
+  );
+  assert.match(await readFile(join(fresh, '.profile'), 'utf8'), /^export PATH=/);
+});
+
 test('execute resolves on a zero exit and rejects with the exit status otherwise', async () => {
   await execute(process.execPath, ['-e', 'process.exit(0)']);
   await assert.rejects(
@@ -350,4 +443,51 @@ test('uninstall on a foreign foggy executable reports a real PATH entry instead 
   assert.deepEqual(darwinResult.removed, []);
   assert.equal(darwinResult.pathEntry, 'present');
   assert.equal(await readFile(pathsFile, 'utf8'), `${binDir}\n`);
+});
+
+test('uninstall leaves a regular-file foggy shim and its PATH entry alone', async () => {
+  const root = await scratch();
+  const home = await scratch();
+  const binDir = join(home, '.local', 'bin');
+  await mkdir(binDir, { recursive: true });
+  await installed(root, '0.1.0');
+  const shim = join(binDir, 'foggy');
+  await writeFile(shim, '#!/bin/sh\nexec other-foggy "$@"\n', { mode: 0o755 });
+  const profile = join(home, '.profile');
+  await writeFile(profile, `export PATH="${binDir}:$PATH" # foggybrain\n`);
+
+  const result = await uninstall({
+    root,
+    binDir,
+    home,
+    platform: 'linux',
+    env: { FOGGY_DATA_DIR: await scratch() },
+  });
+  assert.deepEqual(result.removed, []);
+  assert.equal(result.pathEntry, 'present');
+  assert.match(await readFile(shim, 'utf8'), /other-foggy/);
+  assert.ok(await stat(root));
+});
+
+test('uninstall ignores a paths.d file that points at another user bin directory', async () => {
+  const home = await scratch();
+  const root = await scratch();
+  const binDir = join(home, '.local', 'bin');
+  const pathsFile = join(home, 'paths.d-foggy');
+  await writeFile(pathsFile, '/Users/someone-else/.local/bin\n');
+  const calls: string[][] = [];
+  const result = await uninstall({
+    root,
+    binDir,
+    home,
+    platform: 'darwin',
+    pathsFile,
+    run: async (file, args) => {
+      calls.push([file, ...args]);
+    },
+    env: { FOGGY_DATA_DIR: await scratch() },
+  });
+  assert.equal(result.pathEntry, 'absent');
+  assert.deepEqual(calls, []);
+  assert.equal(await readFile(pathsFile, 'utf8'), '/Users/someone-else/.local/bin\n');
 });

@@ -17,7 +17,7 @@ foggy start
 foggy dashboard
 ```
 
-Open a new terminal first if `foggy` is not yet on your `PATH`. `foggy upgrade` installs the latest release later; re-running the curl command does the same thing. `FOGGY_VERSION=0.2.0` pins a version. `foggy uninstall` removes the CLI, its `PATH` entry, and `~/.foggybrain`, keeping your task data.
+Open a new terminal first if `foggy` is not yet on your `PATH`. `foggy upgrade` installs the latest release later; re-running the curl command does the same thing. Restart a running server afterwards with `foggy stop && foggy start`, or it keeps serving the old version. `FOGGY_VERSION=0.2.0` pins a version. `foggy uninstall` removes the CLI, its `PATH` entry, and `~/.foggybrain`, keeping your task data.
 
 ## Run From A Clone (Developers)
 

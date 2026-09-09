@@ -354,18 +354,20 @@ Credentials are server-only: dedicated mode uses only `FOGGY_SYNC_TOKEN` (withou
 ## Installation And Upgrades
 
 ```text
-foggy upgrade [--version <version>]
-foggy link [--version <version>]
+foggy upgrade [--version <version>] [--force]
+foggy link [--version <version>] [--force]
 foggy uninstall [--yes]
 ```
 
 These commands manage a curl-installed FoggyBrain under `~/.foggybrain` (override with `FOGGY_HOME`). They are not used by a `pnpm link --global` development install.
 
-`foggy upgrade` resolves the latest GitHub release (or `--version`), downloads `foggybrain-<version>.tar.gz`, extracts it to `~/.foggybrain/versions/<version>/`, repoints `~/.foggybrain/current` and `~/.local/bin/foggy`, and returns `{"version":"...","path":"...","bin":"...","pathEntry":"present","previousVersion":"..."}`. Old version directories are kept for rollback; remove them with `rm -rf ~/.foggybrain/versions/<old>`.
+`foggy upgrade` resolves the latest GitHub release (or `--version`), downloads `foggybrain-<version>.tar.gz`, extracts it to `~/.foggybrain/versions/<version>/`, repoints `~/.foggybrain/current` and `~/.local/bin/foggy`, and returns `{"version":"...","path":"...","bin":"...","pathEntry":"present","previousVersion":"..."}`. Old version directories are kept for rollback; remove them with `rm -rf ~/.foggybrain/versions/<old>`. A server started before the upgrade keeps running the old code out of its still-present version directory, so restart it with `foggy stop && foggy start`.
 
-`foggy link` performs only the symlink and `PATH` steps for an already-extracted version, defaulting to the running CLI's own version. Use it to roll back: `~/.foggybrain/versions/<old>/bin/foggy.mjs link`. `pathEntry` is `created` when the `PATH` entry had to be written (`/etc/paths.d/foggy` on macOS, which prompts for `sudo`; a marked line in `~/.profile` on Linux) and `present` when it was already correct.
+`foggy link` performs only the symlink and `PATH` steps for an already-extracted version, defaulting to the running CLI's own version. Use it to roll back: `~/.foggybrain/versions/<old>/bin/foggy.mjs link`. `pathEntry` is `created` when the `PATH` entry had to be written (`/etc/paths.d/foggy` on macOS, which prompts for `sudo`; a marked line in `~/.profile` on Linux), `present` when it was already correct, and `failed` when writing it did not work — a declined or unavailable `sudo`, typically. `failed` is not a failed install: the version is linked and `~/.local/bin/foggy` works, and the command prints the one line to add to `~/.profile` yourself before exiting `0`.
 
-`foggy uninstall` stops a running server, removes `~/.local/bin/foggy`, removes the `PATH` entry (`sudo rm -f /etc/paths.d/foggy` on macOS, the marked `~/.profile` line on Linux), and deletes `~/.foggybrain` including every kept version. It returns `{"removed":[...],"pathEntry":"removed","keptDataDir":"..."}`. If `~/.local/bin/foggy` points outside the install root — for example a `pnpm link --global` executable — this is a foreign install and `uninstall` does nothing at all: it reports `removed: []` and the PATH entry's real state (`"present"` or `"absent"`) without touching it. **Task data is kept**: `~/.local/share/foggybrain` (SQLite state and config) is never touched, so reinstalling restores the same workspaces. Delete that directory by hand to remove your data. Without a terminal, `--yes` is required; with one, the command prompts and expects `yes`.
+`link` and `upgrade` refuse to replace a `~/.local/bin/foggy` that is not a symlink into the install root — a `pnpm link --global` executable, or any other shim — and name what it points at. This is the same notion of ownership `uninstall` uses. Pass `--force` to replace it and take over the name.
+
+`foggy uninstall` stops a running server, removes `~/.local/bin/foggy`, removes the `PATH` entry (`sudo rm -f /etc/paths.d/foggy` on macOS, the marked `~/.profile` line on Linux), and deletes `~/.foggybrain` including every kept version. It returns `{"removed":[...],"pathEntry":"removed","keptDataDir":"..."}`. If `~/.local/bin/foggy` is not a symlink into the install root — a `pnpm link --global` executable or a shell shim, for example — this is a foreign install and `uninstall` does nothing at all: it reports `removed: []` and the PATH entry's real state (`"present"` or `"absent"`) without touching it. **Task data is kept**: `~/.local/share/foggybrain` (SQLite state and config) is never touched, so reinstalling restores the same workspaces. Delete that directory by hand to remove your data. Without a terminal, `--yes` is required; with one, the command prompts and expects `yes`.
 
 ## Server Lifecycle
 

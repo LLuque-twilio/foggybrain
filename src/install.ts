@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import {
   access,
+  lstat,
   mkdir,
   readFile,
   readlink,
@@ -119,13 +120,31 @@ export interface LinkOptions {
   home?: string;
   platform?: NodeJS.Platform;
   run?: Runner;
+  force?: boolean;
 }
 
 export interface LinkResult {
   version: string;
   path: string;
   bin: string;
-  pathEntry: 'created' | 'present';
+  pathEntry: 'created' | 'present' | 'failed';
+}
+
+// An executable that is not a symlink into the install root belongs to another installation --- a
+// `pnpm link --global` shim, say. linkVersion refuses to replace one and uninstall refuses to
+// delete one, so both need the same answer.
+async function executableOwner(
+  executable: string,
+  root: string,
+): Promise<{ owner: 'ours' | 'foreign' | 'absent'; target: string | null }> {
+  const info = await lstat(executable).catch((error: unknown) => {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw error;
+  });
+  if (info === null) return { owner: 'absent', target: null };
+  if (!info.isSymbolicLink()) return { owner: 'foreign', target: executable };
+  const target = resolve(dirname(executable), await readlink(executable));
+  return { owner: target.startsWith(`${root}/`) ? 'ours' : 'foreign', target };
 }
 
 async function exists(path: string): Promise<boolean> {
@@ -156,15 +175,30 @@ export async function linkVersion(options: LinkOptions): Promise<LinkResult> {
   await access(executable).catch(() => {
     throw new Error(`FoggyBrain ${version} is not installed at ${path}.`);
   });
+  const executableLink = join(binDir, 'foggy');
+  const { owner, target } = await executableOwner(executableLink, root);
+  if (owner === 'foreign' && options.force !== true)
+    throw new Error(
+      `${executableLink} belongs to another FoggyBrain installation (${target}). Re-run with --force to replace it.`,
+    );
   await replaceSymlink(path, join(root, 'current'));
-  await replaceSymlink(join(root, 'current', 'bin', 'foggy.mjs'), join(binDir, 'foggy'));
+  await replaceSymlink(join(root, 'current', 'bin', 'foggy.mjs'), executableLink);
+  // The install is complete and usable once the symlinks are in place; a PATH entry that needs
+  // sudo can fail without making that untrue, so report it rather than failing the command.
   const pathEntry = await ensurePathEntry({
     platform: options.platform,
     home,
     binDir,
     run: options.run,
+  }).catch((error: unknown) => {
+    process.stderr.write(
+      `Could not add ${binDir} to your PATH: ${error instanceof Error ? error.message : String(error)}\n` +
+        `FoggyBrain ${version} is installed and linked. Add it yourself with:\n` +
+        `  echo 'export PATH="${binDir}:$PATH"' >> ~/.profile\n`,
+    );
+    return 'failed' as const;
   });
-  return { version, path, bin: join(binDir, 'foggy'), pathEntry };
+  return { version, path, bin: executableLink, pathEntry };
 }
 
 const LATEST_RELEASE_URL = `https://api.github.com/repos/${REPO}/releases/latest`;
@@ -259,8 +293,8 @@ async function pathEntryState(options: PathOptions = {}): Promise<'present' | 'a
   const binDir = options.binDir ?? binDirectory(home);
   if ((options.platform ?? process.platform) === 'darwin') {
     const pathsFile = options.pathsFile ?? SYSTEM_PATHS_FILE;
-    const existing = await readFile(pathsFile, 'utf8').catch(() => null);
-    return existing === null ? 'absent' : 'present';
+    const existing = await readFile(pathsFile, 'utf8').catch(() => '');
+    return existing.trim() === binDir ? 'present' : 'absent';
   }
   const profile = join(home, '.profile');
   const existing = await readFile(profile, 'utf8').catch(() => null);
@@ -307,18 +341,15 @@ export async function uninstall(options: UninstallOptions = {}): Promise<Uninsta
   const executable = join(binDir, 'foggy');
   const removed: string[] = [];
 
-  // A pnpm-linked foggy points elsewhere; leave that install (and this root) alone entirely.
-  const target = await readlink(executable).catch(() => null);
-  const ownsExecutable =
-    target === null || resolve(dirname(executable), target).startsWith(`${root}/`);
-  if (!ownsExecutable) {
+  const { owner } = await executableOwner(executable, root);
+  if (owner === 'foreign') {
     const pathEntry = await pathEntryState({ ...options, home, binDir });
     return { removed, pathEntry, keptDataDir: dataDirectory(env) };
   }
 
   if ((await readRunningPid(env)) !== null) await stopServer({ env });
 
-  if (target !== null) {
+  if (owner === 'ours') {
     await rm(executable, { force: true });
     removed.push(executable);
   }
