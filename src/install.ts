@@ -7,12 +7,14 @@ import {
   readlink,
   rename,
   rm,
+  stat,
   symlink,
   writeFile,
 } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { dataDirectory, readRunningPid, stopServer } from './daemon.js';
 
 // The compiled CLI lives in dist/server/, the source in src/; package.json sits one level further up
 // from the compiled tree.
@@ -124,6 +126,16 @@ export interface LinkResult {
   path: string;
   bin: string;
   pathEntry: 'created' | 'present';
+}
+
+async function exists(path: string): Promise<boolean> {
+  try {
+    await stat(path);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    throw error;
+  }
 }
 
 async function replaceSymlink(target: string, link: string): Promise<void> {
@@ -238,4 +250,66 @@ export async function upgrade(options: UpgradeOptions = {}): Promise<UpgradeResu
   await downloadVersion(version, { root, fetchImpl: options.fetchImpl, run: options.run });
   const linked = await linkVersion({ ...options, version, root, home });
   return { ...linked, previousVersion };
+}
+
+export async function removePathEntry(options: PathOptions = {}): Promise<'removed' | 'absent'> {
+  const home = options.home ?? homedir();
+  const binDir = options.binDir ?? binDirectory(home);
+  const run = options.run ?? execute;
+  if ((options.platform ?? process.platform) === 'darwin') {
+    const pathsFile = options.pathsFile ?? SYSTEM_PATHS_FILE;
+    const existing = await readFile(pathsFile, 'utf8').catch(() => null);
+    if (existing === null) return 'absent';
+    process.stderr.write(`Removing ${pathsFile} from the system PATH (sudo required).\n`);
+    await run('sudo', ['/bin/rm', '-f', pathsFile]);
+    return 'removed';
+  }
+  const profile = join(home, '.profile');
+  const existing = await readFile(profile, 'utf8').catch(() => null);
+  if (existing === null || !existing.includes(PATH_MARKER)) return 'absent';
+  const kept = existing
+    .split('\n')
+    .filter((line) => !line.includes(PATH_MARKER))
+    .join('\n');
+  await writeFile(profile, kept);
+  return 'removed';
+}
+
+export interface UninstallOptions extends PathOptions {
+  root?: string;
+  env?: NodeJS.ProcessEnv;
+}
+
+export interface UninstallResult {
+  removed: string[];
+  pathEntry: 'removed' | 'absent';
+  keptDataDir: string;
+}
+
+export async function uninstall(options: UninstallOptions = {}): Promise<UninstallResult> {
+  const env = options.env ?? process.env;
+  const home = options.home ?? homedir();
+  const root = options.root ?? installRoot(env, home);
+  const binDir = options.binDir ?? binDirectory(home);
+  const executable = join(binDir, 'foggy');
+  const removed: string[] = [];
+
+  // A pnpm-linked foggy points elsewhere; leave that install (and this root) alone entirely.
+  const target = await readlink(executable).catch(() => null);
+  const ownsExecutable =
+    target === null || resolve(dirname(executable), target).startsWith(`${root}/`);
+  if (!ownsExecutable) return { removed, pathEntry: 'absent', keptDataDir: dataDirectory(env) };
+
+  if ((await readRunningPid(env)) !== null) await stopServer({ env });
+
+  if (target !== null) {
+    await rm(executable, { force: true });
+    removed.push(executable);
+  }
+  const pathEntry = await removePathEntry({ ...options, home, binDir });
+  if (await exists(root)) {
+    await rm(root, { recursive: true, force: true });
+    removed.push(root);
+  }
+  return { removed, pathEntry, keptDataDir: dataDirectory(env) };
 }

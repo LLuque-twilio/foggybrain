@@ -356,6 +356,7 @@ Credentials are server-only: dedicated mode uses only `FOGGY_SYNC_TOKEN` (withou
 ```text
 foggy upgrade [--version <version>]
 foggy link [--version <version>]
+foggy uninstall [--yes]
 ```
 
 These commands manage a curl-installed FoggyBrain under `~/.foggybrain` (override with `FOGGY_HOME`). They are not used by a `pnpm link --global` development install.
@@ -363,6 +364,8 @@ These commands manage a curl-installed FoggyBrain under `~/.foggybrain` (overrid
 `foggy upgrade` resolves the latest GitHub release (or `--version`), downloads `foggybrain-<version>.tar.gz`, extracts it to `~/.foggybrain/versions/<version>/`, repoints `~/.foggybrain/current` and `~/.local/bin/foggy`, and returns `{"version":"...","path":"...","bin":"...","pathEntry":"present","previousVersion":"..."}`. Old version directories are kept for rollback; remove them with `rm -rf ~/.foggybrain/versions/<old>`.
 
 `foggy link` performs only the symlink and `PATH` steps for an already-extracted version, defaulting to the running CLI's own version. Use it to roll back: `~/.foggybrain/versions/<old>/bin/foggy.mjs link`. `pathEntry` is `created` when the `PATH` entry had to be written (`/etc/paths.d/foggy` on macOS, which prompts for `sudo`; a marked line in `~/.profile` on Linux) and `present` when it was already correct.
+
+`foggy uninstall` stops a running server, removes `~/.local/bin/foggy` (only when it points inside the install root, so a `pnpm link --global` executable is left alone), removes the `PATH` entry (`sudo rm -f /etc/paths.d/foggy` on macOS, the marked `~/.profile` line on Linux), and deletes `~/.foggybrain` including every kept version. It returns `{"removed":[...],"pathEntry":"removed","keptDataDir":"..."}`. **Task data is kept**: `~/.local/share/foggybrain` (SQLite state and config) is never touched, so reinstalling restores the same workspaces. Delete that directory by hand to remove your data. Without a terminal, `--yes` is required; with one, the command prompts and expects `yes`.
 
 ## Server Lifecycle
 

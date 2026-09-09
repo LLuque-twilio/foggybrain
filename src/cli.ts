@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { existsSync, realpathSync } from 'node:fs';
+import { join } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { fileURLToPath } from 'node:url';
 import { Command, CommanderError, Option } from 'commander';
@@ -16,8 +17,15 @@ import type {
   Workspace,
   WorkspaceList,
 } from './shared.js';
-import { startServer, stopServer } from './daemon.js';
-import { linkVersion, packageVersion, upgrade } from './install.js';
+import { dataDirectory, startServer, stopServer } from './daemon.js';
+import {
+  binDirectory,
+  installRoot,
+  linkVersion,
+  packageVersion,
+  uninstall,
+  upgrade,
+} from './install.js';
 
 export async function main(argv = process.argv): Promise<void> {
   // `-v`/`--version` is recognized only as the first argument, handled before Commander
@@ -579,6 +587,29 @@ export async function main(argv = process.argv): Promise<void> {
     .description('Download a FoggyBrain release and switch this installation to it')
     .option('--version <version>', 'release version (default: latest)')
     .action(async (options) => output(await upgrade({ version: options.version })));
+  program
+    .command('uninstall')
+    .description('Remove the installed foggy executable, its PATH entry, and ~/.foggybrain')
+    .option('--yes', 'explicitly confirm removal without a prompt')
+    .action(async (options) => {
+      const root = installRoot();
+      if (!options.yes) {
+        if (!process.stdin.isTTY || !process.stderr.isTTY)
+          throw new Error('Uninstall requires --yes without a terminal.');
+        process.stderr.write(
+          `Will remove ${root}, ${join(binDirectory(), 'foggy')}, and the FoggyBrain PATH entry.\nTask data in ${dataDirectory()} is kept.\n`,
+        );
+        const terminal = createInterface({ input: process.stdin, output: process.stderr });
+        let answer: string;
+        try {
+          answer = await terminal.question('Uninstall FoggyBrain? Type yes to confirm: ');
+        } finally {
+          terminal.close();
+        }
+        if (answer.trim().toLowerCase() !== 'yes') throw new Error('Uninstall cancelled.');
+      }
+      output(await uninstall());
+    });
   program
     .command('start')
     .description('Start the Foggybrain server in the background')

@@ -1119,3 +1119,20 @@ test('CLI upgrade rejects a malformed version without any network access', async
   assert.match(JSON.parse(result.stderr).error, /Invalid FoggyBrain version/);
   assert.equal(requests.length, 0);
 });
+
+test('CLI uninstall refuses to run without --yes outside a terminal and removes the install root with it', async (t) => {
+  const { run, requests } = await fixture(t);
+  const root = await mkdtemp(join(tmpdir(), 'foggy-cli-uninstall-'));
+  const data = await mkdtemp(join(tmpdir(), 'foggy-cli-uninstall-data-'));
+  const env = { FOGGY_HOME: root, FOGGY_DATA_DIR: data };
+  const refused = await run(['--json', 'uninstall'], env);
+  assert.equal(refused.code, 1);
+  assert.equal(refused.stdout, '');
+  assert.match(JSON.parse(refused.stderr).error, /--yes/);
+  const confirmed = await run(['--json', 'uninstall', '--yes'], env);
+  assert.equal(confirmed.code, 0);
+  const result = JSON.parse(confirmed.stdout) as { removed: string[]; keptDataDir: string };
+  assert.deepEqual(result.removed, [root]);
+  assert.equal(result.keptDataDir, data);
+  assert.equal(requests.length, 0);
+});

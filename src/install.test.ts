@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, readlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readlink, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -18,7 +18,9 @@ import {
   linkVersion,
   packageVersion,
   releaseAssetUrl,
+  removePathEntry,
   resolveLatestVersion,
+  uninstall,
   upgrade,
   versionDirectory,
 } from './install.js';
@@ -221,4 +223,93 @@ test('downloadVersion rejects an archive without a compiled CLI', async () => {
   const fetchImpl = (async () =>
     new Response(new Uint8Array(bytes), { status: 200 })) as unknown as typeof fetch;
   await assert.rejects(() => downloadVersion('0.5.0', { root, fetchImpl }), /archive/i);
+});
+
+test('removePathEntry deletes the macOS paths.d file and strips only the marked profile line', async () => {
+  const home = await scratch();
+  const binDir = join(home, '.local', 'bin');
+  const pathsFile = join(home, 'paths.d-foggy');
+  await writeFile(pathsFile, `${binDir}\n`);
+  const calls: string[][] = [];
+  const run = async (file: string, args: string[]) => {
+    calls.push([file, ...args]);
+    await rm(args.at(-1)!, { force: true });
+  };
+  assert.equal(
+    await removePathEntry({ platform: 'darwin', home, binDir, run, pathsFile }),
+    'removed',
+  );
+  assert.deepEqual(calls, [['sudo', '/bin/rm', '-f', pathsFile]]);
+  assert.equal(
+    await removePathEntry({ platform: 'darwin', home, binDir, run, pathsFile }),
+    'absent',
+  );
+  assert.equal(calls.length, 1);
+
+  const profile = join(home, '.profile');
+  await writeFile(
+    profile,
+    `# mine\nexport EDITOR=vi\nexport PATH="${binDir}:$PATH" # foggybrain\nexport LANG=C\n`,
+  );
+  assert.equal(await removePathEntry({ platform: 'linux', home, binDir, run }), 'removed');
+  assert.equal(await readFile(profile, 'utf8'), '# mine\nexport EDITOR=vi\nexport LANG=C\n');
+  assert.equal(await removePathEntry({ platform: 'linux', home, binDir, run }), 'absent');
+});
+
+test('uninstall removes the install root, its executable, and the PATH entry, keeping task data', async () => {
+  const root = await scratch();
+  const home = await scratch();
+  const binDir = join(home, '.local', 'bin');
+  const dataDir = await scratch();
+  await installed(root, '0.1.0');
+  await mkdir(binDir, { recursive: true });
+  await symlink(join(root, 'current', 'bin', 'foggy.mjs'), join(binDir, 'foggy'));
+  await symlink(versionDirectory('0.1.0', root), join(root, 'current'));
+  await writeFile(join(dataDir, 'foggybrain.sqlite'), 'data');
+  const profile = join(home, '.profile');
+  await writeFile(profile, `export PATH="${binDir}:$PATH" # foggybrain\n`);
+
+  const result = await uninstall({
+    root,
+    binDir,
+    home,
+    platform: 'linux',
+    env: { FOGGY_DATA_DIR: dataDir },
+  });
+  assert.deepEqual(result.removed.sort(), [join(binDir, 'foggy'), root].sort());
+  assert.equal(result.pathEntry, 'removed');
+  assert.equal(result.keptDataDir, dataDir);
+  await assert.rejects(() => stat(root), /ENOENT/);
+  await assert.rejects(() => stat(join(binDir, 'foggy')), /ENOENT/);
+  assert.equal(await readFile(join(dataDir, 'foggybrain.sqlite'), 'utf8'), 'data');
+  assert.equal(await readFile(profile, 'utf8'), '');
+
+  const repeat = await uninstall({
+    root,
+    binDir,
+    home,
+    platform: 'linux',
+    env: { FOGGY_DATA_DIR: dataDir },
+  });
+  assert.deepEqual(repeat.removed, []);
+  assert.equal(repeat.pathEntry, 'absent');
+});
+
+test('uninstall leaves a foggy executable that points outside the install root alone', async () => {
+  const root = await scratch();
+  const home = await scratch();
+  const other = await scratch();
+  const binDir = join(home, '.local', 'bin');
+  await mkdir(binDir, { recursive: true });
+  await writeFile(join(other, 'foggy.mjs'), '#!/usr/bin/env node\n');
+  await symlink(join(other, 'foggy.mjs'), join(binDir, 'foggy'));
+  const result = await uninstall({
+    root,
+    binDir,
+    home,
+    platform: 'linux',
+    env: { FOGGY_DATA_DIR: other },
+  });
+  assert.deepEqual(result.removed, []);
+  assert.equal(await readlink(join(binDir, 'foggy')), join(other, 'foggy.mjs'));
 });
