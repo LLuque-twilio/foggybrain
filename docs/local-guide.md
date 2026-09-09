@@ -42,14 +42,14 @@ foggy dashboard
 
 The installer needs Node.js 22.13.0+ and nothing else. Layout:
 
-| Path                                | Purpose                                                |
-| ----------------------------------- | ------------------------------------------------------ |
-| `~/.foggybrain/versions/<version>/` | One extracted release; old versions are kept           |
-| `~/.foggybrain/current`             | Symlink to the active version                          |
-| `~/.local/bin/foggy`                | Symlink to `current/bin/foggy.mjs`                     |
-| `/etc/paths.d/foggy` (macOS)        | Puts `~/.local/bin` on `PATH` for every shell          |
-| `~/.profile` (Linux)                | Same, via one marked `export PATH` line                |
-| `~/.local/share/foggybrain/`        | SQLite data and `foggy.pid`, shared with a dev install |
+| Path                                | Purpose                                                              |
+| ----------------------------------- | -------------------------------------------------------------------- |
+| `~/.foggybrain/versions/<version>/` | One extracted release; old versions are kept                         |
+| `~/.foggybrain/current`             | Symlink to the active version                                        |
+| `~/.local/bin/foggy`                | Symlink to `current/bin/foggy.mjs`                                   |
+| `/etc/paths.d/foggy` (macOS)        | Puts `~/.local/bin` on `PATH` for every shell                        |
+| `~/.profile` (Linux)                | Same, via one marked `export PATH` line                              |
+| `~/.local/share/foggybrain/`        | SQLite data, `foggy.pid`, and `foggy.log`, shared with a dev install |
 
 `FOGGY_HOME` relocates `~/.foggybrain`; `FOGGY_VERSION` pins the release the installer fetches. Data lives in `FOGGY_DATA_DIR` (default `~/.local/share/foggybrain`), so a curl install and a `pnpm link --global` install on the same machine see the same workspaces and tasks. Windows is not supported by the installer; use the clone workflow there. See the [CLI reference](cli.md#installation-and-upgrades) for `link`, `upgrade`, and `uninstall`.
 

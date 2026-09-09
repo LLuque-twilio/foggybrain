@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, open, readFile, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -13,6 +13,10 @@ export function dataDirectory(env: NodeJS.ProcessEnv = process.env): string {
 
 export function pidFilePath(env: NodeJS.ProcessEnv = process.env): string {
   return join(dataDirectory(env), 'foggy.pid');
+}
+
+export function logFilePath(env: NodeJS.ProcessEnv = process.env): string {
+  return join(dataDirectory(env), 'foggy.log');
 }
 
 export function serverOrigin(env: NodeJS.ProcessEnv = process.env): string {
@@ -53,8 +57,31 @@ export async function readRunningPid(env: NodeJS.ProcessEnv = process.env): Prom
   return pid > 0 && alive(pid) ? pid : null;
 }
 
+async function answersHealth(url: string): Promise<boolean> {
+  const response = await fetch(`${url}/api/health`, { signal: AbortSignal.timeout(2000) }).catch(
+    () => null,
+  );
+  return response?.ok === true;
+}
+
+async function logTail(path: string, lines = 20): Promise<string> {
+  const text = await readFile(path, 'utf8').catch(() => '');
+  const kept = text
+    .split('\n')
+    .filter((line) => line.trim() !== '')
+    .slice(-lines);
+  return kept.join('\n');
+}
+
+export interface StartOptions {
+  env?: NodeJS.ProcessEnv;
+  spawnImpl?: typeof spawn;
+  probe?: (url: string) => Promise<boolean>;
+  readyTimeoutMs?: number;
+}
+
 export async function startServer(
-  options: { env?: NodeJS.ProcessEnv; spawnImpl?: typeof spawn } = {},
+  options: StartOptions = {},
 ): Promise<{ pid: number; url: string; dataDir: string }> {
   const env = options.env ?? process.env;
   const running = await readRunningPid(env);
@@ -63,15 +90,56 @@ export async function startServer(
   const dataDir = dataDirectory(env);
   const url = serverOrigin(env);
   await mkdir(dataDir, { recursive: true });
+  const logPath = logFilePath(env);
+  // The child's own log file, rather than a pipe: a detached server outlives this process and
+  // would eventually block on a pipe nobody drains.
+  const log = await open(logPath, 'w');
   const { command, args } = serverEntry();
-  const child = (options.spawnImpl ?? spawn)(command, args, {
-    detached: true,
-    stdio: 'ignore',
-    env,
-  });
+  let child: ReturnType<typeof spawn>;
+  try {
+    child = (options.spawnImpl ?? spawn)(command, args, {
+      detached: true,
+      stdio: ['ignore', log.fd, log.fd],
+      env,
+    });
+  } finally {
+    await log.close();
+  }
   if (typeof child.pid !== 'number')
     throw new Error('Could not start the Foggybrain server: no child process ID.');
   child.unref();
+
+  const exit: { status: string | null } = { status: null };
+  child.once('exit', (code, signal) => {
+    exit.status = signal !== null ? `killed by ${signal}` : `exit code ${code}`;
+  });
+  const probe = options.probe ?? answersHealth;
+  const deadline = Date.now() + (options.readyTimeoutMs ?? 20_000);
+  let ready = false;
+  for (;;) {
+    // A dead child never counts as ready, however healthy the port looks: on a port collision the
+    // answer comes from whoever already owns it.
+    if (exit.status !== null) break;
+    ready = await probe(url);
+    if (ready || Date.now() >= deadline) break;
+    await delay(100);
+  }
+  if (exit.status !== null) ready = false;
+  if (!ready) {
+    if (exit.status === null) {
+      try {
+        process.kill(child.pid, 'SIGKILL');
+      } catch {
+        // Already gone; the failure below is what matters.
+      }
+    }
+    const reason = exit.status === null ? 'it never answered' : `it stopped (${exit.status})`;
+    const tail = await logTail(logPath);
+    throw new Error(
+      `The Foggybrain server did not start on ${url}: ${reason}. See ${logPath}${tail === '' ? '.' : `:\n${tail}`}`,
+    );
+  }
+
   await writeFile(pidFilePath(env), `${child.pid}\n`);
   return { pid: child.pid, url, dataDir };
 }
