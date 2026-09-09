@@ -22,7 +22,8 @@ export function SyncDialog({
   const [busy, setBusy] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
   const [success, setSuccess] = useState(false);
-  const [mode, setMode] = useState<'merge' | 'revert'>('merge');
+  const [mode, setMode] = useState<'merge' | 'revert' | null>(null);
+  const hasChanges = !!preview && !!(preview.localChanges.length || preview.remoteChanges.length);
   const active = useRef(false);
   const generation = useRef(0);
   const previewOnMount = useRef(initialPreview);
@@ -36,7 +37,7 @@ export function SyncDialog({
     setConfirmed(false);
     setError('');
     setSuccess(false);
-    setMode('merge');
+    setMode(null);
     api<SyncStatus>('/sync/status').then(
       (value) => {
         if (generation.current !== current) return;
@@ -87,7 +88,7 @@ export function SyncDialog({
           requestedMode === 'revert' ? { mode: 'revert' } : resolution ? { resolution } : {},
         );
         if (isCurrent()) setPreview(value);
-      } else if (preview?.canApply && confirmed) {
+      } else if (preview?.canApply && hasChanges && confirmed) {
         let failure = '';
         const applied = await run(async () => {
           try {
@@ -118,7 +119,17 @@ export function SyncDialog({
   return (
     <DialogErrorContext value={error}>
       <Dialog
-        title={workspace.type === 'cloud' ? 'Workspace sync' : 'Local workspace'}
+        key={mode ?? 'options'}
+        title={
+          workspace.type === 'local'
+            ? 'Local workspace'
+            : mode === 'revert'
+              ? 'Reset to origin'
+              : mode === 'merge'
+                ? 'Push to origin'
+                : 'Workspace sync'
+        }
+        danger={mode === 'revert'}
         close={() => {
           if (!active.current) close();
         }}
@@ -128,6 +139,16 @@ export function SyncDialog({
             <p>
               This is a local workspace, stored on your device. Use Connect to cloud in the
               workspace controls to configure manual sync. Your existing tasks stay here.
+            </p>
+          ) : mode === 'revert' ? (
+            <p>
+              Replace this workspace with origin. Review what will be discarded before confirming.
+              This never writes to GitHub.
+            </p>
+          ) : mode === 'merge' ? (
+            <p>
+              Publish local changes to origin, merging any incoming changes into this workspace.
+              Review both sides before confirming.
             </p>
           ) : (
             <p>
@@ -155,15 +176,19 @@ export function SyncDialog({
                 <dd>{status.lastSync ? new Date(status.lastSync).toLocaleString() : 'Never'}</dd>
                 <dt>Local state</dt>
                 <dd>
-                  {workspace.type === 'local'
-                    ? 'Stored locally'
-                    : status.dirty
-                      ? 'Unsynced local changes'
-                      : 'No unsynced local changes'}
+                  <span
+                    className={`sync-state ${workspace.type === 'local' ? 'sync-state-local' : status.dirty ? 'sync-state-dirty' : 'sync-state-clean'}`}
+                  >
+                    {workspace.type === 'local'
+                      ? 'Stored locally'
+                      : status.dirty
+                        ? 'Unsynced local changes'
+                        : 'No unsynced local changes'}
+                  </span>
                 </dd>
               </dl>
               {status.syncing && (
-                <p role="status">
+                <p className="sync-state sync-state-running" role="status">
                   A workspace sync is already running. Refresh status before continuing.
                 </p>
               )}
@@ -183,7 +208,7 @@ export function SyncDialog({
             </>
           )}
           {success && (
-            <p className="callout" role="status">
+            <p className="callout sync-state-clean" role="status">
               {mode === 'revert'
                 ? 'Workspace reverted to origin successfully.'
                 : 'Workspace sync applied successfully.'}
@@ -192,7 +217,7 @@ export function SyncDialog({
           {preview && (
             <>
               <h3>
-                {preview.mode === 'revert' ? 'Review revert to origin' : 'Review sync preview'}
+                {preview.mode === 'revert' ? 'Review reset to origin' : 'Review push to origin'}
               </h3>
               {preview.mode === 'revert' && (
                 <p className="callout warning">
@@ -211,7 +236,10 @@ export function SyncDialog({
                     <ul className="sync-changes">
                       {preview[`${side}Changes`].map((change) => (
                         <li key={`${change.collection}/${change.id}`}>
-                          <strong>{change.kind}</strong> {change.collection}
+                          <strong className={`sync-state sync-change-${change.kind}`}>
+                            {change.kind}
+                          </strong>{' '}
+                          {change.collection}
                           {change.title && <>: {change.title}</>} <code>{change.id}</code>
                         </li>
                       ))}
@@ -268,7 +296,12 @@ export function SyncDialog({
                   {preview.validationError}
                 </div>
               )}
-              {preview.canApply && (
+              {preview.canApply && !hasChanges && (
+                <p className="callout sync-state-clean" role="status">
+                  Already up to date. No changes to apply.
+                </p>
+              )}
+              {preview.canApply && hasChanges && (
                 <label className="sync-confirm">
                   <input
                     type="checkbox"
@@ -285,30 +318,61 @@ export function SyncDialog({
           )}
           {busy && <p role="status">Working on workspace sync...</p>}
           <footer>
-            <button className="button" disabled={busy} onClick={() => void request('status')}>
-              Refresh status
-            </button>
-            <button
-              className="button"
-              disabled={busy || workspace.type === 'local' || !status?.configured || status.syncing}
-              onClick={() => void request('preview')}
-            >
-              Preview sync
-            </button>
-            <button
-              className="button"
-              disabled={busy || workspace.type === 'local' || !status?.configured || status.syncing}
-              onClick={() => void request('preview', undefined, 'revert')}
-            >
-              Revert to origin
-            </button>
-            {preview && (
+            {mode === null ? (
+              <>
+                <button className="button" disabled={busy} onClick={() => void request('status')}>
+                  Refresh status
+                </button>
+                <button
+                  className="button sync-push"
+                  disabled={
+                    busy || workspace.type === 'local' || !status?.configured || status.syncing
+                  }
+                  onClick={() => void request('preview')}
+                >
+                  Push to origin
+                </button>
+                <button
+                  className="button sync-reset"
+                  disabled={
+                    busy || workspace.type === 'local' || !status?.configured || status.syncing
+                  }
+                  onClick={() => void request('preview', undefined, 'revert')}
+                >
+                  Reset to origin
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  className="button"
+                  disabled={busy}
+                  onClick={() => {
+                    setMode(null);
+                    setPreview(null);
+                    setConfirmed(false);
+                    setError('');
+                    setSuccess(false);
+                  }}
+                >
+                  Back to sync options
+                </button>
+                <button
+                  className="button"
+                  disabled={busy || !status?.configured || status.syncing}
+                  onClick={() => void request('preview', undefined, mode)}
+                >
+                  Refresh preview
+                </button>
+              </>
+            )}
+            {preview && hasChanges && (
               <button
-                className="button primary"
+                className={`button ${mode === 'revert' ? 'sync-reset' : 'sync-push'}`}
                 disabled={busy || !preview.canApply || !confirmed}
                 onClick={() => void request('apply')}
               >
-                {preview.mode === 'revert' ? 'Confirm revert to origin' : 'Apply sync'}
+                {preview.mode === 'revert' ? 'Confirm reset to origin' : 'Apply sync'}
               </button>
             )}
           </footer>

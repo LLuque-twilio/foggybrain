@@ -2478,6 +2478,50 @@ details ul {
 .workspace-sync dd {
   margin: 0 0 10px;
 }
+.workspace-sync .button.sync-push {
+  background: #285649;
+  border-color: #285649;
+  color: #fff;
+}
+.workspace-sync .button.sync-push:hover:not(:disabled) {
+  background: #1b4035;
+}
+.workspace-sync .button.sync-reset {
+  background: #a33434;
+  border-color: #a33434;
+  color: #fff;
+}
+.workspace-sync .button.sync-reset:hover:not(:disabled) {
+  background: #822828;
+}
+.sync-state {
+  display: inline-block;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-weight: 600;
+}
+.sync-state-clean,
+.sync-change-added {
+  color: #285649;
+  background: #e4eee6;
+}
+.sync-state-dirty,
+.sync-change-updated {
+  color: #805310;
+  background: #faf0d6;
+}
+.sync-change-deleted {
+  color: #a33434;
+  background: #f9e5e3;
+}
+.sync-state-running {
+  color: #315f99;
+  background: #e5edf8;
+}
+.sync-state-local {
+  color: #60596e;
+  background: #eeeaf2;
+}
 .sync-changes {
   padding-left: 20px;
 }

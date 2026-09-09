@@ -206,7 +206,8 @@ for (const type of ['local', 'cloud'] as const) {
         exact: true,
       })
       .click();
-    const dialog = page.getByRole('dialog', { name: 'Add workspace', exact: true });
+    const dialog = page.getByRole('dialog');
+    await expect(dialog).toHaveAccessibleName('Add workspace');
     await expect(dialog.getByLabel('Storage type')).toHaveValue(type);
     await expect(dialog.getByLabel('Name', { exact: true })).toHaveValue('');
     await dialog.getByLabel('Name', { exact: true }).fill('Fresh workspace');
@@ -214,8 +215,13 @@ for (const type of ['local', 'cloud'] as const) {
     await dialog.getByRole('button', { name: 'Save workspace' }).click();
     await expect(page).toHaveURL(/workspace=created-workspace/);
     if (type === 'cloud') {
-      await expect(page.getByRole('heading', { name: 'Review sync preview' })).toBeVisible();
-      await expect(page.getByRole('button', { name: 'Apply sync' })).toBeDisabled();
+      await expect(dialog).toHaveAccessibleName('Push to origin');
+      await expect(
+        dialog.getByRole('heading', { name: 'Review push to origin', level: 3 }),
+      ).toBeVisible();
+      await expect(dialog).toContainText('Already up to date. No changes to apply.');
+      await expect(dialog.getByRole('checkbox')).toHaveCount(0);
+      await expect(dialog.getByRole('button', { name: 'Apply sync' })).toHaveCount(0);
     } else
       await expect(page.getByRole('heading', { name: 'A little room to think.' })).toBeVisible();
     expect(list.defaultWorkspaceId).toBe('created-workspace');
@@ -473,7 +479,10 @@ test('add local and cloud, enforce cap, and retain tab-local workspace deep link
   await expect(dialog.getByLabel('Server credential')).toHaveValue('dedicated');
   await expect(dialog).toContainText('Saving opens a sync preview, not an automatic apply');
   await dialog.getByRole('button', { name: 'Save workspace' }).click();
-  await expect(page.getByRole('heading', { name: 'Review sync preview' })).toBeVisible();
+  await expect(dialog).toHaveAccessibleName('Push to origin');
+  await expect(
+    dialog.getByRole('heading', { name: 'Review push to origin', level: 3 }),
+  ).toBeVisible();
   await page.getByRole('button', { name: 'Close dialog' }).click();
   await navigation(page);
   await expect(page.getByRole('button', { name: 'Add workspace', exact: true })).toBeDisabled();
@@ -809,9 +818,16 @@ for (const flow of ['add', 'connect'] as const) {
       await expect(save).toBeEnabled();
     }
     await save.click();
-    await expect(page.getByRole('dialog', { name: 'Workspace sync', exact: true })).toBeVisible();
-    await expect(dialog.getByRole('heading', { name: 'Review sync preview' })).toBeVisible();
-    await expect(dialog.getByRole('button', { name: 'Apply sync' })).toBeDisabled();
+    await expect(dialog).toHaveCount(1);
+    await expect(dialog).toHaveAccessibleName('Push to origin');
+    await expect(
+      dialog.getByRole('heading', { name: 'Review push to origin', level: 3 }),
+    ).toBeVisible();
+    await expect(dialog).toContainText('Already up to date. No changes to apply.');
+    await expect(dialog.getByRole('checkbox')).toHaveCount(0);
+    await expect(dialog.getByRole('button', { name: 'Apply sync' })).toHaveCount(0);
+    for (const name of ['Push to origin', 'Reset to origin', 'Refresh status'])
+      await expect(dialog.getByRole('button', { name, exact: true })).toHaveCount(0);
     expect(writes).toHaveLength(1);
     expect(writes[0].target).toEqual({
       repo: 'example/private',
@@ -1074,7 +1090,7 @@ test('focus refresh discovers external metadata changes without resetting graph 
   await expect(
     page
       .getByRole('dialog', { name: 'Workspace sync', exact: true })
-      .getByRole('button', { name: 'Preview sync' }),
+      .getByRole('button', { name: 'Push to origin' }),
   ).toBeEnabled();
   await page.getByRole('button', { name: 'Close dialog' }).click();
   await expect(page.getByRole('combobox', { name: 'Workspace', exact: true })).toContainText(
@@ -1241,7 +1257,12 @@ for (const flow of ['create', 'connect'] as const) {
     }
     await selectCloudTarget(page);
     await page.getByRole('button', { name: 'Save workspace' }).click();
-    const sync = page.getByRole('dialog', { name: 'Workspace sync', exact: true });
+    const sync = page.getByRole('dialog');
+    await expect(sync).toHaveAccessibleName('Push to origin');
+    await expect(
+      sync.getByRole('heading', { name: 'Review push to origin', level: 3 }),
+    ).toBeVisible();
+    await expect(sync.getByRole('button', { name: 'Reset to origin', exact: true })).toHaveCount(0);
     await expect(sync.getByRole('region', { name: 'Changes to local state' })).toContainText(
       task.title,
     );
@@ -1254,6 +1275,7 @@ for (const flow of ['create', 'connect'] as const) {
     await sync.click({ position: { x: 5, y: 5 } });
     await expect(sync).toBeVisible();
     await sync.getByRole('checkbox').check();
+    await expect(sync.getByRole('button', { name: 'Apply sync' })).toBeEnabled();
     expect(applied).toBe(false);
     stateReads.length = 0;
     await sync.getByRole('button', { name: 'Apply sync' }).click();
@@ -1278,9 +1300,10 @@ for (const flow of ['create', 'connect'] as const) {
     await page.evaluate(() => window.dispatchEvent(new Event('focus')));
     await navigation(page);
     await page.getByRole('button', { name: 'Workspace sync', exact: true }).click();
-    await expect(sync.getByRole('button', { name: 'Preview sync' })).toBeEnabled();
+    await expect(sync).toHaveAccessibleName('Workspace sync');
+    await expect(sync.getByRole('button', { name: 'Push to origin' })).toBeEnabled();
     await sync.getByRole('button', { name: 'Refresh status' }).click();
-    await expect(sync.getByRole('button', { name: 'Preview sync' })).toBeEnabled();
+    await expect(sync.getByRole('button', { name: 'Push to origin' })).toBeEnabled();
     await page.keyboard.press('Escape');
     await expect(sync).toHaveCount(0);
     await page.goto(`/?workspace=${id}#/`);
@@ -1313,9 +1336,18 @@ test('failed automatic preview preserves the saved cloud connection without appl
   await settings.getByRole('button', { name: 'Connect to cloud' }).click();
   await selectCloudTarget(page);
   await page.getByRole('button', { name: 'Save workspace' }).click();
-  const sync = page.getByRole('dialog', { name: 'Workspace sync', exact: true });
+  const sync = page.getByRole('dialog');
+  await expect(sync).toHaveCount(1);
+  await expect(sync).toHaveAccessibleName('Push to origin');
   await expect(sync.getByRole('alert')).toContainText('Remote state is unavailable');
   await expect(sync.getByRole('button', { name: 'Apply sync' })).toHaveCount(0);
+  for (const name of ['Push to origin', 'Reset to origin', 'Refresh status'])
+    await expect(sync.getByRole('button', { name, exact: true })).toHaveCount(0);
+  await expect(sync.getByRole('button', { name: 'Refresh preview' })).toBeEnabled();
+  await sync.getByRole('button', { name: 'Back to sync options' }).click();
+  await expect(sync).toHaveAccessibleName('Workspace sync');
+  await expect(sync.getByRole('button', { name: 'Push to origin', exact: true })).toBeEnabled();
+  await expect(sync.getByRole('button', { name: 'Reset to origin', exact: true })).toBeEnabled();
   await sync.getByRole('button', { name: 'Close dialog' }).click();
   await page.reload();
   await expect(settings.locator('dd')).toHaveText([
