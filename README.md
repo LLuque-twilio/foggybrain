@@ -10,14 +10,14 @@ Requires **Node.js 22 (22.13.0+)**. Nothing else — no clone, no pnpm.
 curl -fsSL https://raw.githubusercontent.com/LLuque-twilio/foggybrain/master/scripts/install.sh | bash
 ```
 
-This installs the CLI to `~/.foggybrain/versions/<version>/`, links `~/.local/bin/foggy`, and puts that directory on `PATH` for every shell — including the non-interactive shells AI agents spawn. On macOS it prompts once for `sudo` to write `/etc/paths.d/foggy`; on Linux it appends one line to `~/.profile`. Then:
+This installs the CLI to `~/.foggybrain/versions/<version>/`, links `~/.local/bin/foggy`, and puts that directory on `PATH` for every shell — including the non-interactive shells AI agents spawn. On macOS it prompts once for `sudo` to write `/etc/paths.d/foggy`; on Linux it appends one line to `~/.profile`. Declining or lacking `sudo` does not fail the install: it completes, and prints the one line to add yourself. Then:
 
 ```sh
 foggy start
 foggy dashboard
 ```
 
-Open a new terminal first if `foggy` is not yet on your `PATH`. `foggy upgrade` installs the latest release later; re-running the curl command does the same thing. Restart a running server afterwards with `foggy stop && foggy start`, or it keeps serving the old version. `FOGGY_VERSION=0.2.0` pins a version. `foggy uninstall` removes the CLI, its `PATH` entry, and `~/.foggybrain`, keeping your task data.
+Open a new terminal first if `foggy` is not yet on your `PATH`. `foggy upgrade` installs the latest release later; re-running the curl command does the same thing. Restart a running server afterwards with `foggy stop && foggy start`, or it keeps serving the old version. `FOGGY_VERSION=0.2.0` pins a version, and is required for a prerelease, which neither the installer nor `foggy upgrade` selects on its own. `foggy uninstall` removes the CLI, its `PATH` entry, and `~/.foggybrain`, keeping your task data.
 
 ## Run From A Clone (Developers)
 
