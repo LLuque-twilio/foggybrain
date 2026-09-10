@@ -17,7 +17,9 @@ foggy start
 foggy dashboard
 ```
 
-Open a new terminal first if `foggy` is not yet on your `PATH`. `foggy upgrade` installs the latest release later; re-running the curl command does the same thing. Restart a running server afterwards with `foggy stop && foggy start`, or it keeps serving the old version. `FOGGY_VERSION=0.2.0` pins a version, and is required for a prerelease, which neither the installer nor `foggy upgrade` selects on its own. `foggy uninstall` removes the CLI, its `PATH` entry, and `~/.foggybrain`, keeping your task data.
+Open a new terminal first if `foggy` is not yet on your `PATH`. `foggy upgrade` installs the latest release later; re-running the curl command does the same thing. Restart a running server afterwards with `foggy stop && foggy start`, or it keeps serving the old version. `FOGGY_VERSION=0.2.0` pins a version, and is required for a prerelease, which neither the installer nor `foggy upgrade` selects on its own. `foggy uninstall` removes the CLI, its `PATH` entry, and `~/.foggybrain`, keeping your task data and your settings.
+
+Run `foggy config` to set your GitHub token and everything else the server reads; it saves to `~/.foggybrain/config.json`, which needs no checkout and works from any directory. `foggy config list` shows each setting and where its value came from. See the [configuration reference](docs/cli.md#configuration).
 
 ## Run From A Clone (Developers)
 

@@ -17,6 +17,20 @@ import type {
   Workspace,
   WorkspaceList,
 } from './shared.js';
+import {
+  CONFIG_KEYS,
+  applyConfigFile,
+  assertConfigKey,
+  assertConfigValue,
+  configFilePath,
+  describeSettings,
+  loadConfigFile,
+  readTokenFromGhCli,
+  writeConfigFile,
+  type ConfigValues,
+  type LoadedConfig,
+  type Setting,
+} from './config.js';
 import { dataDirectory, startServer, stopServer } from './daemon.js';
 import {
   binDirectory,
@@ -37,6 +51,23 @@ export async function main(argv = process.argv): Promise<void> {
     process.stdout.write(`${packageVersion()}\n`);
     return;
   }
+  // Before the options below read the environment for their defaults, and before `start` hands
+  // it to the server it spawns. The process environment still wins over the file.
+  let loaded: LoadedConfig;
+  try {
+    loaded = await loadConfigFile(configFilePath());
+  } catch (error) {
+    process.stderr.write(
+      `${JSON.stringify({ error: error instanceof Error ? error.message : String(error) })}\n`,
+    );
+    process.exitCode = 1;
+    return;
+  }
+  // A warning rather than a failure: an entry this build cannot use must not lock the user out
+  // of every command, least of all the one that would repair the file.
+  for (const problem of loaded.problems)
+    process.stderr.write(`Ignoring unusable setting in ${problem}\n`);
+  applyConfigFile(process.env, loaded.values);
   const program = new Command();
   program
     .name('foggy')
@@ -603,7 +634,7 @@ export async function main(argv = process.argv): Promise<void> {
         if (!process.stdin.isTTY || !process.stderr.isTTY)
           throw new Error('Uninstall requires --yes without a terminal.');
         process.stderr.write(
-          `Will remove ${root}, ${join(binDirectory(), 'foggy')}, and the FoggyBrain PATH entry.\nTask data in ${dataDirectory()} is kept.\n`,
+          `Will remove ${root}, ${join(binDirectory(), 'foggy')}, and the FoggyBrain PATH entry.\nTask data in ${dataDirectory()} and settings in ${configFilePath()} are kept.\n`,
         );
         const terminal = createInterface({ input: process.stdin, output: process.stderr });
         let answer: string;
@@ -615,6 +646,114 @@ export async function main(argv = process.argv): Promise<void> {
         if (answer.trim().toLowerCase() !== 'yes') throw new Error('Uninstall cancelled.');
       }
       output(await uninstall());
+    });
+  // Consulted only when nothing else supplies a token, so `list` explains a server that
+  // authenticates with no token in sight without paying for a subprocess every time.
+  const ghToken = () => readTokenFromGhCli() !== undefined;
+  const settings = async (showSecrets: boolean): Promise<Setting[]> =>
+    describeSettings(process.env, (await loadConfigFile(configFilePath())).values, {
+      ghToken,
+      showSecrets,
+    });
+  const setting = async (name: string, showSecrets: boolean): Promise<Setting> =>
+    (await settings(showSecrets)).find((entry) => entry.name === name)!;
+  /** Reports a saved value from the file rather than from this process, whose environment was
+   * resolved before the write. */
+  const saved = (values: ConfigValues, name: string, showSecrets: boolean): Setting =>
+    describeSettings({}, values, { ghToken: false, showSecrets }).find(
+      (entry) => entry.name === name,
+    )!;
+  /** Loads for a command that is about to rewrite the file, announcing entries it will drop. */
+  const editable = async (): Promise<ConfigValues> => {
+    const { values, problems } = await loadConfigFile(configFilePath());
+    if (problems.length > 0)
+      process.stderr.write(
+        `Saving without ${problems.length} unusable ${problems.length === 1 ? 'entry' : 'entries'} in ${configFilePath()}\n`,
+      );
+    return values;
+  };
+  const printSettings = (rows: Setting[]): void => {
+    const width = Math.max(...rows.map((row) => row.name.length));
+    for (const row of rows)
+      process.stdout.write(
+        `${row.name.padEnd(width)}  ${(row.value ?? '<unset>').padEnd(28)}  (${row.source})\n`,
+      );
+  };
+  const config = program
+    .command('config')
+    .description(`Read and write the settings saved in ${configFilePath()}`)
+    .option('--show-secrets', 'print token values instead of masking them')
+    .action(async (options) => {
+      const values = await editable();
+      const terminal = createInterface({ input: process.stdin, output: process.stderr });
+      // Pulling lines from the iterator rather than awaiting `question`: at end of input the
+      // iterator reports it, where a pending `question` would race the interface closing.
+      const lines = terminal[Symbol.asyncIterator]();
+      try {
+        for (const key of CONFIG_KEYS) {
+          const current = values[key.name];
+          const shown = current === undefined ? '' : key.secret ? ' [****]' : ` [${current}]`;
+          process.stderr.write(`${key.label}${shown}: `);
+          const answer = await lines.next();
+          // End of input keeps every remaining value rather than clearing the file.
+          if (answer.done) break;
+          const trimmed = answer.value.trim();
+          if (trimmed === '') continue;
+          if (trimmed === '-') delete values[key.name];
+          else {
+            assertConfigValue(key.name, trimmed);
+            values[key.name] = trimmed;
+          }
+        }
+      } finally {
+        terminal.close();
+      }
+      await writeConfigFile(values, configFilePath());
+      process.stderr.write(`Saved ${configFilePath()}\n`);
+      if (program.opts().json)
+        output(
+          describeSettings({}, values, { ghToken, showSecrets: options.showSecrets === true }),
+        );
+    });
+  config
+    .command('list')
+    .description('Show every setting with the source of its current value')
+    .action(async () => {
+      const rows = await settings(config.opts().showSecrets === true);
+      if (program.opts().json) output(rows);
+      else printSettings(rows);
+    });
+  config
+    .command('get <key>')
+    .description('Show one setting and where its value comes from')
+    .action(async (name) => {
+      assertConfigKey(name);
+      const row = await setting(name, config.opts().showSecrets === true);
+      if (program.opts().json) output(row);
+      else printSettings([row]);
+    });
+  config
+    .command('set <key> <value>')
+    .description('Save one setting to the configuration file')
+    .action(async (name, value) => {
+      assertConfigValue(name, value);
+      const values = await editable();
+      values[name] = value;
+      await writeConfigFile(values, configFilePath());
+      const row = saved(values, name, config.opts().showSecrets === true);
+      if (program.opts().json) output(row);
+      else printSettings([row]);
+    });
+  config
+    .command('unset <key>')
+    .description('Remove one setting from the configuration file')
+    .action(async (name) => {
+      assertConfigKey(name);
+      const values = await editable();
+      const removed = name in values;
+      delete values[name];
+      if (removed) await writeConfigFile(values, configFilePath());
+      output({ name, removed });
     });
   program
     .command('start')

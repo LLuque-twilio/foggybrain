@@ -367,7 +367,33 @@ These commands manage a curl-installed FoggyBrain under `~/.foggybrain` (overrid
 
 `link` and `upgrade` refuse to replace a `~/.local/bin/foggy` that is not a symlink into the install root — a `pnpm link --global` executable, or any other shim — and name what it points at. This is the same notion of ownership `uninstall` uses. Pass `--force` to replace it and take over the name.
 
-`foggy uninstall` stops a running server, removes `~/.local/bin/foggy`, removes the `PATH` entry (`sudo rm -f /etc/paths.d/foggy` on macOS, the marked `~/.profile` line on Linux), and deletes `~/.foggybrain` including every kept version. It returns `{"removed":[...],"pathEntry":"removed","keptDataDir":"..."}`. If `~/.local/bin/foggy` is not a symlink into the install root — a `pnpm link --global` executable or a shell shim, for example — this is a foreign install and `uninstall` does nothing at all: it reports `removed: []` and the PATH entry's real state (`"present"` or `"absent"`) without touching it. **Task data is kept**: `~/.local/share/foggybrain` (SQLite state and config) is never touched, so reinstalling restores the same workspaces. Delete that directory by hand to remove your data. Without a terminal, `--yes` is required; with one, the command prompts and expects `yes`.
+`foggy uninstall` stops a running server, removes `~/.local/bin/foggy`, removes the `PATH` entry (`sudo rm -f /etc/paths.d/foggy` on macOS, the marked `~/.profile` line on Linux), and deletes `~/.foggybrain` including every kept version. It returns `{"removed":[...],"pathEntry":"removed","keptDataDir":"...","keptConfigFile":"..."}`. If `~/.local/bin/foggy` is not a symlink into the install root — a `pnpm link --global` executable or a shell shim, for example — this is a foreign install and `uninstall` does nothing at all: it reports `removed: []` and the PATH entry's real state (`"present"` or `"absent"`) without touching it. **Task data is kept**: `~/.local/share/foggybrain` (SQLite state and config) is never touched, so reinstalling restores the same workspaces. **Settings are kept**: `~/.foggybrain/config.json` is restored after the install root is deleted, and `keptConfigFile` names it (`null` when there was no such file). The install root therefore still exists afterwards, holding nothing but that file; a repeat `uninstall` reports `removed: []` because there is nothing left to remove. If the file exists but cannot be read, `uninstall` fails and deletes nothing rather than destroying tokens it promised to keep. Delete both by hand to remove your data and your saved tokens. Without a terminal, `--yes` is required; with one, the command prompts and expects `yes`.
+
+## Configuration
+
+```text
+foggy config [--show-secrets]
+foggy config list [--show-secrets]
+foggy config get <key> [--show-secrets]
+foggy config set <key> <value>
+foggy config unset <key>
+```
+
+These read and write `~/.foggybrain/config.json` (`FOGGY_HOME` relocates it), a flat JSON object keyed by environment variable name and created mode `0600`. Both the CLI and the server load it by absolute path at startup, so a globally installed FoggyBrain is configured the same way no matter which directory it was started from.
+
+**Resolution order, highest first:** the process environment, then `config.json`, then `.env.local` and `.env` from the server's working directory, then `gh auth token` (for `GH_TOKEN` only), then the built-in default. A variable exported in your shell therefore still wins for that one invocation, and the file supplies everything you have not set another way.
+
+Settable keys are `GH_TOKEN`, `FOGGY_SYNC_TOKEN`, `FOGGY_SYNC_REPO`, `FOGGY_SYNC_BRANCH`, `FOGGY_SYNC_PATH`, `FOGGY_PORT`, `FOGGY_DATA_DIR`, `FOGGY_POLL_INTERVAL_MS`, `FOGGY_URL`, and `FOGGY_WORKSPACE`. `FOGGY_HOME` is not settable because it locates the file itself; `GITHUB_TOKEN` is still read as a fallback for `GH_TOKEN` but is not offered separately; `FOGGY_VERSION` and `FOGGY_FORCE` belong to the installer, not the server.
+
+`set` validates with the same rules the server applies at startup — port range, polling floor, `owner/repo` shape, sync reference safety, origin shape — and writes nothing when the value is rejected.
+
+A hand-edited file gets the same checks, but the two sides treat a failure differently. **The CLI warns and carries on**, ignoring only the entries it cannot use, so one bad value never locks you out of the command that would repair it; a `set`, `unset`, or wizard run then writes the file back without them and says how many it dropped. **The server refuses to start**, naming the file and the offending key in `foggy.log`, rather than quietly binding a different port than you asked for.
+
+`list` shows every key with the source of its current value: `config`, `environment`, `GITHUB_TOKEN`, `gh auth token`, `default`, or `unset`. The last two GitHub sources match how the server actually resolves a token — `GH_TOKEN`, then `GITHUB_TOKEN`, then the `gh` CLI, treating a blank value as absent — so `list` explains a server that authenticates with no token configured anywhere. Token values are masked to their last four characters unless `--show-secrets` is passed. With `--json` the same rows are printed as an array of `{"name":...,"value":...,"source":...}`.
+
+Bare `foggy config` walks every key in order, showing the saved value as the default: press Enter to keep it, type a new value to replace it, or type `-` to remove it. End of input keeps every remaining value. An invalid answer aborts without writing. A token typed at a terminal is visible on screen; use `foggy config set` if that matters.
+
+Restart the server after changing anything it reads: `foggy stop && foggy start`.
 
 ## Server Lifecycle
 

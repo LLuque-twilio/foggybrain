@@ -1,9 +1,9 @@
 import express, { type ErrorRequestHandler, type Request } from 'express';
 import { config as loadDotenv } from 'dotenv';
-import { execFileSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { applyConfigFile, configFilePath, readConfigFile, readTokenFromGhCli } from './config.js';
 import { Store, DomainError } from './core.js';
 import { GithubPoller, parsePollInterval } from './github.js';
 import { readSyncConfig, StateSync } from './sync.js';
@@ -348,22 +348,29 @@ function domainRoutes(
   return app;
 }
 
-function readTokenFromGhCli(): string | undefined {
-  try {
-    return (
-      execFileSync('gh', ['auth', 'token'], {
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'ignore'],
-        timeout: 5000,
-      }).trim() || undefined
-    );
-  } catch {
-    return undefined;
-  }
+export interface EnvironmentOptions {
+  configPath?: string;
+  dotenvPaths?: string[];
+  loadEnv?: boolean;
 }
 
-export async function startServer(options: { loadEnv?: boolean } = {}) {
-  if (options.loadEnv !== false) loadDotenv({ path: ['.env.local', '.env'], quiet: true });
+/** Resolution order: the process environment, then `config.json`, then `.env.local`/`.env`.
+ * The config file is found by absolute path, so a globally installed server is configured the
+ * same way wherever it was started from; the dotenv files remain relative to the checkout. */
+export async function loadEnvironment(
+  env: NodeJS.ProcessEnv = process.env,
+  options: EnvironmentOptions = {},
+): Promise<void> {
+  // `loadEnv: false` means this process reads nothing from disk, config file included. Tests
+  // that isolate themselves by deleting a variable depend on it staying deleted.
+  if (options.loadEnv === false) return;
+  applyConfigFile(env, await readConfigFile(options.configPath ?? configFilePath(env)));
+  const path = options.dotenvPaths ?? ['.env.local', '.env'];
+  if (path.length > 0) loadDotenv({ path, quiet: true, processEnv: env });
+}
+
+export async function startServer(options: EnvironmentOptions = {}) {
+  await loadEnvironment(process.env, options);
   const settings = readConfig();
   const token = settings.token ?? readTokenFromGhCli();
   const workspaces = new WorkspaceManager({

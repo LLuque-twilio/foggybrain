@@ -60,6 +60,8 @@ If the `PATH` step fails (no `sudo` rights, a declined password prompt), the ins
 
 `FOGGY_HOME` relocates `~/.foggybrain`; `FOGGY_VERSION` pins the release the installer fetches, and is the only way to install a prerelease, which the default "latest release" lookup skips; `FOGGY_FORCE=1` lets it replace a `~/.local/bin/foggy` that belongs to another installation, such as a `pnpm link --global` one. Data lives in `FOGGY_DATA_DIR` (default `~/.local/share/foggybrain`), so a curl install and a `pnpm link --global` install on the same machine see the same workspaces and tasks. Windows is not supported by the installer; use the clone workflow there. See the [CLI reference](cli.md#installation-and-upgrades) for `link`, `upgrade`, and `uninstall`.
 
+Settings live in `~/.foggybrain/config.json`, written by `foggy config` and kept across upgrades and uninstalls. An installed FoggyBrain needs no `.env` file anywhere; see [Configuration And Data](#configuration-and-data) and the [configuration reference](cli.md#configuration).
+
 ### Use `foggy` From Any Repository
 
 Link the existing CLI globally so you and AI agents can run `foggy` from any directory. No Homebrew installation is required. From your FoggyBrain checkout, run:
@@ -207,7 +209,7 @@ A dedicated sync token is a GitHub Personal Access Token (PAT) created specifica
 3. Select the **Resource owner** that owns the state repository. The UI repository picker currently lists user-owned repositories, not organization repositories.
 4. Under **Repository access**, choose **Only select repositories** and select your private state repository or repositories.
 5. Under **Repository permissions**, grant **Contents: Read and write**. GitHub includes the required **Metadata: Read** permission automatically. No Pull requests write permission is needed. Obtain any required organization approval or SSO authorization.
-6. Generate the token and store it only on the server as `FOGGY_SYNC_TOKEN`, either in its process environment or the ignored project-root `.env.local` or `.env`. Do not paste it into chat, task text, commands, URLs, screenshots, or committed files.
+6. Generate the token and store it only on the server as `FOGGY_SYNC_TOKEN`, with `foggy config set FOGGY_SYNC_TOKEN …`, in its process environment, or in the ignored project-root `.env.local` or `.env`. Do not paste it into chat, task text, commands, URLs, screenshots, or committed files.
 
 ```dotenv
 FOGGY_SYNC_TOKEN=REPLACE_LOCALLY_WITH_YOUR_FINE_GRAINED_PAT
@@ -258,7 +260,9 @@ Portable `version: 1` JSON includes editable task fields, dependencies, and refe
 
 ## Configuration And Data
 
-The server loads `.env` at startup. Restart it after changing server configuration. The CLI's `FOGGY_URL` comes from its process environment, not from loading `.env` itself.
+Every variable below can be saved once with `foggy config set NAME value`, which writes `~/.foggybrain/config.json` (mode `0600`). Both the CLI and the server read that file by absolute path at startup, so a global install is configured the same way from any directory. Resolution order, highest first: the process environment, then `config.json`, then `.env.local` and `.env` from the server's working directory, then `gh auth token` for `GH_TOKEN` only, then the built-in default. Run `foggy config list` to see each value and which of those supplied it. Restart the server after changing anything it reads.
+
+An installed FoggyBrain needs no checkout and no `.env` file. The `.env` files below apply to a source checkout, where they remain the convenient place to keep local overrides; note that they are read relative to the directory the server was started in.
 
 | Variable                 | Purpose                                                                                                                                              |
 | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- |

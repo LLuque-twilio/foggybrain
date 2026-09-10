@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { tmpdir } from 'node:os';
@@ -89,14 +89,22 @@ async function fixture(
   const address = server.address();
   assert.ok(address && typeof address !== 'string');
   const url = `http://127.0.0.1:${address.port}`;
-  const run = (args: string[], env: NodeJS.ProcessEnv = {}) =>
+  const run = (args: string[], env: NodeJS.ProcessEnv = {}, stdin = '') =>
     new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve, reject) => {
+      const merged: NodeJS.ProcessEnv = {
+        ...process.env,
+        FOGGY_URL: url,
+        FOGGY_WORKSPACE: '',
+        NO_COLOR: '1',
+        ...env,
+      };
+      for (const [name, value] of Object.entries(env)) if (value === undefined) delete merged[name];
       const child = spawn(
         process.execPath,
         ['--import', 'tsx', fileURLToPath(new URL('./cli.ts', import.meta.url)), ...args],
         {
           cwd: fileURLToPath(new URL('..', import.meta.url)),
-          env: { ...process.env, FOGGY_URL: url, FOGGY_WORKSPACE: '', NO_COLOR: '1', ...env },
+          env: merged,
           stdio: ['pipe', 'pipe', 'pipe'],
           timeout: 30_000,
         },
@@ -111,7 +119,7 @@ async function fixture(
       });
       child.once('error', reject);
       child.once('close', (code) => resolve({ code, stdout, stderr }));
-      child.stdin.end();
+      child.stdin.end(stdin);
     });
   return { requests, run, url };
 }
@@ -1138,4 +1146,230 @@ test('CLI uninstall refuses to run without --yes outside a terminal and removes 
   assert.deepEqual(result.removed, [root]);
   assert.equal(result.keptDataDir, data);
   assert.equal(requests.length, 0);
+});
+
+test('CLI uninstall keeps the configuration file when it removes the install root', async (t) => {
+  const { run } = await fixture(t);
+  const root = await mkdtemp(join(tmpdir(), 'foggy-cli-uninstall-config-'));
+  const data = await mkdtemp(join(tmpdir(), 'foggy-cli-uninstall-config-data-'));
+  const home = await mkdtemp(join(tmpdir(), 'foggy-cli-uninstall-config-home-'));
+  const env = { FOGGY_HOME: root, FOGGY_DATA_DIR: data, HOME: home };
+  await run(['--json', 'config', 'set', 'GH_TOKEN', 'ghp_abcdefgh3f2a'], env);
+  await mkdir(join(root, 'versions', '0.1.0'), { recursive: true });
+
+  const result = await run(['--json', 'uninstall', '--yes'], env);
+  assert.equal(result.code, 0);
+  const removal = JSON.parse(result.stdout) as { removed: string[]; keptConfigFile: string | null };
+  assert.deepEqual(removal.removed, [root]);
+  assert.equal(removal.keptConfigFile, join(root, 'config.json'));
+  assert.deepEqual(JSON.parse(await readFile(join(root, 'config.json'), 'utf8')), {
+    GH_TOKEN: 'ghp_abcdefgh3f2a',
+  });
+
+  const second = await run(['--json', 'uninstall', '--yes'], env);
+  const repeat = JSON.parse(second.stdout) as { removed: string[]; keptConfigFile: string | null };
+  assert.equal(repeat.keptConfigFile, join(root, 'config.json'));
+  // The root survives only to hold the settings, so a second run has nothing left to remove.
+  assert.deepEqual(repeat.removed, []);
+});
+
+test('CLI uninstall refuses to delete the install root when it cannot read the settings', async (t) => {
+  const { run } = await fixture(t);
+  const root = await mkdtemp(join(tmpdir(), 'foggy-cli-uninstall-unreadable-'));
+  const data = await mkdtemp(join(tmpdir(), 'foggy-cli-uninstall-unreadable-data-'));
+  const home = await mkdtemp(join(tmpdir(), 'foggy-cli-uninstall-unreadable-home-'));
+  const env = { FOGGY_HOME: root, FOGGY_DATA_DIR: data, HOME: home };
+  // A directory in the file's place stands in for any read failure that is not "missing".
+  await mkdir(join(root, 'config.json'), { recursive: true });
+  await mkdir(join(root, 'versions'), { recursive: true });
+
+  const result = await run(['--json', 'uninstall', '--yes'], env);
+
+  assert.equal(result.code, 1, 'silently discarding the tokens is worse than failing');
+  assert.equal(result.stdout, '');
+  await stat(join(root, 'versions'));
+});
+
+async function configHome(): Promise<{ home: string; path: string; env: NodeJS.ProcessEnv }> {
+  const home = await mkdtemp(join(tmpdir(), 'foggy-cli-config-'));
+  return { home, path: join(home, 'config.json'), env: { FOGGY_HOME: home } };
+}
+
+test('CLI config set validates, writes a private file, and get reads it back', async (t) => {
+  const { run, requests } = await fixture(t);
+  const { path, env } = await configHome();
+
+  const rejected = await run(['--json', 'config', 'set', 'FOGGY_PORT', '0'], env);
+  assert.equal(rejected.code, 1);
+  assert.match(JSON.parse(rejected.stderr).error, /between 1 and 65535/);
+  await assert.rejects(stat(path), /ENOENT/, 'a rejected value writes nothing');
+
+  const unknown = await run(['--json', 'config', 'set', 'FOGGY_HOME', '/tmp/x'], env);
+  assert.equal(unknown.code, 1);
+  assert.match(JSON.parse(unknown.stderr).error, /not a FoggyBrain configuration key/);
+
+  const set = await run(['--json', 'config', 'set', 'FOGGY_PORT', '5000'], env);
+  assert.equal(set.code, 0);
+  assert.deepEqual(JSON.parse(set.stdout), { name: 'FOGGY_PORT', value: '5000', source: 'config' });
+  assert.equal((await stat(path)).mode & 0o777, 0o600);
+
+  await run(['--json', 'config', 'set', 'GH_TOKEN', 'ghp_abcdefgh3f2a'], env);
+  assert.deepEqual(JSON.parse(await readFile(path, 'utf8')), {
+    GH_TOKEN: 'ghp_abcdefgh3f2a',
+    FOGGY_PORT: '5000',
+  });
+
+  const masked = await run(['--json', 'config', 'get', 'GH_TOKEN'], env);
+  assert.deepEqual(JSON.parse(masked.stdout), {
+    name: 'GH_TOKEN',
+    value: '****3f2a',
+    source: 'config',
+  });
+  const shown = await run(['--json', 'config', 'get', 'GH_TOKEN', '--show-secrets'], env);
+  assert.equal(JSON.parse(shown.stdout).value, 'ghp_abcdefgh3f2a');
+  assert.equal(requests.length, 0);
+});
+
+test('CLI config list reports every key with the source of its value', async (t) => {
+  const { run, requests } = await fixture(t);
+  const { env } = await configHome();
+  await run(['--json', 'config', 'set', 'FOGGY_PORT', '5000'], env);
+
+  const listed = await run(['--json', 'config', 'list'], {
+    ...env,
+    FOGGY_SYNC_REPO: 'owner/state',
+  });
+  assert.equal(listed.code, 0);
+  const rows = JSON.parse(listed.stdout) as {
+    name: string;
+    value: string | null;
+    source: string;
+  }[];
+  const row = (name: string) => rows.find((entry) => entry.name === name)!;
+  assert.deepEqual(row('FOGGY_PORT'), { name: 'FOGGY_PORT', value: '5000', source: 'config' });
+  assert.deepEqual(row('FOGGY_SYNC_REPO'), {
+    name: 'FOGGY_SYNC_REPO',
+    value: 'owner/state',
+    source: 'environment',
+  });
+  assert.deepEqual(row('FOGGY_SYNC_BRANCH'), {
+    name: 'FOGGY_SYNC_BRANCH',
+    value: 'main',
+    source: 'default',
+  });
+
+  const text = await run(['config', 'list'], env);
+  assert.match(text.stdout, /FOGGY_PORT\s+5000\s+\(config\)/);
+  assert.equal(requests.length, 0);
+});
+
+test('CLI config unset removes one key and leaves the rest', async (t) => {
+  const { run, requests } = await fixture(t);
+  const { path, env } = await configHome();
+  await run(['--json', 'config', 'set', 'FOGGY_PORT', '5000'], env);
+  await run(['--json', 'config', 'set', 'FOGGY_WORKSPACE', 'ws-1'], env);
+
+  const removed = await run(['--json', 'config', 'unset', 'FOGGY_PORT'], env);
+  assert.equal(removed.code, 0);
+  assert.deepEqual(JSON.parse(removed.stdout), { name: 'FOGGY_PORT', removed: true });
+  assert.deepEqual(JSON.parse(await readFile(path, 'utf8')), { FOGGY_WORKSPACE: 'ws-1' });
+
+  const again = await run(['--json', 'config', 'unset', 'FOGGY_PORT'], env);
+  assert.equal(again.code, 0);
+  assert.deepEqual(JSON.parse(again.stdout), { name: 'FOGGY_PORT', removed: false });
+  assert.equal(requests.length, 0);
+});
+
+test('CLI config wizard keeps a value on a blank answer and validates what it is given', async (t) => {
+  const { run, requests } = await fixture(t);
+  const { path, env } = await configHome();
+  await run(['--json', 'config', 'set', 'FOGGY_PORT', '5000'], env);
+
+  // One line per key, in CONFIG_KEYS order; blank keeps whatever is already there.
+  const answers = ['ghp_abcdefgh3f2a', '', '', '', '', '', '', '', '', 'ws-1'].join('\n');
+  const wizard = await run(['--json', 'config'], env, `${answers}\n`);
+  assert.equal(wizard.code, 0);
+  assert.deepEqual(JSON.parse(await readFile(path, 'utf8')), {
+    GH_TOKEN: 'ghp_abcdefgh3f2a',
+    FOGGY_PORT: '5000',
+    FOGGY_WORKSPACE: 'ws-1',
+  });
+  assert.match(wizard.stderr, /GitHub token/);
+  assert.doesNotMatch(wizard.stderr, /ghp_abcdefgh3f2a/, 'a typed secret is never echoed back');
+
+  const changed = await run(['--json', 'config'], env, '\n\n\n\n\n6000\n');
+  const rows = JSON.parse(changed.stdout) as {
+    name: string;
+    value: string | null;
+    source: string;
+  }[];
+  assert.deepEqual(
+    rows.find((row) => row.name === 'FOGGY_PORT'),
+    {
+      name: 'FOGGY_PORT',
+      value: '6000',
+      source: 'config',
+    },
+  );
+  await run(['--json', 'config', 'set', 'FOGGY_PORT', '5000'], env);
+
+  const bad = await run(['--json', 'config'], env, '\n\n\n\n\n0\n');
+  assert.equal(bad.code, 1);
+  // Prompts share stderr with the error, so match rather than parse the whole stream.
+  assert.match(bad.stderr, /between 1 and 65535/);
+  assert.equal(JSON.parse(await readFile(path, 'utf8')).FOGGY_PORT, '5000', 'unchanged on error');
+  assert.equal(requests.length, 0);
+});
+
+test('CLI works despite an unusable entry in the configuration file, and can repair it', async (t) => {
+  const { run } = await fixture(t);
+  const { path, env: home } = await configHome();
+  // The fixture exports an empty FOGGY_WORKSPACE; drop it so the file is what supplies the key.
+  const env = { ...home, FOGGY_WORKSPACE: undefined };
+  await writeFile(
+    path,
+    JSON.stringify({ FOGGY_PORT: '0', FOGGY_WORKSPACE: 'ws-1', NOPE: 'x' }),
+    'utf8',
+  );
+
+  const listed = await run(['--json', 'config', 'list'], env);
+  assert.equal(listed.code, 0, 'a bad entry must not block unrelated commands');
+  assert.ok(listed.stderr.includes(path), 'the warning names the file to fix');
+  assert.match(listed.stderr, /between 1 and 65535/);
+  assert.match(listed.stderr, /not a FoggyBrain configuration key/);
+  const rows = JSON.parse(listed.stdout) as {
+    name: string;
+    value: string | null;
+    source: string;
+  }[];
+  assert.equal(rows.find((row) => row.name === 'FOGGY_WORKSPACE')!.value, 'ws-1');
+  assert.equal(rows.find((row) => row.name === 'FOGGY_PORT')!.source, 'default');
+
+  const repaired = await run(['--json', 'config', 'set', 'FOGGY_PORT', '5000'], env);
+  assert.equal(repaired.code, 0);
+  assert.match(repaired.stderr, /without 2 unusable entries/, 'saving says what it discarded');
+  assert.deepEqual(JSON.parse(await readFile(path, 'utf8')), {
+    FOGGY_PORT: '5000',
+    FOGGY_WORKSPACE: 'ws-1',
+  });
+
+  const clean = await run(['--json', 'config', 'list'], env);
+  assert.equal(clean.stderr, '');
+});
+
+test('CLI config supplies FOGGY_URL and FOGGY_WORKSPACE when the environment does not', async (t) => {
+  const { run, requests, url } = await fixture(t, (request) =>
+    request.path.endsWith('/state') ? { body: snapshot } : { body: {} },
+  );
+  const { env } = await configHome();
+  await run(['--json', 'config', 'set', 'FOGGY_URL', url], env);
+  await run(['--json', 'config', 'set', 'FOGGY_WORKSPACE', 'ws-1'], env);
+
+  const result = await run(['--json', 'task', 'list'], {
+    ...env,
+    FOGGY_URL: undefined,
+    FOGGY_WORKSPACE: undefined,
+  });
+  assert.equal(result.code, 0);
+  assert.equal(requests.at(-1)!.path, '/api/workspaces/ws-1/state');
 });

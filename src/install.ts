@@ -5,6 +5,7 @@ import {
   access,
   lstat,
   mkdir,
+  readdir,
   readFile,
   readlink,
   rename,
@@ -376,6 +377,8 @@ export interface UninstallResult {
   removed: string[];
   pathEntry: 'removed' | 'absent' | 'present';
   keptDataDir: string;
+  /** null when there was nothing to keep. */
+  keptConfigFile: string | null;
 }
 
 export async function uninstall(options: UninstallOptions = {}): Promise<UninstallResult> {
@@ -386,10 +389,12 @@ export async function uninstall(options: UninstallOptions = {}): Promise<Uninsta
   const executable = join(binDir, 'foggy');
   const removed: string[] = [];
 
+  const configFile = join(root, 'config.json');
+
   const { owner } = await executableOwner(executable, root);
   if (owner === 'foreign') {
     const pathEntry = await pathEntryState({ ...options, home, binDir });
-    return { removed, pathEntry, keptDataDir: dataDirectory(env) };
+    return { removed, pathEntry, keptDataDir: dataDirectory(env), keptConfigFile: null };
   }
 
   if ((await readRunningPid(env)) !== null) await stopServer({ env });
@@ -399,9 +404,29 @@ export async function uninstall(options: UninstallOptions = {}): Promise<Uninsta
     removed.push(executable);
   }
   const pathEntry = await removePathEntry({ ...options, home, binDir });
-  if (await exists(root)) {
+  // The user's tokens and settings survive an uninstall, the same way their task data does.
+  // Only a missing file means there is nothing to keep: any other read failure would delete
+  // credentials the caller was promised would be preserved, so it stops the uninstall instead.
+  const config = await readFile(configFile).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === 'ENOENT') return null;
+    throw error;
+  });
+  // Removing the root would only recreate it to hold the settings, so when that is all it
+  // holds there is nothing left to remove and a repeated uninstall reports honestly.
+  const contents = await readdir(root).catch(() => [] as string[]);
+  const onlySettings = config !== null && contents.length === 1 && contents[0] === 'config.json';
+  if ((await exists(root)) && !onlySettings) {
     await rm(root, { recursive: true, force: true });
     removed.push(root);
+    if (config !== null) {
+      await mkdir(root, { recursive: true });
+      await writeFile(configFile, config, { mode: 0o600 });
+    }
   }
-  return { removed, pathEntry, keptDataDir: dataDirectory(env) };
+  return {
+    removed,
+    pathEntry,
+    keptDataDir: dataDirectory(env),
+    keptConfigFile: config === null ? null : configFile,
+  };
 }

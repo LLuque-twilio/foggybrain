@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
 import { DomainError, Store } from './core.js';
 import { GithubPoller } from './github.js';
-import { createApp, readConfig, startServer, type AppOptions } from './server.js';
+import { createApp, loadEnvironment, readConfig, startServer, type AppOptions } from './server.js';
 import { WorkspaceManager } from './workspaces.js';
 import type { Snapshot, SyncPreview, SyncStatus, TaskView } from './shared.js';
 
@@ -1203,4 +1203,64 @@ test('real Store derives PR merge gates and propagates reopened verified state a
   await poller.sync();
   assert.equal(store.snapshot().tasks.find((task) => task.id === dependent.id)!.status, 'ready');
   assert.equal(store.snapshot().tasks.find((task) => task.id === pr.id)!.prState, 'open');
+});
+
+test('loadEnvironment prefers the process environment, then config.json, then .env', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'foggy-env-'));
+  const configPath = join(directory, 'config.json');
+  const dotenvPath = join(directory, '.env');
+  writeFileSync(
+    configPath,
+    JSON.stringify({
+      FOGGY_PORT: '5000',
+      GH_TOKEN: 'from-config',
+      FOGGY_URL: 'http://127.0.0.1:1/',
+    }),
+  );
+  writeFileSync(
+    dotenvPath,
+    'FOGGY_PORT=6000\nGH_TOKEN=from-dotenv\nFOGGY_SYNC_TOKEN=from-dotenv\n',
+  );
+  const env: NodeJS.ProcessEnv = { FOGGY_PORT: '7000' };
+
+  await loadEnvironment(env, { configPath, dotenvPaths: [dotenvPath] });
+
+  assert.equal(env.FOGGY_PORT, '7000', 'the process environment wins');
+  assert.equal(env.GH_TOKEN, 'from-config', 'config.json beats .env');
+  assert.equal(env.FOGGY_SYNC_TOKEN, 'from-dotenv', '.env still fills what nothing else supplies');
+  assert.equal(readConfig(env).port, 7000);
+  rmSync(directory, { recursive: true, force: true });
+});
+
+test('loadEnvironment refuses to start on a configuration file it cannot use', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'foggy-env-'));
+  const configPath = join(directory, 'config.json');
+  writeFileSync(configPath, JSON.stringify({ FOGGY_PORT: '0' }));
+  // The CLI tolerates this and warns; the server must not quietly bind a different port.
+  await assert.rejects(
+    loadEnvironment({}, { configPath, dotenvPaths: [] }),
+    (error: Error) =>
+      /between 1 and 65535/.test(error.message) && error.message.includes(configPath),
+  );
+  rmSync(directory, { recursive: true, force: true });
+});
+
+test('loadEnvironment tolerates a missing config file', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'foggy-env-'));
+  const env: NodeJS.ProcessEnv = {};
+  await loadEnvironment(env, { configPath: join(directory, 'config.json'), dotenvPaths: [] });
+  assert.deepEqual(env, {});
+  rmSync(directory, { recursive: true, force: true });
+});
+
+test('loadEnv false reads nothing from disk, config file included', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'foggy-env-'));
+  const configPath = join(directory, 'config.json');
+  // Tests that isolate themselves by deleting a variable rely on this: a developer's real
+  // saved FOGGY_SYNC_TOKEN must not reappear and point a test server at a live repository.
+  writeFileSync(configPath, JSON.stringify({ FOGGY_SYNC_TOKEN: 'real-token' }));
+  const env: NodeJS.ProcessEnv = {};
+  await loadEnvironment(env, { configPath, loadEnv: false });
+  assert.deepEqual(env, {});
+  rmSync(directory, { recursive: true, force: true });
 });
