@@ -4,6 +4,7 @@ import { dirname, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import type {
   ConnectTaskInput,
+  CreateTagInput,
   CreateTaskInput,
   DeletionPreview,
   Dependency,
@@ -16,6 +17,9 @@ import type {
   Task,
   TaskReference,
   TaskView,
+  Tag,
+  TagDeletionPreview,
+  UpdateTagInput,
   UpdateTaskInput,
 } from './shared.js';
 
@@ -33,8 +37,16 @@ interface StoredSnapshot {
   tasks: Task[];
   dependencies: Dependency[];
   references: TaskReference[];
+  tags: Tag[];
   layouts: Layout[];
 }
+
+export const FAVORITES_TAG: Tag = {
+  id: 'favorites',
+  name: 'Favorites',
+  color: '#d4af37',
+  system: true,
+};
 
 function objectInput(value: unknown, keys: string[]): asserts value is Record<string, unknown> {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
@@ -65,6 +77,39 @@ function containerById(state: StoredSnapshot, id: unknown): Task {
   return task;
 }
 
+function tagById(state: StoredSnapshot, id: unknown): Tag {
+  text(id, 'Tag ID', true);
+  const tag = state.tags.find((candidate) => candidate.id === id);
+  if (!tag) throw new DomainError('Tag not found', 404);
+  return tag;
+}
+
+function tagName(value: unknown): string {
+  const name = text(value, 'Tag name', true);
+  if (name !== value) throw new DomainError('Tag name must be trimmed');
+  if (name.length > 40) throw new DomainError('Tag name must be at most 40 characters');
+  return name;
+}
+
+function tagColor(value: unknown): string {
+  const color = text(value, 'Tag color');
+  if (!/^#[0-9a-fA-F]{6}$/.test(color))
+    throw new DomainError('Tag color must be a 6-digit hex color');
+  return color;
+}
+
+function validateTagIds(state: StoredSnapshot, value: unknown, allowFavorites = true): string[] {
+  if (!Array.isArray(value) || value.some((id) => typeof id !== 'string'))
+    throw new DomainError('tagIds must be an array of tag IDs');
+  if (!allowFavorites && value.includes(FAVORITES_TAG.id))
+    throw new DomainError('Favorites must be changed through its membership route');
+  if (new Set(value).size !== value.length) throw new DomainError('Duplicate tag ID');
+  if (value.filter((id) => id !== FAVORITES_TAG.id).length > 3)
+    throw new DomainError('A task can have at most 3 custom tags');
+  for (const id of value) tagById(state, id);
+  return [...value];
+}
+
 function normalizePrUrl(value: unknown): string {
   const raw = text(value, 'PR URL', true);
   const match =
@@ -85,7 +130,7 @@ function normalizePrUrl(value: unknown): string {
 }
 
 function insertTask(state: StoredSnapshot, input: CreateTaskInput): Task {
-  objectInput(input, ['title', 'description', 'kind', 'parentId', 'prUrl']);
+  objectInput(input, ['title', 'description', 'kind', 'parentId', 'prUrl', 'tagIds']);
   const title = text(input.title, 'Title', true);
   const description = input.description === undefined ? '' : text(input.description, 'Description');
   if (!['container', 'manual', 'pr'].includes(input.kind))
@@ -111,6 +156,7 @@ function insertTask(state: StoredSnapshot, input: CreateTaskInput): Task {
     prMergeStatus: 'unknown',
     prCheckedAt: null,
     prError: null,
+    tagIds: validateTagIds(state, input.tagIds ?? []),
     createdAt: now,
     updatedAt: now,
   };
@@ -200,17 +246,18 @@ function ownedIds(state: StoredSnapshot, id: string): Set<string> {
 }
 
 export const emptyPortableState = (): PortableState => ({
-  version: 1,
+  version: 2,
   tasks: [],
   dependencies: [],
   references: [],
+  tags: [],
 });
 
 function portable(state: StoredSnapshot): PortableState {
   return {
-    version: 1,
+    version: 2,
     tasks: state.tasks
-      .map(({ id, title, description, kind, parentId, manualDone, prUrl }) => ({
+      .map(({ id, title, description, kind, parentId, manualDone, prUrl, tagIds }) => ({
         id,
         title,
         description,
@@ -218,6 +265,7 @@ function portable(state: StoredSnapshot): PortableState {
         parentId,
         manualDone,
         prUrl,
+        tagIds: [...tagIds],
       }))
       .sort(byId),
     dependencies: state.dependencies
@@ -225,6 +273,10 @@ function portable(state: StoredSnapshot): PortableState {
       .sort(byId),
     references: state.references
       .map(({ id, containerId, taskId }) => ({ id, containerId, taskId }))
+      .sort(byId),
+    tags: state.tags
+      .filter((tag) => tag.id !== FAVORITES_TAG.id)
+      .map(({ id, name, color, system }) => ({ id, name, color, system }))
       .sort(byId),
   };
 }
@@ -234,19 +286,27 @@ function byId(a: { id: string }, b: { id: string }): number {
 }
 
 export function validatePortableState(value: unknown): PortableState {
-  objectInput(value, ['version', 'tasks', 'dependencies', 'references']);
-  if (value.version !== 1) throw new DomainError('Unsupported state version');
+  objectInput(value, ['version', 'tasks', 'dependencies', 'references', 'tags']);
+  if (value.version !== 1 && value.version !== 2)
+    throw new DomainError('Unsupported state version');
+  const version = value.version;
+  if (version === 1 && 'tags' in value) throw new DomainError('Unexpected input field');
+  if (version === 2 && !('tags' in value)) throw new DomainError('Missing state field');
   const fields = {
-    tasks: ['id', 'title', 'description', 'kind', 'parentId', 'manualDone', 'prUrl'],
+    tasks:
+      version === 1
+        ? ['id', 'title', 'description', 'kind', 'parentId', 'manualDone', 'prUrl']
+        : ['id', 'title', 'description', 'kind', 'parentId', 'manualDone', 'prUrl', 'tagIds'],
     dependencies: ['id', 'prerequisiteId', 'dependentId'],
     references: ['id', 'containerId', 'taskId'],
+    tags: ['id', 'name', 'color', 'system'],
   };
   const id = (value: unknown) => {
     if (typeof value !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(value) || value === 'root')
       throw new DomainError('Invalid state ID');
   };
-  for (const collection of ['tasks', 'dependencies', 'references'] as const) {
-    const items = value[collection];
+  for (const collection of ['tasks', 'dependencies', 'references', 'tags'] as const) {
+    const items = collection === 'tags' && version === 1 ? [] : value[collection];
     if (!Array.isArray(items)) throw new DomainError('State collections must be arrays');
     const seen = new Set<string>();
     for (const item of items) {
@@ -269,14 +329,41 @@ export function validatePortableState(value: unknown): PortableState {
           if (normalizePrUrl(item.prUrl) !== item.prUrl)
             throw new DomainError('PR URL must be normalized');
         } else if (item.prUrl !== null) throw new DomainError('Containers cannot have a PR URL');
+        if (version === 2) {
+          if (!Array.isArray(item.tagIds) || item.tagIds.some((tagId) => typeof tagId !== 'string'))
+            throw new DomainError('tagIds must be an array of tag IDs');
+          if (new Set(item.tagIds).size !== item.tagIds.length)
+            throw new DomainError('Duplicate tag ID');
+          if (item.tagIds.filter((tagId) => tagId !== FAVORITES_TAG.id).length > 3)
+            throw new DomainError('A task can have at most 3 custom tags');
+        }
+      } else if (collection === 'tags') {
+        if (item.id === FAVORITES_TAG.id || item.system !== false)
+          throw new DomainError('Portable state cannot define system tags');
+        tagName(item.name);
+        tagColor(item.color);
       } else {
         for (const field of fields[collection].slice(1)) id(item[field]);
       }
     }
   }
-  const input = value as unknown as PortableState;
+  const tags = (version === 2 ? value.tags : []) as Tag[];
+  const names = new Set<string>([FAVORITES_TAG.name.toLowerCase()]);
+  for (const tag of tags) {
+    const key = tag.name.toLowerCase();
+    if (names.has(key)) throw new DomainError('Duplicate tag name');
+    names.add(key);
+  }
+  const portableTasks = (value.tasks as unknown as PortableState['tasks']).map((task) => ({
+    ...task,
+    tagIds: version === 1 ? [] : [...task.tagIds],
+  }));
+  const knownTags = new Set([FAVORITES_TAG.id, ...tags.map((tag) => tag.id)]);
+  for (const task of portableTasks)
+    for (const tagId of task.tagIds)
+      if (!knownTags.has(tagId)) throw new DomainError('Task references a missing tag');
   const state: StoredSnapshot = {
-    tasks: input.tasks.map((task) => ({
+    tasks: portableTasks.map((task) => ({
       ...task,
       prState: 'unknown',
       prMergeStatus: 'unknown',
@@ -285,8 +372,9 @@ export function validatePortableState(value: unknown): PortableState {
       createdAt: '',
       updatedAt: '',
     })),
-    dependencies: input.dependencies,
-    references: input.references,
+    dependencies: value.dependencies as unknown as Dependency[],
+    references: value.references as unknown as TaskReference[],
+    tags,
     layouts: [],
   };
   for (const task of state.tasks) if (task.parentId !== null) containerById(state, task.parentId);
@@ -352,7 +440,9 @@ export class Store {
       `);
       this.db
         .prepare('INSERT OR IGNORE INTO foggybrain_snapshot (id, payload) VALUES (1, ?)')
-        .run(JSON.stringify({ tasks: [], dependencies: [], references: [], layouts: [] }));
+        .run(
+          JSON.stringify({ tasks: [], dependencies: [], references: [], tags: [], layouts: [] }),
+        );
     } catch (error) {
       this.db.close();
       throw error;
@@ -362,7 +452,13 @@ export class Store {
   private read(): StoredSnapshot {
     const row = this.db.prepare('SELECT payload FROM foggybrain_snapshot WHERE id = 1').get()!;
     const state = JSON.parse(row.payload as string) as StoredSnapshot;
-    for (const task of state.tasks) task.prMergeStatus ??= 'unknown';
+    state.tags ??= [];
+    if (!state.tags.some((tag) => tag.id === FAVORITES_TAG.id))
+      state.tags.push({ ...FAVORITES_TAG });
+    for (const task of state.tasks) {
+      task.prMergeStatus ??= 'unknown';
+      task.tagIds ??= [];
+    }
     return state;
   }
 
@@ -396,9 +492,14 @@ export class Store {
     const row = this.db
       .prepare('SELECT payload FROM foggybrain_sync WHERE target = ?')
       .get(JSON.stringify(target));
-    return row
-      ? (JSON.parse(row.payload as string) as SyncRecord)
-      : { base: null, lastSync: null, pending: null };
+    if (!row) return { base: null, lastSync: null, pending: null };
+    const record = JSON.parse(row.payload as string) as SyncRecord;
+    if (record.base) record.base = validatePortableState(record.base);
+    if (record.pending) {
+      record.pending.local = validatePortableState(record.pending.local);
+      record.pending.merged = validatePortableState(record.pending.merged);
+    }
+    return record;
   }
 
   private writeSyncRecord(target: SyncTarget, record: SyncRecord): void {
@@ -470,7 +571,15 @@ export class Store {
         const samePr =
           old && old.kind === task.kind && task.prUrl !== null && old.prUrl === task.prUrl;
         const unchanged =
-          old && Object.entries(task).every(([key, value]) => old[key as keyof Task] === value);
+          old &&
+          Object.entries(task).every(([key, value]) => {
+            const previous = old[key as keyof Task];
+            return Array.isArray(value)
+              ? Array.isArray(previous) &&
+                  value.length === previous.length &&
+                  value.every((item, index) => item === previous[index])
+              : previous === value;
+          });
         return {
           ...task,
           createdAt: old?.createdAt ?? now,
@@ -483,6 +592,7 @@ export class Store {
       });
       state.dependencies = merged.dependencies;
       state.references = merged.references;
+      state.tags = [...merged.tags, { ...FAVORITES_TAG }];
       const tasks = new Map(state.tasks.map((task) => [task.id, task]));
       state.layouts = state.layouts
         .filter(
@@ -563,12 +673,13 @@ export class Store {
   }
 
   updateTask(id: string, input: UpdateTaskInput): TaskView {
-    objectInput(input, ['title', 'description', 'prUrl']);
+    objectInput(input, ['title', 'description', 'prUrl', 'tagIds']);
     if (!Object.keys(input).length) throw new DomainError('At least one field is required');
     return this.mutate((state) => {
       const task = taskById(state, id);
       if ('title' in input) task.title = text(input.title, 'Title', true);
       if ('description' in input) task.description = text(input.description, 'Description');
+      if ('tagIds' in input) task.tagIds = validateTagIds(state, input.tagIds);
       if ('prUrl' in input) {
         if (task.kind === 'container') throw new DomainError('Containers cannot have a PR URL');
         const prUrl =
@@ -583,6 +694,106 @@ export class Store {
       }
       task.updatedAt = new Date().toISOString();
     }).tasks.find((task) => task.id === id)!;
+  }
+
+  createTag(input: CreateTagInput): Tag {
+    objectInput(input, ['name', 'color']);
+    const tag: Tag = {
+      id: randomUUID(),
+      name: tagName(input.name),
+      color: tagColor(input.color),
+      system: false,
+    };
+    this.mutate((state) => {
+      if (state.tags.some((candidate) => candidate.name.toLowerCase() === tag.name.toLowerCase()))
+        throw new DomainError('Tag name already exists');
+      state.tags.push(tag);
+    });
+    return { ...tag };
+  }
+
+  updateTag(id: string, input: UpdateTagInput): Tag {
+    objectInput(input, ['name', 'color']);
+    if (!Object.keys(input).length) throw new DomainError('At least one field is required');
+    let updated!: Tag;
+    this.mutate((state) => {
+      const tag = tagById(state, id);
+      if (tag.system) throw new DomainError('System tags cannot be changed');
+      if ('name' in input) {
+        const name = tagName(input.name);
+        if (
+          state.tags.some(
+            (candidate) =>
+              candidate.id !== tag.id && candidate.name.toLowerCase() === name.toLowerCase(),
+          )
+        )
+          throw new DomainError('Tag name already exists');
+        tag.name = name;
+      }
+      if ('color' in input) tag.color = tagColor(input.color);
+      updated = { ...tag };
+    });
+    return updated;
+  }
+
+  previewTagDeletion(id: string): TagDeletionPreview {
+    const state = this.read();
+    const tag = tagById(state, id);
+    if (tag.system) throw new DomainError('System tags cannot be deleted');
+    return {
+      tag: { ...tag },
+      affectedTasks: derive(state).tasks.filter((task) => task.tagIds.includes(tag.id)),
+    };
+  }
+
+  deleteTag(id: string): string[] {
+    let detachedTaskIds: string[] = [];
+    this.mutate((state) => {
+      const tag = tagById(state, id);
+      if (tag.system) throw new DomainError('System tags cannot be deleted');
+      state.tags = state.tags.filter((candidate) => candidate.id !== tag.id);
+      for (const task of state.tasks) {
+        if (!task.tagIds.includes(tag.id)) continue;
+        task.tagIds = task.tagIds.filter((tagId) => tagId !== tag.id);
+        task.updatedAt = new Date().toISOString();
+        detachedTaskIds.push(task.id);
+      }
+    });
+    return detachedTaskIds;
+  }
+
+  replaceTaskTags(id: string, tagIds: string[]): TaskView {
+    return this.mutate((state) => {
+      const task = taskById(state, id);
+      const custom = validateTagIds(state, tagIds, false);
+      task.tagIds = [
+        ...(task.tagIds.includes(FAVORITES_TAG.id) ? [FAVORITES_TAG.id] : []),
+        ...custom,
+      ];
+      task.updatedAt = new Date().toISOString();
+    }).tasks.find((task) => task.id === id)!;
+  }
+
+  attachTaskTag(taskId: string, tagId: string): TaskView {
+    return this.mutate((state) => {
+      const task = taskById(state, taskId);
+      tagById(state, tagId);
+      if (!task.tagIds.includes(tagId)) {
+        task.tagIds = validateTagIds(state, [...task.tagIds, tagId]);
+        task.updatedAt = new Date().toISOString();
+      }
+    }).tasks.find((task) => task.id === taskId)!;
+  }
+
+  detachTaskTag(taskId: string, tagId: string): TaskView {
+    return this.mutate((state) => {
+      const task = taskById(state, taskId);
+      tagById(state, tagId);
+      if (task.tagIds.includes(tagId)) {
+        task.tagIds = task.tagIds.filter((id) => id !== tagId);
+        task.updatedAt = new Date().toISOString();
+      }
+    }).tasks.find((task) => task.id === taskId)!;
   }
 
   setDone(id: string, done: boolean): TaskView {

@@ -24,6 +24,12 @@ PR URLs are normalized HTTPS `github.com/{owner}/{repo}/pull/{number}` URLs only
 
 Polling runs only while the server runs. Failures retain last-verified values and report sanitized errors, so completion can reflect stale verification. A non-null `prError` means stale/incomplete verification; `prCheckedAt` is the latest attempt, not necessarily a successful check. A successful GitHub status/refresh HTTP response is not proof that GitHub succeeded: inspect status/error fields. See [PR verification](docs/pr-verification.md) for readiness precedence and partial-failure rules.
 
+## Tags And Favorites
+
+Tags are workspace-scoped. Names are trimmed, nonempty, at most 40 characters, and unique case-insensitively; colors are six-digit hex values. A task may carry at most three custom tags with no duplicate memberships. Every membership references an existing tag.
+
+Favorites is the permanent system tag `favorites` (`Favorites`, `#d4af37`). It is synthesized on every stored-state read and cannot be created, edited, or deleted. Favorites membership does not count toward the custom-tag limit. Whole custom-set replacement preserves Favorites; individual membership operations are idempotent. Deleting a custom tag requires confirmation and atomically strips it from every task.
+
 ## Workspaces
 
 Workspace management is always unscoped. Domain requests may use the persisted default or an explicit workspace; **unknown or removed explicit IDs fail without fallback**. Unscoped domain requests return 404 when no default exists, while management and health remain accessible. Workspaces isolate local graphs, layouts, and sync bookkeeping.
@@ -48,9 +54,11 @@ Sync apply uses a reviewed, applicable, single-use preview ID and explicit confi
 
 Manual state sync is separate from PR polling; no background workspace sync runs. Status inspects local configuration/baseline without contacting GitHub. Merge preview computes a three-way merge; conflict resolution chooses only conflicting values, retaining nonconflicting work from both sides. It cannot bypass graph validation or a missing baseline. Inspect both change lists, conflicts, validation errors, and applicability even on successful HTTP responses. Change lists describe proposed changes to each side, not changes since the baseline.
 
-Portable versioned JSON preserves editable task/relationship identities but excludes layouts, timestamps, derived completion, and PR verification. Runtime validation checks imported fields and the whole merged graph using the existing completion/cycle algorithm. Imported PRs must be verified locally; matching local verification follows the identity rules above. Layouts are preserved and cleaned of removed tasks.
+Portable versioned JSON preserves editable task, tag, and relationship identities but excludes layouts, timestamps, derived completion, and PR verification. Version 1 input upgrades in memory to version 2 with no custom tags or memberships; output is always version 2. The canonical Favorites definition is omitted and rejected in portable files, while `favorites` memberships remain valid. Runtime validation checks imported fields, tag memberships, and the whole merged graph using the existing completion/cycle algorithm. Imported PRs must be verified locally; matching local verification follows the identity rules above. Layouts are preserved and cleaned of removed tasks.
 
 SQLite retains a per-target common baseline and pending upload intent across restarts. Each workspace's server-side preview is process-local, replaced on re-preview, and consumed on apply. Apply never creates a preview or retries a remote write; stale local/remote state is rejected. Two nonempty sides without a baseline cannot be automatically reconciled: preserve both rather than wiping data to bypass the guard. Concurrent local edits during upload remain preserved and unsynced. Definitively rejected writes restore prior sync bookkeeping; ambiguous failures retain intent and require a new preview, potentially manual reconciliation. Re-preview after restart, edits, failures, or timeouts.
+
+Concurrent tag deletion versus assignment is represented as a synthetic `tags/{id}/memberships` conflict. Resolving it chooses that side's tag definition and complete membership set as one unit, while retaining ordinary merge results for other fields.
 
 **Revert to origin** is exact local portable graph replacement from the configured target, not a merge, `resolve remote`, or GitHub rollback. Preview freshly fetches an existing valid remote file; a valid empty graph may delete all local tasks, but missing/invalid files never imply clearing state. Revert rejects conflict resolution and reports local changes with no remote changes/conflicts. Uncertain pending uploads block revert until reconciled.
 

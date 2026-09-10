@@ -11,6 +11,7 @@ import type {
   Snapshot,
   SyncPreview,
   SyncStatus,
+  Tag,
   TaskView,
   UpdateTaskInput,
   UpdateWorkspaceInput,
@@ -179,6 +180,25 @@ export async function main(argv = process.argv): Promise<void> {
       );
     }
   };
+  const collectTag = (value: string, previous: string[] = []): string[] => [...previous, value];
+  const taskTagOptions = (command: Command): Command =>
+    command
+      .option('--tag <id>', 'replace all custom tags (repeatable, up to 3)', collectTag)
+      .addOption(new Option('--star', 'add the Favorites tag').conflicts('unstar'))
+      .addOption(new Option('--unstar', 'remove the Favorites tag').conflicts('star'));
+  const customTagIds = (options: { tag?: string[] }): string[] | undefined => {
+    if (options.tag === undefined) return undefined;
+    if (options.tag.includes('favorites'))
+      throw new Error('Use --star or --unstar to change the Favorites tag.');
+    if (options.tag.length > 3) throw new Error('A task can have at most 3 custom tags.');
+    return options.tag;
+  };
+  const updateStar = (id: string, options: { star?: boolean; unstar?: boolean }) =>
+    options.star
+      ? request<TaskView>(`/tasks/${encodeURIComponent(id)}/tags/favorites`, 'PUT', {})
+      : options.unstar
+        ? request<TaskView>(`/tasks/${encodeURIComponent(id)}/tags/favorites`, 'DELETE')
+        : undefined;
   const missingCommand = (command: string) => () => {
     throw new Error(`Specify a ${command}command. Run foggy ${command}--help for usage.`);
   };
@@ -267,8 +287,7 @@ export async function main(argv = process.argv): Promise<void> {
     .command('task')
     .description('Create, inspect, and manage tasks')
     .action(missingCommand('task '));
-  task
-    .command('create <title>')
+  taskTagOptions(task.command('create <title>'))
     .description('Create a task; IDs are assigned by the server')
     .addOption(
       new Option('--kind <kind>', 'task kind')
@@ -278,17 +297,17 @@ export async function main(argv = process.argv): Promise<void> {
     .option('--parent <id>', 'owning container ID (omit for root)')
     .option('--pr <url>', 'GitHub pull request URL (optional manual gate; required for PR tasks)')
     .option('--description <text>', 'task description')
-    .action(async (title, options) =>
-      output(
-        await request('/tasks', 'POST', {
-          title,
-          kind: options.kind,
-          parentId: options.parent,
-          prUrl: options.pr,
-          description: options.description,
-        }),
-      ),
-    );
+    .action(async (title, options) => {
+      const created = await request<TaskView>('/tasks', 'POST', {
+        title,
+        kind: options.kind,
+        parentId: options.parent,
+        prUrl: options.pr,
+        description: options.description,
+        tagIds: customTagIds(options),
+      });
+      output((await updateStar(created.id, options)) ?? created);
+    });
   task
     .command('connect <id>')
     .description('Atomically connect an existing/new task or insert it into one dependency edge')
@@ -341,6 +360,8 @@ export async function main(argv = process.argv): Promise<void> {
     .command('list')
     .description('List tasks; parent filtering is ownership, not references')
     .option('--parent <id>', 'owning container ID, or root for unowned tasks')
+    .option('--tag <id>', 'match any tag ID (repeatable)', collectTag)
+    .option('--starred', 'match tasks with the Favorites tag')
     .addOption(
       new Option('--status <status>', 'derived task status').choices([
         'available',
@@ -362,7 +383,11 @@ export async function main(argv = process.argv): Promise<void> {
         (task) =>
           (options.parent === undefined ||
             task.parentId === (options.parent === 'root' ? null : options.parent)) &&
-          (options.status === undefined || task.status === options.status),
+          (options.status === undefined || task.status === options.status) &&
+          ((options.tag === undefined && !options.starred) ||
+            [...(options.tag ?? []), ...(options.starred ? ['favorites'] : [])].some((tagId) =>
+              task.tagIds.includes(tagId),
+            )),
       );
       if (program.opts().json) output(tasks);
       else printTasks(tasks);
@@ -378,6 +403,7 @@ export async function main(argv = process.argv): Promise<void> {
       );
       output({
         ...task,
+        tags: snapshot.tags.filter((tag) => task.tagIds.includes(tag.id)),
         children: snapshot.tasks.filter((child) => task.childrenIds.includes(child.id)),
         prerequisites: snapshot.tasks.filter((candidate) =>
           dependencies.some(
@@ -395,8 +421,7 @@ export async function main(argv = process.argv): Promise<void> {
         ),
       });
     });
-  task
-    .command('update <id>')
+  taskTagOptions(task.command('update <id>'))
     .description('Update editable fields; use --description "" to clear a description')
     .option('--title <title>', 'new title')
     .option('--description <text>', 'new description')
@@ -408,9 +433,25 @@ export async function main(argv = process.argv): Promise<void> {
         description: options.description,
         prUrl: options.removePr ? null : options.pr,
       };
-      if (Object.values(body).every((value) => value === undefined))
-        throw new Error('Provide at least one of --title, --description, --pr, or --remove-pr.');
-      output(await request(`/tasks/${encodeURIComponent(id)}`, 'PATCH', body));
+      const tagIds = customTagIds(options);
+      if (
+        Object.values(body).every((value) => value === undefined) &&
+        tagIds === undefined &&
+        !options.star &&
+        !options.unstar
+      )
+        throw new Error(
+          'Provide at least one of --title, --description, --pr, --remove-pr, --tag, --star, or --unstar.',
+        );
+      let updated: TaskView | undefined;
+      if (Object.values(body).some((value) => value !== undefined))
+        updated = await request<TaskView>(`/tasks/${encodeURIComponent(id)}`, 'PATCH', body);
+      if (tagIds !== undefined)
+        updated = await request<TaskView>(`/tasks/${encodeURIComponent(id)}/tags`, 'PUT', {
+          tagIds,
+        });
+      updated = (await updateStar(id, options)) ?? updated;
+      output(updated);
     });
   for (const [name, done] of [
     ['done', true],
@@ -462,6 +503,77 @@ export async function main(argv = process.argv): Promise<void> {
         let answer: string;
         try {
           answer = await terminal.question('Delete these tasks? Type yes to confirm: ', {
+            signal: cancelled.signal,
+          });
+        } catch (error) {
+          if (cancelled.signal.aborted) throw new Error('Deletion cancelled.');
+          throw error;
+        } finally {
+          terminal.close();
+        }
+        if (answer.trim().toLowerCase() !== 'yes') throw new Error('Deletion cancelled.');
+      }
+      output(await request(`${path}?confirm=true`, 'DELETE'));
+    });
+
+  const tag = program
+    .command('tag')
+    .description('Create and manage workspace tags')
+    .action(missingCommand('tag '));
+  tag
+    .command('create <name>')
+    .description('Create a custom tag')
+    .requiredOption('--color <hex>', 'tag color as #RRGGBB')
+    .action(async (name, options) =>
+      output(await request<Tag>('/tags', 'POST', { name, color: options.color })),
+    );
+  tag
+    .command('list')
+    .description('List workspace tags, including Favorites')
+    .action(async () => output((await state()).tags));
+  tag
+    .command('update <id>')
+    .description('Rename or recolor a custom tag')
+    .option('--name <name>', 'new tag name')
+    .option('--color <hex>', 'new tag color as #RRGGBB')
+    .action(async (id, options) => {
+      const body = { name: options.name, color: options.color };
+      if (Object.values(body).every((value) => value === undefined))
+        throw new Error('Provide at least one of --name or --color.');
+      output(await request<Tag>(`/tags/${encodeURIComponent(id)}`, 'PATCH', body));
+    });
+  tag
+    .command('delete <id>')
+    .description('Preview task detachments and require confirmation')
+    .option('--dry-run', 'return the deletion preview without deleting or prompting')
+    .option('--yes', 'explicitly confirm deletion without a prompt')
+    .action(async (id, options) => {
+      const path = `/tags/${encodeURIComponent(id)}`;
+      const preview = await request<{ tag: Tag; affectedTasks: TaskView[] }>(
+        `${path}/deletion-preview`,
+      );
+      if (options.dryRun) {
+        output(preview);
+        return;
+      }
+      if (!options.yes) {
+        if (!process.stdin.isTTY || !process.stderr.isTTY)
+          throw new Error(
+            'Tag deletion requires --yes without a terminal. Inspect tag delete <id> --dry-run first.',
+          );
+        process.stderr.write(
+          `Will delete tag ${preview.tag.id}\t${JSON.stringify(preview.tag.name)} and detach it from these tasks:\n`,
+        );
+        for (const task of preview.affectedTasks)
+          process.stderr.write(`  ${task.id}\t${JSON.stringify(task.title)}\n`);
+        if (!preview.affectedTasks.length) process.stderr.write('  (none)\n');
+        const terminal = createInterface({ input: process.stdin, output: process.stderr });
+        const cancelled = new AbortController();
+        terminal.once('close', () => cancelled.abort());
+        terminal.once('SIGINT', () => cancelled.abort());
+        let answer: string;
+        try {
+          answer = await terminal.question('Delete this tag? Type yes to confirm: ', {
             signal: cancelled.signal,
           });
         } catch (error) {
@@ -527,6 +639,7 @@ export async function main(argv = process.argv): Promise<void> {
         graph = {
           viewId: containerId,
           tasks: snapshot.tasks.filter((task) => ids.has(task.id)),
+          tags: snapshot.tags,
           dependencies: snapshot.dependencies.filter(
             (edge) => ids.has(edge.prerequisiteId) && ids.has(edge.dependentId),
           ),

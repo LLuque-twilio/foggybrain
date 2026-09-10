@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { ArrowRight, Plus } from 'lucide-react';
-import type { ConnectTaskInput, GithubPr, GithubStatus, Snapshot, TaskView } from '../shared';
+import type { ConnectTaskInput, GithubPr, GithubStatus, Snapshot, Tag, TaskView } from '../shared';
 import { Dialog, TaskDialog } from './Dialogs';
 import { SearchableSelect } from './SearchableSelect';
 
@@ -14,6 +14,9 @@ export function DependencyDialog({
   close,
   clearError,
   submit,
+  createTag,
+  renameTag,
+  deleteTag,
 }: {
   task: TaskView;
   direction: ConnectTaskInput['direction'];
@@ -24,6 +27,9 @@ export function DependencyDialog({
   close: () => void;
   clearError: () => void;
   submit: (input: ConnectTaskInput) => Promise<boolean>;
+  createTag: (name: string, color: string) => Promise<Tag | undefined>;
+  renameTag: (id: string, name: string, color: string) => Promise<boolean>;
+  deleteTag: (tag: Tag) => void;
 }) {
   const [mode, setMode] = useState<'leaf' | 'chain'>('leaf');
   const [dependencyId, setDependencyId] = useState('');
@@ -60,6 +66,9 @@ export function DependencyDialog({
         prs={prs}
         github={github}
         busy={busy}
+        createTag={createTag}
+        renameTag={renameTag}
+        deleteTag={deleteTag}
         close={() => {
           if (busy) return;
           clearError();

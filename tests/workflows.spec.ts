@@ -21,6 +21,9 @@ test.beforeEach(async ({ request }) => {
   for (const task of snapshot.tasks.filter((task) => task.parentId === null)) {
     expect((await request.delete(`/api/tasks/${task.id}?confirm=true`)).ok()).toBeTruthy();
   }
+  for (const tag of snapshot.tags.filter((tag) => !tag.system)) {
+    expect((await request.delete(`/api/tags/${tag.id}?confirm=true`)).ok()).toBeTruthy();
+  }
 });
 
 test('create/edit through UI, keyboard dialog, local assets, and responsive shell', async ({
@@ -376,6 +379,7 @@ for (const { kind, label, direction } of [
         description: '',
         kind,
         parentId: parent.id,
+        tagIds: [],
         ...(kind === 'pr' ? { prUrl } : {}),
       },
     });
@@ -458,6 +462,123 @@ test('canceling inline creation restores chain placement and existing selection 
   expect(after.tasks).toEqual(before.tasks);
   expect(after.dependencies).toEqual(before.dependencies);
   expect(after.references).toEqual(before.references);
+});
+
+test('list filters with OR semantics, stars tasks, and opens leaves and containers appropriately', async ({
+  request,
+  page,
+}) => {
+  const alphaResponse = await request.post('/api/tags', {
+    data: { name: 'Alpha', color: '#7c5cff' },
+  });
+  const betaResponse = await request.post('/api/tags', {
+    data: { name: 'Beta', color: '#4f8a67' },
+  });
+  expect(alphaResponse.ok()).toBeTruthy();
+  expect(betaResponse.ok()).toBeTruthy();
+  const alpha = (await alphaResponse.json()) as { id: string };
+  const beta = (await betaResponse.json()) as { id: string };
+  const containerResponse = await request.post('/api/tasks', {
+    data: { title: 'Tagged container', kind: 'container', tagIds: [alpha.id] },
+  });
+  const alphaTaskResponse = await request.post('/api/tasks', {
+    data: { title: 'Alpha task', kind: 'manual', tagIds: [alpha.id] },
+  });
+  const betaTaskResponse = await request.post('/api/tasks', {
+    data: { title: 'Beta task', kind: 'manual', tagIds: [beta.id] },
+  });
+  const container = (await containerResponse.json()) as TaskView;
+  const alphaTask = (await alphaTaskResponse.json()) as TaskView;
+  const betaTask = (await betaTaskResponse.json()) as TaskView;
+  expect(
+    (await request.put(`/api/tasks/${betaTask.id}/tags/favorites`, { data: {} })).ok(),
+  ).toBeTruthy();
+
+  await page.goto('/#/list');
+  const rows = page.locator('.task-list-row');
+  await expect(rows).toHaveCount(3);
+  await page.getByRole('button', { name: 'Alpha', exact: true }).click();
+  await expect(rows).toHaveCount(2);
+  await page.getByRole('button', { name: 'Beta', exact: true }).click();
+  await expect(rows).toHaveCount(3);
+  await page.getByRole('button', { name: 'Clear filters' }).click();
+  await page.getByRole('button', { name: 'Favorites', exact: true }).click();
+  await expect(rows).toHaveCount(1);
+  await expect(rows).toContainText('Beta task');
+  await page.getByRole('button', { name: 'Clear filters' }).click();
+
+  await page.getByText(alphaTask.title, { exact: true }).click();
+  await expect(page).toHaveURL(/#\/list$/);
+  const detail = page.getByRole('complementary', { name: 'Task details' });
+  await expect(detail).toBeVisible();
+  await detail.getByRole('button', { name: `Add ${alphaTask.title} to Favorites` }).click();
+  await expect(
+    detail.getByRole('button', { name: `Remove ${alphaTask.title} from Favorites` }),
+  ).toBeVisible();
+  await detail.getByRole('button', { name: 'Close task details' }).click();
+  await rows
+    .filter({ hasText: alphaTask.title })
+    .getByRole('button', { name: `Remove ${alphaTask.title} from Favorites` })
+    .click();
+  await expect(
+    rows
+      .filter({ hasText: alphaTask.title })
+      .getByRole('button', { name: `Add ${alphaTask.title} to Favorites` }),
+  ).toBeVisible();
+
+  await rows
+    .filter({ hasText: container.title })
+    .getByText(container.title, { exact: true })
+    .click();
+  await expect(page).toHaveURL(new RegExp(`#\/tasks\/${container.id}$`));
+});
+
+test('tag picker creates, caps, renames, previews deletion, and replaces dialog tags', async ({
+  request,
+  page,
+}) => {
+  const task = await create(request, 'Organize release');
+  await page.goto('/#/list');
+  await page.locator('.task-list-row').filter({ hasText: task.title }).click();
+  const detail = page.getByRole('complementary', { name: 'Task details' });
+  await detail.getByText('Add tag', { exact: true }).click();
+
+  for (const name of ['Focus', 'Plan', 'Later']) {
+    await detail.getByLabel('Find or create a tag').fill(name);
+    await detail.getByRole('button', { name: `Create tag '${name}'` }).click();
+    await detail.getByRole('button', { name: 'Create and add' }).click();
+    await expect(detail.getByRole('button', { name: `Remove tag ${name}` })).toBeVisible();
+  }
+  await expect(detail.locator('.tag-picker-trigger')).toHaveAttribute('aria-disabled', 'true');
+  await expect(detail.locator('.tag-picker-trigger')).toHaveAttribute(
+    'title',
+    'A task can have up to 3 tags. Favorites does not count.',
+  );
+
+  await detail.getByRole('button', { name: 'Edit tag Focus' }).click();
+  await detail.getByLabel('Rename Focus').fill('Deep focus');
+  await detail.getByRole('button', { name: 'Save Focus' }).click();
+  await expect(detail.getByText('Deep focus', { exact: true }).first()).toBeVisible();
+  await detail.getByRole('button', { name: 'Delete tag Deep focus' }).click();
+  const deleteDialog = page.getByRole('dialog', { name: 'Delete this tag?' });
+  await expect(deleteDialog).toContainText('Deep focus');
+  await expect(deleteDialog).toContainText('removed from 1 task');
+  await deleteDialog.getByRole('button', { name: 'Delete tag' }).click();
+  await expect(deleteDialog).not.toBeVisible();
+  await expect(detail.getByText('Deep focus', { exact: true })).toHaveCount(0);
+
+  await detail.getByRole('button', { name: 'Edit task', exact: true }).click();
+  const editDialog = page.getByRole('dialog', { name: 'Edit task' });
+  await editDialog.getByRole('button', { name: 'Remove tag Plan' }).click();
+  const replaced = page.waitForResponse(
+    (response) =>
+      response.url().endsWith(`/tasks/${task.id}/tags`) && response.request().method() === 'PUT',
+  );
+  await editDialog.getByRole('button', { name: 'Save changes' }).click();
+  const replacement = (await replaced).request().postDataJSON() as { tagIds: string[] };
+  expect(replacement.tagIds).toHaveLength(1);
+  await expect(detail.getByRole('button', { name: 'Remove tag Plan' })).toHaveCount(0);
+  await expect(detail.getByRole('button', { name: 'Remove tag Later' })).toBeVisible();
 });
 
 test('a cycle error stays inside the dependency popup and leaves the graph unchanged', async ({

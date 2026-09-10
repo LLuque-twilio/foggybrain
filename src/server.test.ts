@@ -10,7 +10,7 @@ import { DomainError, Store } from './core.js';
 import { GithubPoller } from './github.js';
 import { createApp, loadEnvironment, readConfig, startServer, type AppOptions } from './server.js';
 import { WorkspaceManager } from './workspaces.js';
-import type { Snapshot, SyncPreview, SyncStatus, TaskView } from './shared.js';
+import type { Snapshot, SyncPreview, SyncStatus, Tag, TaskView } from './shared.js';
 
 async function fixture(t: TestContext, options: AppOptions = {}) {
   const store = new Store(':memory:');
@@ -698,6 +698,62 @@ test('contract routes preserve core completion, relationship and deletion semant
   assert.deepEqual(snapshot.references, []);
   assert.deepEqual(snapshot.dependencies, []);
   assert.deepEqual(snapshot.layouts, []);
+});
+
+test('tag routes validate registry changes and atomic task memberships', async (t) => {
+  const { request } = await fixture(t);
+  const task = (await request('/api/tasks', 'POST', { title: 'Tagged', kind: 'manual' })).body;
+  const tags: Tag[] = [];
+  for (const [name, color] of [
+    ['One', '#111111'],
+    ['Two', '#222222'],
+    ['Three', '#333333'],
+  ]) {
+    const response = await request('/api/tags', 'POST', { name, color });
+    assert.equal(response.status, 201);
+    tags.push(response.body);
+  }
+  assert.equal((await request('/api/tags', 'POST', { name: 'one', color: '#ffffff' })).status, 400);
+  assert.equal((await request('/api/tags/favorites', 'PATCH', { color: '#000000' })).status, 400);
+  assert.equal((await request('/api/tags/favorites/deletion-preview')).status, 400);
+  assert.equal((await request('/api/tags/favorites?confirm=true', 'DELETE')).status, 400);
+  const replaced = await request(`/api/tasks/${task.id}/tags`, 'PUT', {
+    tagIds: tags.map((tag) => tag.id),
+  });
+  assert.equal(replaced.status, 200);
+  assert.deepEqual(
+    replaced.body.tagIds,
+    tags.map((tag) => tag.id),
+  );
+  assert.equal(
+    (await request(`/api/tasks/${task.id}/tags/favorites`, 'PUT', {})).body.tagIds.includes(
+      'favorites',
+    ),
+    true,
+  );
+  assert.equal(
+    (
+      await request(`/api/tasks/${task.id}/tags`, 'PUT', { tagIds: [tags[0].id] })
+    ).body.tagIds.includes('favorites'),
+    true,
+  );
+  assert.equal(
+    (await request(`/api/tasks/${task.id}/tags`, 'PUT', { tagIds: ['favorites'] })).status,
+    400,
+  );
+  assert.equal((await request(`/api/tasks/${task.id}/tags/${tags[0].id}`, 'DELETE')).status, 200);
+  assert.equal((await request(`/api/tasks/${task.id}/tags/${tags[0].id}`, 'DELETE')).status, 200);
+  await request(`/api/tasks/${task.id}/tags/${tags[1].id}`, 'PUT', {});
+  const preview = await request(`/api/tags/${tags[1].id}/deletion-preview`);
+  assert.deepEqual(
+    preview.body.affectedTasks.map((entry: TaskView) => entry.id),
+    [task.id],
+  );
+  assert.equal((await request(`/api/tags/${tags[1].id}`, 'DELETE')).status, 400);
+  assert.deepEqual(
+    (await request(`/api/tags/${tags[1].id}?confirm=true`, 'DELETE')).body.detachedTaskIds,
+    [task.id],
+  );
 });
 
 test('connection API returns the connected TaskView and preserves branches in both insertion directions', async (t) => {

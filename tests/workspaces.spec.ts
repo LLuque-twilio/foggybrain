@@ -410,7 +410,9 @@ test.beforeEach(async ({ page }) => {
       return route.fulfill({ json: workspace });
     }
     if (suffix === '/state')
-      return route.fulfill({ json: { tasks: [], dependencies: [], references: [], layouts: [] } });
+      return route.fulfill({
+        json: { tasks: [], dependencies: [], references: [], tags: [], layouts: [] },
+      });
     if (suffix === '/github/prs') return route.fulfill({ json: [] });
     if (suffix === '/github/status')
       return route.fulfill({
@@ -1006,6 +1008,7 @@ test('workspace switching isolates graph results and resets search state', async
       prMergeStatus: 'unknown',
       prCheckedAt: null,
       prError: null,
+      tagIds: [],
       createdAt: '2026-09-08T00:00:00Z',
       updatedAt: '2026-09-08T00:00:00Z',
       status: 'available',
@@ -1014,7 +1017,7 @@ test('workspace switching isolates graph results and resets search state', async
       childrenIds: [],
     };
     return route.fulfill({
-      json: { tasks: [task], dependencies: [], references: [], layouts: [] },
+      json: { tasks: [task], dependencies: [], references: [], tags: [], layouts: [] },
     });
   });
   await page.goto('/');
@@ -1192,6 +1195,7 @@ for (const flow of ['create', 'connect'] as const) {
       prMergeStatus: 'unknown',
       prCheckedAt: null,
       prError: null,
+      tagIds: [],
       createdAt: '2026-09-08T00:00:00Z',
       updatedAt: '2026-09-08T00:00:00Z',
       status: 'available',
@@ -1212,6 +1216,7 @@ for (const flow of ['create', 'connect'] as const) {
           tasks: applied && path === `/api/workspaces/${id}/state` ? [task] : [],
           dependencies: [],
           references: [],
+          tags: [],
           layouts: [],
         },
       });

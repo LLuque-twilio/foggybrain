@@ -1265,6 +1265,589 @@
         "x-query-policy": "undeclared-ignored"
       }
     },
+    "/api/tags": {
+      "post": {
+        "operationId": "createTag",
+        "summary": "Create a workspace tag",
+        "description": "Uses the persisted default workspace; returns 404 when none exists. See CONTRACT.md for state-dependent validation and semantics.",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": "Created.",
+            "headers": {
+              "Cache-Control": {
+                "description": "API responses are not cached, including credential-backed discovery.",
+                "schema": { "type": "string", "const": "no-store" }
+              }
+            },
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Tag" } } }
+          },
+          "400": {
+            "description": "Malformed JSON/URL, unsupported fields, invalid input, or missing confirmation.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "403": {
+            "description": "Host, Origin, or cross-site request rejected by the local-tool boundary.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "404": {
+            "description": "Route, workspace, task, or relationship not found; no default workspace exists.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "409": {
+            "description": "Graph conflict, workspace limit, active sync, or stale preview; review state before retrying.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "413": {
+            "description": "JSON body exceeds the 256kb limit.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "415": {
+            "description": "Unsupported Content-Type, JSON charset, or content encoding.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "500": {
+            "description": "Unexpected internal server error; details are not exposed.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "503": {
+            "description": "Selected credentials/configuration unavailable or workspace service stopped.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          }
+        },
+        "x-query-policy": "undeclared-ignored",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/CreateTagInput" } }
+          }
+        }
+      }
+    },
+    "/api/tags/{id}": {
+      "patch": {
+        "operationId": "updateTag",
+        "summary": "Rename or recolor a workspace tag",
+        "description": "System tags cannot be changed. Uses the persisted default workspace; returns 404 when none exists. See CONTRACT.md for state-dependent validation and semantics.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Server-returned resource ID; relationship removal uses the relationship ID, not a task ID."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "headers": {
+              "Cache-Control": {
+                "description": "API responses are not cached, including credential-backed discovery.",
+                "schema": { "type": "string", "const": "no-store" }
+              }
+            },
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Tag" } } }
+          },
+          "400": {
+            "description": "Malformed JSON/URL, unsupported fields, invalid input, or missing confirmation.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "403": {
+            "description": "Host, Origin, or cross-site request rejected by the local-tool boundary.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "404": {
+            "description": "Route, workspace, task, or relationship not found; no default workspace exists.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "409": {
+            "description": "Graph conflict, workspace limit, active sync, or stale preview; review state before retrying.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "413": {
+            "description": "JSON body exceeds the 256kb limit.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "415": {
+            "description": "Unsupported Content-Type, JSON charset, or content encoding.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "500": {
+            "description": "Unexpected internal server error; details are not exposed.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "503": {
+            "description": "Selected credentials/configuration unavailable or workspace service stopped.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          }
+        },
+        "x-query-policy": "undeclared-ignored",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/UpdateTagInput" } }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteTag",
+        "summary": "Delete a tag and detach its memberships",
+        "description": "Requires literal query string confirm=true. System tags cannot be deleted. Uses the persisted default workspace; returns 404 when none exists. See CONTRACT.md for state-dependent validation and semantics.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Server-returned resource ID; relationship removal uses the relationship ID, not a task ID."
+          },
+          {
+            "name": "confirm",
+            "in": "query",
+            "required": true,
+            "schema": { "type": "string", "const": "true" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "headers": {
+              "Cache-Control": {
+                "description": "API responses are not cached, including credential-backed discovery.",
+                "schema": { "type": "string", "const": "no-store" }
+              }
+            },
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/DeleteTagResponse" } }
+            }
+          },
+          "400": {
+            "description": "Malformed JSON/URL, unsupported fields, invalid input, or missing confirmation.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "403": {
+            "description": "Host, Origin, or cross-site request rejected by the local-tool boundary.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "404": {
+            "description": "Route, workspace, task, or relationship not found; no default workspace exists.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "409": {
+            "description": "Graph conflict, workspace limit, active sync, or stale preview; review state before retrying.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "413": {
+            "description": "JSON body exceeds the 256kb limit.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "415": {
+            "description": "Unsupported Content-Type, JSON charset, or content encoding.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "500": {
+            "description": "Unexpected internal server error; details are not exposed.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "503": {
+            "description": "Selected credentials/configuration unavailable or workspace service stopped.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          }
+        },
+        "x-query-policy": "undeclared-ignored"
+      }
+    },
+    "/api/tags/{id}/deletion-preview": {
+      "get": {
+        "operationId": "previewTagDeletion",
+        "summary": "Preview tag deletion impact",
+        "description": "Returns every task whose membership would be detached. System tags cannot be deleted. Uses the persisted default workspace; returns 404 when none exists. See CONTRACT.md for state-dependent validation and semantics.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Server-returned resource ID; relationship removal uses the relationship ID, not a task ID."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "headers": {
+              "Cache-Control": {
+                "description": "API responses are not cached, including credential-backed discovery.",
+                "schema": { "type": "string", "const": "no-store" }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/TagDeletionPreview" }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed JSON/URL, unsupported fields, invalid input, or missing confirmation.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "403": {
+            "description": "Host, Origin, or cross-site request rejected by the local-tool boundary.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "404": {
+            "description": "Route, workspace, task, or relationship not found; no default workspace exists.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "409": {
+            "description": "Graph conflict, workspace limit, active sync, or stale preview; review state before retrying.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "413": {
+            "description": "JSON body exceeds the 256kb limit.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "415": {
+            "description": "Unsupported Content-Type, JSON charset, or content encoding.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "500": {
+            "description": "Unexpected internal server error; details are not exposed.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "503": {
+            "description": "Selected credentials/configuration unavailable or workspace service stopped.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          }
+        },
+        "x-query-policy": "undeclared-ignored"
+      }
+    },
+    "/api/tasks/{taskId}/tags": {
+      "put": {
+        "operationId": "replaceTaskTags",
+        "summary": "Replace a task custom tag set",
+        "description": "Replaces up to three custom tags while preserving Favorites. The body cannot contain favorites. Uses the persisted default workspace; returns 404 when none exists. See CONTRACT.md for state-dependent validation and semantics.",
+        "parameters": [
+          {
+            "name": "taskId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Server-returned resource ID; relationship removal uses the relationship ID, not a task ID."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "headers": {
+              "Cache-Control": {
+                "description": "API responses are not cached, including credential-backed discovery.",
+                "schema": { "type": "string", "const": "no-store" }
+              }
+            },
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/TaskView" } }
+            }
+          },
+          "400": {
+            "description": "Malformed JSON/URL, unsupported fields, invalid input, or missing confirmation.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "403": {
+            "description": "Host, Origin, or cross-site request rejected by the local-tool boundary.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "404": {
+            "description": "Route, workspace, task, or relationship not found; no default workspace exists.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "409": {
+            "description": "Graph conflict, workspace limit, active sync, or stale preview; review state before retrying.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "413": {
+            "description": "JSON body exceeds the 256kb limit.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "415": {
+            "description": "Unsupported Content-Type, JSON charset, or content encoding.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "500": {
+            "description": "Unexpected internal server error; details are not exposed.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "503": {
+            "description": "Selected credentials/configuration unavailable or workspace service stopped.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          }
+        },
+        "x-query-policy": "undeclared-ignored",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/SetTaskTagsInput" } }
+          }
+        }
+      }
+    },
+    "/api/tasks/{taskId}/tags/{tagId}": {
+      "put": {
+        "operationId": "attachTaskTag",
+        "summary": "Attach one tag to a task",
+        "description": "Idempotent. Favorites does not count toward the three-custom-tag limit. Uses the persisted default workspace; returns 404 when none exists. See CONTRACT.md for state-dependent validation and semantics.",
+        "parameters": [
+          {
+            "name": "taskId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Server-returned resource ID; relationship removal uses the relationship ID, not a task ID."
+          },
+          {
+            "name": "tagId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Server-returned resource ID; relationship removal uses the relationship ID, not a task ID."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "headers": {
+              "Cache-Control": {
+                "description": "API responses are not cached, including credential-backed discovery.",
+                "schema": { "type": "string", "const": "no-store" }
+              }
+            },
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/TaskView" } }
+            }
+          },
+          "400": {
+            "description": "Malformed JSON/URL, unsupported fields, invalid input, or missing confirmation.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "403": {
+            "description": "Host, Origin, or cross-site request rejected by the local-tool boundary.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "404": {
+            "description": "Route, workspace, task, or relationship not found; no default workspace exists.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "409": {
+            "description": "Graph conflict, workspace limit, active sync, or stale preview; review state before retrying.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "413": {
+            "description": "JSON body exceeds the 256kb limit.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "415": {
+            "description": "Unsupported Content-Type, JSON charset, or content encoding.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "500": {
+            "description": "Unexpected internal server error; details are not exposed.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "503": {
+            "description": "Selected credentials/configuration unavailable or workspace service stopped.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          }
+        },
+        "x-query-policy": "undeclared-ignored",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/EmptyBody" } }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "detachTaskTag",
+        "summary": "Detach one tag from a task",
+        "description": "Idempotent. Uses the persisted default workspace; returns 404 when none exists. See CONTRACT.md for state-dependent validation and semantics.",
+        "parameters": [
+          {
+            "name": "taskId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Server-returned resource ID; relationship removal uses the relationship ID, not a task ID."
+          },
+          {
+            "name": "tagId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Server-returned resource ID; relationship removal uses the relationship ID, not a task ID."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "headers": {
+              "Cache-Control": {
+                "description": "API responses are not cached, including credential-backed discovery.",
+                "schema": { "type": "string", "const": "no-store" }
+              }
+            },
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/TaskView" } }
+            }
+          },
+          "400": {
+            "description": "Malformed JSON/URL, unsupported fields, invalid input, or missing confirmation.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "403": {
+            "description": "Host, Origin, or cross-site request rejected by the local-tool boundary.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "404": {
+            "description": "Route, workspace, task, or relationship not found; no default workspace exists.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "409": {
+            "description": "Graph conflict, workspace limit, active sync, or stale preview; review state before retrying.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "413": {
+            "description": "JSON body exceeds the 256kb limit.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "415": {
+            "description": "Unsupported Content-Type, JSON charset, or content encoding.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "500": {
+            "description": "Unexpected internal server error; details are not exposed.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "503": {
+            "description": "Selected credentials/configuration unavailable or workspace service stopped.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          }
+        },
+        "x-query-policy": "undeclared-ignored"
+      }
+    },
     "/api/dependencies": {
       "post": {
         "operationId": "createDependency",
@@ -2730,6 +3313,639 @@
         "x-query-policy": "undeclared-ignored"
       }
     },
+    "/api/workspaces/{workspaceId}/tags": {
+      "post": {
+        "operationId": "createTagScoped",
+        "summary": "Create a workspace tag",
+        "description": "Uses only the explicitly selected workspace. See CONTRACT.md for state-dependent validation and semantics.",
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Server-returned workspace ID. Unknown IDs fail without fallback."
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Created.",
+            "headers": {
+              "Cache-Control": {
+                "description": "API responses are not cached, including credential-backed discovery.",
+                "schema": { "type": "string", "const": "no-store" }
+              }
+            },
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Tag" } } }
+          },
+          "400": {
+            "description": "Malformed JSON/URL, unsupported fields, invalid input, or missing confirmation.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "403": {
+            "description": "Host, Origin, or cross-site request rejected by the local-tool boundary.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "404": {
+            "description": "Route, workspace, task, or relationship not found; no default workspace exists.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "409": {
+            "description": "Graph conflict, workspace limit, active sync, or stale preview; review state before retrying.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "413": {
+            "description": "JSON body exceeds the 256kb limit.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "415": {
+            "description": "Unsupported Content-Type, JSON charset, or content encoding.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "500": {
+            "description": "Unexpected internal server error; details are not exposed.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "503": {
+            "description": "Selected credentials/configuration unavailable or workspace service stopped.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          }
+        },
+        "x-query-policy": "undeclared-ignored",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/CreateTagInput" } }
+          }
+        }
+      }
+    },
+    "/api/workspaces/{workspaceId}/tags/{id}": {
+      "patch": {
+        "operationId": "updateTagScoped",
+        "summary": "Rename or recolor a workspace tag",
+        "description": "System tags cannot be changed. Uses only the explicitly selected workspace. See CONTRACT.md for state-dependent validation and semantics.",
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Server-returned workspace ID. Unknown IDs fail without fallback."
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Server-returned resource ID; relationship removal uses the relationship ID, not a task ID."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "headers": {
+              "Cache-Control": {
+                "description": "API responses are not cached, including credential-backed discovery.",
+                "schema": { "type": "string", "const": "no-store" }
+              }
+            },
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Tag" } } }
+          },
+          "400": {
+            "description": "Malformed JSON/URL, unsupported fields, invalid input, or missing confirmation.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "403": {
+            "description": "Host, Origin, or cross-site request rejected by the local-tool boundary.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "404": {
+            "description": "Route, workspace, task, or relationship not found; no default workspace exists.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "409": {
+            "description": "Graph conflict, workspace limit, active sync, or stale preview; review state before retrying.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "413": {
+            "description": "JSON body exceeds the 256kb limit.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "415": {
+            "description": "Unsupported Content-Type, JSON charset, or content encoding.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "500": {
+            "description": "Unexpected internal server error; details are not exposed.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "503": {
+            "description": "Selected credentials/configuration unavailable or workspace service stopped.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          }
+        },
+        "x-query-policy": "undeclared-ignored",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/UpdateTagInput" } }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteTagScoped",
+        "summary": "Delete a tag and detach its memberships",
+        "description": "Requires literal query string confirm=true. System tags cannot be deleted. Uses only the explicitly selected workspace. See CONTRACT.md for state-dependent validation and semantics.",
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Server-returned workspace ID. Unknown IDs fail without fallback."
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Server-returned resource ID; relationship removal uses the relationship ID, not a task ID."
+          },
+          {
+            "name": "confirm",
+            "in": "query",
+            "required": true,
+            "schema": { "type": "string", "const": "true" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "headers": {
+              "Cache-Control": {
+                "description": "API responses are not cached, including credential-backed discovery.",
+                "schema": { "type": "string", "const": "no-store" }
+              }
+            },
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/DeleteTagResponse" } }
+            }
+          },
+          "400": {
+            "description": "Malformed JSON/URL, unsupported fields, invalid input, or missing confirmation.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "403": {
+            "description": "Host, Origin, or cross-site request rejected by the local-tool boundary.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "404": {
+            "description": "Route, workspace, task, or relationship not found; no default workspace exists.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "409": {
+            "description": "Graph conflict, workspace limit, active sync, or stale preview; review state before retrying.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "413": {
+            "description": "JSON body exceeds the 256kb limit.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "415": {
+            "description": "Unsupported Content-Type, JSON charset, or content encoding.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "500": {
+            "description": "Unexpected internal server error; details are not exposed.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "503": {
+            "description": "Selected credentials/configuration unavailable or workspace service stopped.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          }
+        },
+        "x-query-policy": "undeclared-ignored"
+      }
+    },
+    "/api/workspaces/{workspaceId}/tags/{id}/deletion-preview": {
+      "get": {
+        "operationId": "previewTagDeletionScoped",
+        "summary": "Preview tag deletion impact",
+        "description": "Returns every task whose membership would be detached. System tags cannot be deleted. Uses only the explicitly selected workspace. See CONTRACT.md for state-dependent validation and semantics.",
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Server-returned workspace ID. Unknown IDs fail without fallback."
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Server-returned resource ID; relationship removal uses the relationship ID, not a task ID."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "headers": {
+              "Cache-Control": {
+                "description": "API responses are not cached, including credential-backed discovery.",
+                "schema": { "type": "string", "const": "no-store" }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/TagDeletionPreview" }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed JSON/URL, unsupported fields, invalid input, or missing confirmation.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "403": {
+            "description": "Host, Origin, or cross-site request rejected by the local-tool boundary.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "404": {
+            "description": "Route, workspace, task, or relationship not found; no default workspace exists.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "409": {
+            "description": "Graph conflict, workspace limit, active sync, or stale preview; review state before retrying.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "413": {
+            "description": "JSON body exceeds the 256kb limit.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "415": {
+            "description": "Unsupported Content-Type, JSON charset, or content encoding.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "500": {
+            "description": "Unexpected internal server error; details are not exposed.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "503": {
+            "description": "Selected credentials/configuration unavailable or workspace service stopped.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          }
+        },
+        "x-query-policy": "undeclared-ignored"
+      }
+    },
+    "/api/workspaces/{workspaceId}/tasks/{taskId}/tags": {
+      "put": {
+        "operationId": "replaceTaskTagsScoped",
+        "summary": "Replace a task custom tag set",
+        "description": "Replaces up to three custom tags while preserving Favorites. The body cannot contain favorites. Uses only the explicitly selected workspace. See CONTRACT.md for state-dependent validation and semantics.",
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Server-returned workspace ID. Unknown IDs fail without fallback."
+          },
+          {
+            "name": "taskId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Server-returned resource ID; relationship removal uses the relationship ID, not a task ID."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "headers": {
+              "Cache-Control": {
+                "description": "API responses are not cached, including credential-backed discovery.",
+                "schema": { "type": "string", "const": "no-store" }
+              }
+            },
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/TaskView" } }
+            }
+          },
+          "400": {
+            "description": "Malformed JSON/URL, unsupported fields, invalid input, or missing confirmation.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "403": {
+            "description": "Host, Origin, or cross-site request rejected by the local-tool boundary.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "404": {
+            "description": "Route, workspace, task, or relationship not found; no default workspace exists.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "409": {
+            "description": "Graph conflict, workspace limit, active sync, or stale preview; review state before retrying.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "413": {
+            "description": "JSON body exceeds the 256kb limit.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "415": {
+            "description": "Unsupported Content-Type, JSON charset, or content encoding.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "500": {
+            "description": "Unexpected internal server error; details are not exposed.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "503": {
+            "description": "Selected credentials/configuration unavailable or workspace service stopped.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          }
+        },
+        "x-query-policy": "undeclared-ignored",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/SetTaskTagsInput" } }
+          }
+        }
+      }
+    },
+    "/api/workspaces/{workspaceId}/tasks/{taskId}/tags/{tagId}": {
+      "put": {
+        "operationId": "attachTaskTagScoped",
+        "summary": "Attach one tag to a task",
+        "description": "Idempotent. Favorites does not count toward the three-custom-tag limit. Uses only the explicitly selected workspace. See CONTRACT.md for state-dependent validation and semantics.",
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Server-returned workspace ID. Unknown IDs fail without fallback."
+          },
+          {
+            "name": "taskId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Server-returned resource ID; relationship removal uses the relationship ID, not a task ID."
+          },
+          {
+            "name": "tagId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Server-returned resource ID; relationship removal uses the relationship ID, not a task ID."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "headers": {
+              "Cache-Control": {
+                "description": "API responses are not cached, including credential-backed discovery.",
+                "schema": { "type": "string", "const": "no-store" }
+              }
+            },
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/TaskView" } }
+            }
+          },
+          "400": {
+            "description": "Malformed JSON/URL, unsupported fields, invalid input, or missing confirmation.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "403": {
+            "description": "Host, Origin, or cross-site request rejected by the local-tool boundary.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "404": {
+            "description": "Route, workspace, task, or relationship not found; no default workspace exists.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "409": {
+            "description": "Graph conflict, workspace limit, active sync, or stale preview; review state before retrying.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "413": {
+            "description": "JSON body exceeds the 256kb limit.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "415": {
+            "description": "Unsupported Content-Type, JSON charset, or content encoding.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "500": {
+            "description": "Unexpected internal server error; details are not exposed.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "503": {
+            "description": "Selected credentials/configuration unavailable or workspace service stopped.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          }
+        },
+        "x-query-policy": "undeclared-ignored",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/EmptyBody" } }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "detachTaskTagScoped",
+        "summary": "Detach one tag from a task",
+        "description": "Idempotent. Uses only the explicitly selected workspace. See CONTRACT.md for state-dependent validation and semantics.",
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Server-returned workspace ID. Unknown IDs fail without fallback."
+          },
+          {
+            "name": "taskId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Server-returned resource ID; relationship removal uses the relationship ID, not a task ID."
+          },
+          {
+            "name": "tagId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Server-returned resource ID; relationship removal uses the relationship ID, not a task ID."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "headers": {
+              "Cache-Control": {
+                "description": "API responses are not cached, including credential-backed discovery.",
+                "schema": { "type": "string", "const": "no-store" }
+              }
+            },
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/TaskView" } }
+            }
+          },
+          "400": {
+            "description": "Malformed JSON/URL, unsupported fields, invalid input, or missing confirmation.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "403": {
+            "description": "Host, Origin, or cross-site request rejected by the local-tool boundary.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "404": {
+            "description": "Route, workspace, task, or relationship not found; no default workspace exists.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "409": {
+            "description": "Graph conflict, workspace limit, active sync, or stale preview; review state before retrying.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "413": {
+            "description": "JSON body exceeds the 256kb limit.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "415": {
+            "description": "Unsupported Content-Type, JSON charset, or content encoding.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "500": {
+            "description": "Unexpected internal server error; details are not exposed.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "503": {
+            "description": "Selected credentials/configuration unavailable or workspace service stopped.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          }
+        },
+        "x-query-policy": "undeclared-ignored"
+      }
+    },
     "/api/workspaces/{workspaceId}/dependencies": {
       "post": {
         "operationId": "createDependencyScoped",
@@ -3697,6 +4913,7 @@
           "prMergeStatus": { "$ref": "#/components/schemas/PrMergeStatus" },
           "prCheckedAt": { "type": ["string", "null"] },
           "prError": { "type": ["string", "null"] },
+          "tagIds": { "type": "array", "items": { "type": "string" } },
           "createdAt": { "type": "string" },
           "updatedAt": { "type": "string" }
         },
@@ -3712,6 +4929,7 @@
           "prMergeStatus",
           "prCheckedAt",
           "prError",
+          "tagIds",
           "createdAt",
           "updatedAt"
         ],
@@ -3731,6 +4949,7 @@
           "prMergeStatus": { "$ref": "#/components/schemas/PrMergeStatus" },
           "prCheckedAt": { "type": ["string", "null"] },
           "prError": { "type": ["string", "null"] },
+          "tagIds": { "type": "array", "items": { "type": "string" } },
           "createdAt": { "type": "string" },
           "updatedAt": { "type": "string" },
           "status": { "$ref": "#/components/schemas/TaskStatus" },
@@ -3753,6 +4972,7 @@
           "prState",
           "prUrl",
           "status",
+          "tagIds",
           "title",
           "updatedAt",
           "waitingOn"
@@ -3777,6 +4997,17 @@
           "taskId": { "type": "string" }
         },
         "required": ["id", "containerId", "taskId"],
+        "additionalProperties": false
+      },
+      "Tag": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "color": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
+          "system": { "type": "boolean" }
+        },
+        "required": ["id", "name", "color", "system"],
         "additionalProperties": false
       },
       "Layout": {
@@ -3813,9 +5044,10 @@
             "type": "array",
             "items": { "$ref": "#/components/schemas/TaskReference" }
           },
+          "tags": { "type": "array", "items": { "$ref": "#/components/schemas/Tag" } },
           "layouts": { "type": "array", "items": { "$ref": "#/components/schemas/Layout" } }
         },
-        "required": ["tasks", "dependencies", "references", "layouts"],
+        "required": ["tasks", "dependencies", "references", "tags", "layouts"],
         "additionalProperties": false
       },
       "CreateTaskInput": {
@@ -3825,7 +5057,8 @@
           "description": { "type": "string" },
           "kind": { "$ref": "#/components/schemas/TaskKind" },
           "parentId": { "type": ["string", "null"] },
-          "prUrl": { "type": "string" }
+          "prUrl": { "type": "string" },
+          "tagIds": { "type": "array", "items": { "type": "string" } }
         },
         "required": ["title", "kind"],
         "additionalProperties": false,
@@ -3857,10 +5090,57 @@
         "properties": {
           "title": { "type": "string", "pattern": "\\S" },
           "description": { "type": "string" },
-          "prUrl": { "type": ["string", "null"] }
+          "prUrl": { "type": ["string", "null"] },
+          "tagIds": { "type": "array", "items": { "type": "string" } }
         },
         "additionalProperties": false,
         "minProperties": 1
+      },
+      "CreateTagInput": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "minLength": 1, "maxLength": 40 },
+          "color": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" }
+        },
+        "required": ["name", "color"],
+        "additionalProperties": false
+      },
+      "UpdateTagInput": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "minLength": 1, "maxLength": 40 },
+          "color": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" }
+        },
+        "additionalProperties": false,
+        "minProperties": 1
+      },
+      "SetTaskTagsInput": {
+        "type": "object",
+        "properties": {
+          "tagIds": {
+            "type": "array",
+            "items": { "type": "string" },
+            "maxItems": 3,
+            "uniqueItems": true
+          }
+        },
+        "required": ["tagIds"],
+        "additionalProperties": false
+      },
+      "TagDeletionPreview": {
+        "type": "object",
+        "properties": {
+          "tag": { "$ref": "#/components/schemas/Tag" },
+          "affectedTasks": { "type": "array", "items": { "$ref": "#/components/schemas/TaskView" } }
+        },
+        "required": ["tag", "affectedTasks"],
+        "additionalProperties": false
+      },
+      "DeleteTagResponse": {
+        "type": "object",
+        "properties": { "detachedTaskIds": { "type": "array", "items": { "type": "string" } } },
+        "required": ["detachedTaskIds"],
+        "additionalProperties": false
       },
       "DeletionPreview": {
         "type": "object",
@@ -3917,15 +5197,25 @@
           "kind": { "$ref": "#/components/schemas/TaskKind" },
           "parentId": { "type": ["string", "null"] },
           "manualDone": { "type": "boolean" },
-          "prUrl": { "type": ["string", "null"] }
+          "prUrl": { "type": ["string", "null"] },
+          "tagIds": { "type": "array", "items": { "type": "string" } }
         },
-        "required": ["id", "title", "description", "kind", "parentId", "manualDone", "prUrl"],
+        "required": [
+          "id",
+          "title",
+          "description",
+          "kind",
+          "parentId",
+          "manualDone",
+          "prUrl",
+          "tagIds"
+        ],
         "additionalProperties": false
       },
       "PortableState": {
         "type": "object",
         "properties": {
-          "version": { "type": "number", "const": 1 },
+          "version": { "type": "number", "const": 2 },
           "tasks": { "type": "array", "items": { "$ref": "#/components/schemas/PortableTask" } },
           "dependencies": {
             "type": "array",
@@ -3934,9 +5224,10 @@
           "references": {
             "type": "array",
             "items": { "$ref": "#/components/schemas/TaskReference" }
-          }
+          },
+          "tags": { "type": "array", "items": { "$ref": "#/components/schemas/Tag" } }
         },
-        "required": ["version", "tasks", "dependencies", "references"],
+        "required": ["version", "tasks", "dependencies", "references", "tags"],
         "additionalProperties": false
       },
       "SyncRepository": {
@@ -4123,7 +5414,10 @@
       "SyncChange": {
         "type": "object",
         "properties": {
-          "collection": { "type": "string", "enum": ["tasks", "dependencies", "references"] },
+          "collection": {
+            "type": "string",
+            "enum": ["tasks", "dependencies", "references", "tags"]
+          },
           "id": { "type": "string" },
           "title": { "type": "string" },
           "kind": { "type": "string", "enum": ["added", "updated", "deleted"] }

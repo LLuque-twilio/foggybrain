@@ -1,6 +1,6 @@
 # API Maintenance
 
-[openapi.json](../openapi.json) is the checked-in OpenAPI 3.1 HTTP reference, covering all 45 operations, including unscoped and explicit-workspace domain routes. Import the file into an OpenAPI 3.1-compatible viewer or code generator. There is no production OpenAPI endpoint or bundled documentation UI; generation and validation tools are development-only.
+[openapi.json](../openapi.json) is the checked-in OpenAPI 3.1 HTTP reference, covering all operations, including unscoped and explicit-workspace domain routes. Import the file into an OpenAPI 3.1-compatible viewer or code generator. There is no production OpenAPI endpoint or bundled documentation UI; generation and validation tools are development-only.
 
 ## Ownership
 
@@ -33,4 +33,4 @@ pnpm build
 
 `openapi:check` runs the generator with `--check`, verifying artifact freshness and parser validation without rewriting the file. CI checks it alongside `pnpm test`. Commit regenerated `openapi.json` with its source changes, not a manual patch to the artifact.
 
-[src/openapi.test.ts](../src/openapi.test.ts) checks generated artifact equality, OpenAPI parser validity, and the route inventory independently parsed from server registrations. It exercises successful HTTP responses for all 45 operations and validates them against the spec, plus request-boundary cases. These checks detect drift; they do not replace domain tests for completion, cycles, confirmation workflows, or concurrent state changes. Use synthetic fixtures, isolated temporary databases, and mocked GitHub; never perform real GitHub writes for contract tests.
+[src/openapi.test.ts](../src/openapi.test.ts) checks generated artifact equality, OpenAPI parser validity, and the route inventory independently parsed from server registrations. It exercises successful HTTP responses for every operation and validates them against the spec, plus request-boundary cases. These checks detect drift; they do not replace domain tests for completion, cycles, confirmation workflows, or concurrent state changes. Use synthetic fixtures, isolated temporary databases, and mocked GitHub; never perform real GitHub writes for contract tests.

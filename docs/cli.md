@@ -69,13 +69,15 @@ Migration preserves the existing database as workspace `default`; new entries re
 ### Create
 
 ```text
-foggy task create <title> [--kind <kind>] [--parent <id>] [--pr <url>] [--description <text>]
+foggy task create <title> [--kind <kind>] [--parent <id>] [--pr <url>] [--description <text>] [--tag <id>...] [--star | --unstar]
 ```
 
 - `--kind` is `manual` (default), `container`, or `pr`.
 - `--parent` makes the task an **owned** child of an existing container. Omit for a root task; do not pass the word `root` to create.
 - `--pr` supplies a required URL for a `pr` task or an optional merge gate for a `manual` task. It does not change the task kind; containers reject it.
 - `--description` supplies optional text.
+- Repeat `--tag TAG_ID` to set the initial custom tags (up to three). IDs, not names, are accepted. Favorites does not use this flag.
+- `--star` adds the built-in Favorites tag after creation. `--unstar` explicitly leaves it absent.
 
 ```sh
 foggy --json task create "Launch" --kind container
@@ -109,16 +111,18 @@ Makes one workspace-scoped `POST /tasks/:id/connections` request and returns the
 ### List
 
 ```text
-foggy task list [--parent <id|root>] [--status <status>]
+foggy task list [--parent <id|root>] [--status <status>] [--tag <id>...] [--starred]
 ```
 
-With no filters, lists **all** tasks, not just root tasks. Filters combine with AND. `--parent root` selects tasks without an owning parent. `--parent CONTAINER_ID` selects immediate **owned children**, not referenced children; use `task show` or `graph` to see shared membership. A supplied parent ID must identify a container. `--status` accepts `available`, `blocked`, `ready`, or `completed`.
+With no filters, lists **all** tasks, not just root tasks. Different filter kinds combine with AND. Repeated `--tag TAG_ID` values use OR semantics: a task matches when it has any supplied tag. `--starred` is equivalent to adding `--tag favorites` and participates in the same OR group. `--parent root` selects tasks without an owning parent. `--parent CONTAINER_ID` selects immediate **owned children**, not referenced children; use `task show` or `graph` to see shared membership. A supplied parent ID must identify a container. `--status` accepts `available`, `blocked`, `ready`, or `completed`.
 
 ```sh
 foggy --json task list
 foggy --json task list --parent root
 foggy --json task list --parent CONTAINER_ID --status available
 foggy --json task list --status ready
+foggy --json task list --tag TAG_ID --tag OTHER_TAG_ID
+foggy --json task list --starred
 ```
 
 JSON result: `TaskView[]`, including `[]` when no tasks match. The CLI filters a server `/state` snapshot; it does not compute completion locally.
@@ -138,21 +142,25 @@ Returns all task fields, plus:
 | `dependents`    | Direct tasks depending on this task, as `TaskView[]`.                                  |
 | `dependencies`  | All dependency records touching the task, including IDs needed for removal.            |
 | `references`    | References whose container or target is this task, including IDs needed for unlinking. |
+| `tags`          | Tag objects resolved from the task's `tagIds`, in workspace tag order.                 |
 
 The original `waitingOn` is only the IDs of incomplete direct prerequisites. `childrenIds` includes owned and referenced children. The extra arrays are drawn from the same snapshot. Unknown IDs fail instead of returning an empty success.
 
 ### Update
 
 ```text
-foggy task update <id> [--title <title>] [--description <text>] [--pr <url> | --remove-pr]
+foggy task update <id> [--title <title>] [--description <text>] [--pr <url> | --remove-pr] [--tag <id>...] [--star | --unstar]
 ```
 
 At least one flag is required. Omitted fields are unchanged. An empty description clears it. Kind, parent, ID, computed status, and PR merge state are not editable here. Updating a PR URL resets verified PR state so a previous merge cannot satisfy a new PR.
+
+Repeated `--tag TAG_ID` replaces the task's **entire custom tag set** with exactly those IDs, up to three; it does not add to the existing set. Omitting `--tag` leaves custom tags unchanged. Use `--star` or `--unstar` for Favorites. Custom replacement and Favorites changes use atomic membership routes so they do not overwrite each other; when combined, custom tags are replaced first and the star operation follows.
 
 ```sh
 foggy --json task update TASK_ID --title "Verify deployment" --description "Include the canary"
 foggy --json task update TASK_ID --description ""
 foggy --json task update PR_TASK_ID --pr https://github.com/OWNER/REPO/pull/124
+foggy --json task update TASK_ID --tag TAG_ID --tag OTHER_TAG_ID --star
 ```
 
 Returns the updated `TaskView`.
@@ -210,6 +218,27 @@ foggy --json task delete CONTAINER_ID --dry-run
 # Only after reviewing taskIds, tasks, affectedTasks, and removed relationships:
 foggy --json task delete CONTAINER_ID --yes
 foggy --json graph
+```
+
+## Tags
+
+```text
+foggy tag create <name> --color <#RRGGBB>
+foggy tag list
+foggy tag update <id> [--name <name>] [--color <#RRGGBB>]
+foggy tag delete <id> [--dry-run] [--yes]
+```
+
+Tags are workspace-scoped and identified by server-returned IDs. Names are not accepted where a task tag ID is required. `tag list` includes the permanent `favorites` system tag. Favorites cannot be created, renamed, recolored, or deleted; use task `--star`, `--unstar`, and `--starred` controls for membership and filtering. The server validates trimmed unique names, colors, and the limit of three custom tags per task.
+
+`tag delete` follows the task-deletion safety pattern. Every invocation first requests `/tags/:id/deletion-preview`, which returns `{tag, affectedTasks}`. `--dry-run` prints that preview and never deletes, including when combined with `--yes`. Actual deletion requires `--yes` outside a terminal; on a terminal without it, the CLI lists affected task IDs and titles and accepts only `yes`. Confirmation calls `DELETE /tags/:id?confirm=true` and returns `{detachedTaskIds}`. Deletion removes the tag from all listed tasks. The preview is not a lock, so re-preview after concurrent edits.
+
+```sh
+tag_id=$(foggy --json tag create "Urgent" --color "#7c5cff" | jq -er '.id')
+foggy --json task update TASK_ID --tag "$tag_id" --star
+foggy --json tag delete "$tag_id" --dry-run
+# After reviewing affectedTasks:
+foggy --json tag delete "$tag_id" --yes
 ```
 
 ## Dependencies
@@ -331,7 +360,7 @@ Preview IDs are process-local, single-use tokens, not durable approvals. A newer
 
 On first sync, an empty local graph can pull existing remote state, or a missing remote file can receive local state. If both sides are nonempty without a shared baseline, apply is blocked even with `--resolve`. Preserve existing data: use a separate new local data directory to inspect/pull remote state or a distinct unused remote path to publish an independent graph. Do not wipe either side to bypass the guard.
 
-The versioned JSON (`version: 1`) contains editable task fields and dependency/reference records, not PR verification, derived completion, layouts, or timestamps. PR state is reverified locally by server polling; remote JSON cannot assert a verified merge. The server persists its baseline in SQLite and makes automatic full local backups in `foggybrain_sync_backups`. There is no restore API or automatic backup pruning. Keep independent database backups too. GitHub Contents API writes create Git history without a local git CLI or clone; deleting sensitive text from current state does not remove it from history or backups.
+The versioned JSON (`version: 2`) contains editable task fields, custom tag definitions, tag memberships, and dependency/reference records, not PR verification, derived completion, layouts, timestamps, or the canonical Favorites definition. PR state is reverified locally by server polling; remote JSON cannot assert a verified merge. The server persists its baseline in SQLite and makes automatic full local backups in `foggybrain_sync_backups`. There is no restore API or automatic backup pruning. Keep independent database backups too. GitHub Contents API writes create Git history without a local git CLI or clone; deleting sensitive text from current state does not remove it from history or backups.
 
 ### Diagnosing Failures
 
@@ -482,6 +511,6 @@ For ordinary work: inspect `graph`/`task show`, choose `available` work, perform
 
 ## Data Shapes
 
-`TaskView` includes `id`, `title`, `description`, `kind`, `parentId`, `manualDone`, `prUrl`, `prState`, `prCheckedAt`, `prError`, `createdAt`, `updatedAt`, `status`, `ownSatisfied`, `waitingOn`, and `childrenIds`. Nullable fields are returned as JSON `null`, not empty IDs. The CLI forwards server-created and server-computed fields rather than synthesizing completion or IDs.
+`TaskView` includes `id`, `title`, `description`, `kind`, `parentId`, `manualDone`, `prUrl`, `prState`, `prCheckedAt`, `prError`, `tagIds`, `createdAt`, `updatedAt`, `status`, `ownSatisfied`, `waitingOn`, and `childrenIds`. `Snapshot` also includes workspace `tags`; each tag has `id`, `name`, `color`, and `system`. Nullable fields are returned as JSON `null`, not empty IDs. The CLI forwards server-created and server-computed fields rather than synthesizing completion or IDs.
 
 Authoritative TypeScript shapes are in [`src/shared.ts`](../src/shared.ts); the generated [`openapi.json`](../openapi.json) is the HTTP reference, and [`CONTRACT.md`](../CONTRACT.md) defines semantic guarantees. See the [API maintainer guide](api.md) for generation and validation boundaries. Task create/update/done/reopen return the server `TaskView`; relationship additions return the server relationship record; removal results and GitHub payloads are passed through unchanged. Consumers should use named fields and relationship IDs rather than depending on array ordering.

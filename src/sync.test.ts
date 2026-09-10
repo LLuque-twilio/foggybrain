@@ -127,7 +127,7 @@ test('revert requires an existing valid remote file but accepts an empty graph',
   store.createTask({ title: 'Discard', kind: 'manual' });
   const before = store.snapshot();
   await assert.rejects(sync.preview({ mode: 'revert' }), /existing remote state file/);
-  github.state = { ...emptyPortableState(), version: 2 } as unknown as PortableState;
+  github.state = { ...emptyPortableState(), version: 3 } as unknown as PortableState;
   await assert.rejects(sync.preview({ mode: 'revert' }), DomainError);
   github.state = emptyPortableState();
   github.private = false;
@@ -374,6 +374,39 @@ test('individually valid changes that combine into an effective cycle are blocke
     assert.match(preview.validationError!, /cycle/);
   }
 });
+
+for (const resolution of ['local', 'remote'] as const) {
+  test(`synthetic tag delete-vs-assign conflict supports ${resolution} resolution`, async (t) => {
+    const primary = setup(t);
+    const task = primary.store.createTask({ title: 'Tagged', kind: 'manual' });
+    const tag = primary.store.createTag({ name: 'Release', color: '#123456' });
+    await apply(primary.sync);
+    const other = setup(t, ':memory:', primary.github);
+    await apply(other.sync);
+    primary.store.deleteTag(tag.id);
+    other.store.attachTaskTag(task.id, tag.id);
+    primary.github.edit((state) => Object.assign(state, other.store.exportState()));
+    const blocked = await primary.sync.preview();
+    assert.equal(blocked.canApply, false);
+    assert.equal(blocked.validationError, null);
+    assert.deepEqual(
+      blocked.conflicts.map((entry) => entry.path),
+      [`tags/${tag.id}/memberships`],
+    );
+    const selected = await primary.sync.preview({ resolution });
+    assert.equal(selected.canApply, true, JSON.stringify(selected));
+    await primary.sync.apply(selected.previewId);
+    const snapshot = primary.store.snapshot();
+    assert.equal(
+      snapshot.tags.some((entry) => entry.id === tag.id),
+      resolution === 'remote',
+    );
+    assert.equal(
+      snapshot.tasks.find((entry) => entry.id === task.id)!.tagIds.includes(tag.id),
+      resolution === 'remote',
+    );
+  });
+}
 
 for (const deletingSide of ['local', 'remote'] as const) {
   for (const structure of [

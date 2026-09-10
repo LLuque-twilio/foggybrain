@@ -12,9 +12,10 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
-import type { ConnectTaskInput, Snapshot, TaskView } from '../shared';
+import type { ConnectTaskInput, Snapshot, Tag, TaskView } from '../shared';
 import { Status } from './Status';
 import { PrStatus } from './PrStatus';
+import { StarToggle, TagBadges, TagPicker } from './Tags';
 
 export function Detail({
   task,
@@ -29,6 +30,10 @@ export function Detail({
   unlink,
   addDependency,
   removeDependency,
+  toggleTag,
+  createTag,
+  renameTag,
+  deleteTag,
 }: {
   task: TaskView;
   snapshot: Snapshot;
@@ -42,6 +47,10 @@ export function Detail({
   unlink: (id: string) => void;
   addDependency: (direction: ConnectTaskInput['direction']) => void;
   removeDependency: (id: string) => void;
+  toggleTag: (tagId: string, attached: boolean) => void;
+  createTag: (name: string, color: string) => Promise<Tag | undefined>;
+  renameTag: (id: string, name: string, color: string) => Promise<boolean>;
+  deleteTag: (tag: Tag) => void;
 }) {
   const [copied, setCopied] = useState(false);
   const incoming = snapshot.dependencies.filter((edge) => edge.dependentId === task.id);
@@ -54,12 +63,21 @@ export function Detail({
     <aside className="detail-panel" aria-label="Task details">
       <div className="detail-top">
         <span className="eyebrow">{reference ? 'SHARED TASK' : 'TASK DETAILS'}</span>
-        <button className="icon-button" onClick={close} aria-label="Close task details">
-          <X size={18} />
-        </button>
+        <div>
+          <StarToggle
+            starred={task.tagIds.includes('favorites')}
+            title={task.title}
+            disabled={busy}
+            onToggle={() => toggleTag('favorites', !task.tagIds.includes('favorites'))}
+          />
+          <button className="icon-button" onClick={close} aria-label="Close task details">
+            <X size={18} />
+          </button>
+        </div>
       </div>
       <Status status={task.status} />
       <h2>{task.title}</h2>
+      <TagBadges tags={snapshot.tags} tagIds={task.tagIds} />
       <div className="detail-actions">
         <button className="text-button" onClick={edit}>
           <Pencil size={13} />
@@ -84,6 +102,19 @@ export function Detail({
       <p className="description">
         {task.description || 'No description. Add a little context with Edit task.'}
       </p>
+      <section className="detail-section detail-tags">
+        <h3>Tags</h3>
+        <TagPicker
+          tags={snapshot.tags}
+          selectedIds={task.tagIds}
+          busy={busy}
+          onAdd={(id) => toggleTag(id, true)}
+          onRemove={(id) => toggleTag(id, false)}
+          onCreate={createTag}
+          onRename={renameTag}
+          onDelete={deleteTag}
+        />
+      </section>
       {task.status === 'ready' && (
         <div className="callout ready-callout">
           <Check size={16} />

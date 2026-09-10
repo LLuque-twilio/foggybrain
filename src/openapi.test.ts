@@ -38,8 +38,8 @@ test('generated OpenAPI matches the checked-in document and passes SwaggerParser
     JSON.parse(readFileSync(new URL('../openapi.json', import.meta.url), 'utf8')),
   );
   await validateOpenApi(document);
-  assert.equal(operations.length, 45);
-  assert.equal(new Set(operations.map(({ operation }) => operation.operationId)).size, 45);
+  assert.equal(operations.length, 59);
+  assert.equal(new Set(operations.map(({ operation }) => operation.operationId)).size, 59);
 });
 
 test('OpenAPI inventory matches independently parsed Express registrations and domain mounts', () => {
@@ -279,7 +279,7 @@ async function fixture(t: TestContext) {
   return { manager, call, covered };
 }
 
-test('all 45 operations conform over HTTP with real isolated workspace/domain stores', async (t) => {
+test('all operations conform over HTTP with real isolated workspace/domain stores', async (t) => {
   const { manager, call, covered } = await fixture(t);
   await call('GET', '/api/health', 200);
   const list = await call('GET', '/api/workspaces', 200);
@@ -349,6 +349,35 @@ test('all 45 operations conform over HTTP with real isolated workspace/domain st
       title: 'Work',
       kind: 'manual',
       prUrl: 'https://github.com/owner/repo/pull/1',
+    });
+    const tag = await call('POST', `${prefix}/tags`, 201, {
+      name: 'Release',
+      color: '#123456',
+    });
+    assert.equal(
+      (await call('PATCH', `${prefix}/tags/${tag.id}`, 200, { name: 'Shipping' })).name,
+      'Shipping',
+    );
+    assert.deepEqual(
+      (await call('PUT', `${prefix}/tasks/${task.id}/tags/${tag.id}`, 200, {})).tagIds,
+      [tag.id],
+    );
+    assert.deepEqual(
+      (await call('PUT', `${prefix}/tasks/${task.id}/tags`, 200, { tagIds: [tag.id] })).tagIds,
+      [tag.id],
+    );
+    assert.deepEqual(
+      (await call('DELETE', `${prefix}/tasks/${task.id}/tags/${tag.id}`, 200)).tagIds,
+      [],
+    );
+    await call('PUT', `${prefix}/tasks/${task.id}/tags/${tag.id}`, 200, {});
+    const tagDeletion = await call('GET', `${prefix}/tags/${tag.id}/deletion-preview`, 200);
+    assert.deepEqual(
+      tagDeletion.affectedTasks.map((entry: { id: string }) => entry.id),
+      [task.id],
+    );
+    assert.deepEqual(await call('DELETE', `${prefix}/tags/${tag.id}?confirm=true`, 200), {
+      detachedTaskIds: [task.id],
     });
     assert.equal(
       (await call('PATCH', `${prefix}/tasks/${task.id}`, 200, { prUrl: null })).prUrl,

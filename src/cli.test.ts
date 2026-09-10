@@ -22,6 +22,7 @@ const task = (id: string, extra: Partial<TaskView> = {}): TaskView => ({
   prMergeStatus: 'unknown',
   prCheckedAt: null,
   prError: null,
+  tagIds: [],
   createdAt: '2026-09-08T00:00:00.000Z',
   updatedAt: '2026-09-08T00:00:00.000Z',
   status: 'available',
@@ -33,9 +34,20 @@ const task = (id: string, extra: Partial<TaskView> = {}): TaskView => ({
 const snapshot: Snapshot = {
   tasks: [
     task('c', { kind: 'container', childrenIds: ['a', 'b'] }),
-    task('a', { parentId: 'c' }),
-    task('b', { status: 'ready', manualDone: true, ownSatisfied: true, waitingOn: ['a'] }),
-    task('outside'),
+    task('a', { parentId: 'c', tagIds: ['tag-one'] }),
+    task('b', {
+      status: 'ready',
+      manualDone: true,
+      ownSatisfied: true,
+      waitingOn: ['a'],
+      tagIds: ['tag-two', 'favorites'],
+    }),
+    task('outside', { tagIds: ['favorites'] }),
+  ],
+  tags: [
+    { id: 'favorites', name: 'Favorites', color: '#d4af37', system: true },
+    { id: 'tag-one', name: 'One', color: '#112233', system: false },
+    { id: 'tag-two', name: 'Two', color: '#445566', system: false },
   ],
   dependencies: [{ id: 'dep-1', prerequisiteId: 'a', dependentId: 'b' }],
   references: [{ id: 'ref-1', containerId: 'c', taskId: 'b' }],
@@ -338,6 +350,150 @@ test('CLI supports attaching and removing manual PR gates without deriving compl
   assert.equal(conflict.stdout, '');
   assert.match(JSON.parse(conflict.stderr).error, /cannot be used/i);
   assert.equal(requests.length, 3);
+});
+
+test('CLI task tag flags use whole-set replacement followed by atomic Favorites updates', async (t) => {
+  const { run, requests } = await fixture(t);
+  const created = await run([
+    '--json',
+    'task',
+    'create',
+    'Tagged',
+    '--tag',
+    'tag-one',
+    '--tag',
+    'tag-two',
+    '--star',
+  ]);
+  assert.equal(created.code, 0, created.stderr);
+  assert.deepEqual(requests.splice(0), [
+    {
+      method: 'POST',
+      path: '/api/tasks',
+      body: { title: 'Tagged', kind: 'manual', tagIds: ['tag-one', 'tag-two'] },
+    },
+    { method: 'PUT', path: '/api/tasks/server-id/tags/favorites', body: {} },
+  ]);
+
+  const updated = await run([
+    '--json',
+    '--workspace',
+    'selected',
+    'task',
+    'update',
+    'a/b',
+    '--description',
+    'Changed',
+    '--tag',
+    'tag-two',
+    '--unstar',
+  ]);
+  assert.equal(updated.code, 0, updated.stderr);
+  assert.deepEqual(requests, [
+    {
+      method: 'PATCH',
+      path: '/api/workspaces/selected/tasks/a%2Fb',
+      body: { description: 'Changed' },
+    },
+    {
+      method: 'PUT',
+      path: '/api/workspaces/selected/tasks/a%2Fb/tags',
+      body: { tagIds: ['tag-two'] },
+    },
+    { method: 'DELETE', path: '/api/workspaces/selected/tasks/a%2Fb/tags/favorites' },
+  ]);
+});
+
+test('CLI validates repeatable task tags and star conflicts before making requests', async (t) => {
+  const { run, requests } = await fixture(t);
+  for (const args of [
+    ['task', 'create', 'Too many', '--tag', '1', '--tag', '2', '--tag', '3', '--tag', '4'],
+    ['task', 'update', 'a', '--tag', 'favorites'],
+    ['task', 'update', 'a', '--star', '--unstar'],
+  ]) {
+    const result = await run(['--json', ...args]);
+    assert.equal(result.code, 1);
+    assert.equal(result.stdout, '');
+    assert.equal(typeof JSON.parse(result.stderr).error, 'string');
+  }
+  const rootHelp = await run(['--help']);
+  assert.match(rootHelp.stdout, /\btag\b/);
+  const taskHelp = await run(['task', 'update', '--help']);
+  for (const flag of ['--tag', '--star', '--unstar']) assert.ok(taskHelp.stdout.includes(flag));
+  assert.deepEqual(requests, []);
+});
+
+test('CLI task list tag filters use OR semantics and show resolves tag objects', async (t) => {
+  const { run } = await fixture(t);
+  const tagged = await run(['--json', 'task', 'list', '--tag', 'tag-one', '--tag', 'tag-two']);
+  assert.deepEqual(
+    JSON.parse(tagged.stdout).map((entry: TaskView) => entry.id),
+    ['a', 'b'],
+  );
+  const starred = await run(['--json', 'task', 'list', '--starred', '--status', 'ready']);
+  assert.deepEqual(JSON.parse(starred.stdout), [snapshot.tasks[2]]);
+  const combined = await run(['--json', 'task', 'list', '--starred', '--tag', 'tag-one']);
+  assert.deepEqual(
+    JSON.parse(combined.stdout).map((entry: TaskView) => entry.id),
+    ['a', 'b', 'outside'],
+  );
+  const shown = JSON.parse((await run(['--json', 'task', 'show', 'b'])).stdout);
+  assert.deepEqual(shown.tagIds, ['tag-two', 'favorites']);
+  assert.deepEqual(shown.tags, [snapshot.tags[0], snapshot.tags[2]]);
+});
+
+test('CLI tag commands send exact requests and deletion always previews first', async (t) => {
+  const tagPreview = { tag: snapshot.tags[1], affectedTasks: [snapshot.tasks[1]] };
+  const { run, requests } = await fixture(t, (request) => ({
+    body: request.path.endsWith('/deletion-preview')
+      ? tagPreview
+      : request.method === 'DELETE'
+        ? { detachedTaskIds: ['a'] }
+        : request.path.endsWith('/state')
+          ? snapshot
+          : { id: 'tag-one', system: false, ...(request.body as object) },
+  }));
+  for (const [args, expected] of [
+    [
+      ['tag', 'create', 'One', '--color', '#112233'],
+      { method: 'POST', path: '/api/tags', body: { name: 'One', color: '#112233' } },
+    ],
+    [['tag', 'list'], { method: 'GET', path: '/api/state' }],
+    [
+      ['tag', 'update', 'tag/one', '--name', 'Renamed', '--color', '#abcdef'],
+      {
+        method: 'PATCH',
+        path: '/api/tags/tag%2Fone',
+        body: { name: 'Renamed', color: '#abcdef' },
+      },
+    ],
+  ] as const) {
+    const result = await run(['--json', ...args]);
+    assert.equal(result.code, 0, result.stderr);
+    assert.deepEqual(requests.at(-1), expected);
+  }
+  requests.length = 0;
+  const dryRun = await run(['--json', 'tag', 'delete', 'tag-one', '--dry-run', '--yes']);
+  assert.deepEqual(JSON.parse(dryRun.stdout), tagPreview);
+  assert.deepEqual(requests, [{ method: 'GET', path: '/api/tags/tag-one/deletion-preview' }]);
+  const refused = await run(['--json', 'tag', 'delete', 'tag-one']);
+  assert.equal(refused.code, 1);
+  assert.match(JSON.parse(refused.stderr).error, /requires --yes/);
+  assert.ok(requests.every((request) => request.method === 'GET'));
+  const confirmed = await run([
+    '--json',
+    '--workspace',
+    'selected',
+    'tag',
+    'delete',
+    'tag-one',
+    '--yes',
+  ]);
+  assert.deepEqual(JSON.parse(confirmed.stdout), { detachedTaskIds: ['a'] });
+  assert.deepEqual(requests.slice(-2), [
+    { method: 'GET', path: '/api/workspaces/selected/tags/tag-one/deletion-preview' },
+    { method: 'DELETE', path: '/api/workspaces/selected/tags/tag-one?confirm=true' },
+  ]);
 });
 
 test('CLI workspace selection scopes reads and writes, honors flags over env, and never falls back', async (t) => {
@@ -949,6 +1105,7 @@ test('CLI scoped graph deduplicates nested shared children and excludes external
       { id: 'r1', containerId: 'c', taskId: 'shared' },
       { id: 'r2', containerId: 'nested', taskId: 'shared' },
     ],
+    tags: [],
     layouts: [
       { viewId: 'c', mode: 'auto', positions: [] },
       { viewId: 'root', mode: 'auto', positions: [] },
@@ -962,6 +1119,7 @@ test('CLI scoped graph deduplicates nested shared children and excludes external
     tasks: nested.tasks.slice(0, 3),
     dependencies: [],
     references: nested.references,
+    tags: [],
     layouts: [nested.layouts[0]],
   });
 });

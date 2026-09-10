@@ -24,6 +24,7 @@ export interface Task {
   prMergeStatus: PrMergeStatus;
   prCheckedAt: string | null;
   prError: string | null;
+  tagIds: string[];
   createdAt: string;
   updatedAt: string;
 }
@@ -47,6 +48,14 @@ export interface TaskReference {
   taskId: string;
 }
 
+export interface Tag {
+  id: string;
+  name: string;
+  /** @pattern ^#[0-9a-fA-F]{6}$ */
+  color: string;
+  system: boolean;
+}
+
 export interface Layout {
   viewId: string;
   mode: 'auto' | 'manual';
@@ -57,6 +66,7 @@ export interface Snapshot {
   tasks: TaskView[];
   dependencies: Dependency[];
   references: TaskReference[];
+  tags: Tag[];
   layouts: Layout[];
 }
 
@@ -67,6 +77,7 @@ export interface CreateTaskInput {
   kind: TaskKind;
   parentId?: string | null;
   prUrl?: string;
+  tagIds?: string[];
 }
 
 export interface ConnectTaskInput {
@@ -83,6 +94,36 @@ export interface UpdateTaskInput {
   title?: string;
   description?: string;
   prUrl?: string | null;
+  tagIds?: string[];
+}
+
+export interface CreateTagInput {
+  /** @minLength 1 @maxLength 40 */
+  name: string;
+  /** @pattern ^#[0-9a-fA-F]{6}$ */
+  color: string;
+}
+
+/** @minProperties 1 */
+export interface UpdateTagInput {
+  /** @minLength 1 @maxLength 40 */
+  name?: string;
+  /** @pattern ^#[0-9a-fA-F]{6}$ */
+  color?: string;
+}
+
+export interface SetTaskTagsInput {
+  /** @maxItems 3 @uniqueItems true */
+  tagIds: string[];
+}
+
+export interface TagDeletionPreview {
+  tag: Tag;
+  affectedTasks: TaskView[];
+}
+
+export interface DeleteTagResponse {
+  detachedTaskIds: string[];
 }
 
 export interface DeletionPreview {
@@ -112,14 +153,15 @@ export interface GithubPr {
 
 export type PortableTask = Pick<
   Task,
-  'id' | 'title' | 'description' | 'kind' | 'parentId' | 'manualDone' | 'prUrl'
+  'id' | 'title' | 'description' | 'kind' | 'parentId' | 'manualDone' | 'prUrl' | 'tagIds'
 >;
 
 export interface PortableState {
-  version: 1;
+  version: 2;
   tasks: PortableTask[];
   dependencies: Dependency[];
   references: TaskReference[];
+  tags: Tag[];
 }
 
 /** @pattern ^[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?/(?!\.{1,2}$)[a-zA-Z0-9_.-]+$ */
@@ -216,7 +258,7 @@ export interface SyncStatus {
 }
 
 export interface SyncChange {
-  collection: 'tasks' | 'dependencies' | 'references';
+  collection: 'tasks' | 'dependencies' | 'references' | 'tags';
   id: string;
   title?: string;
   kind: 'added' | 'updated' | 'deleted';

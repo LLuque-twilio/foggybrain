@@ -9,12 +9,14 @@ import {
 } from 'react';
 import { AlertTriangle, ArrowRight, Box, GitPullRequest, Link2, ListChecks, X } from 'lucide-react';
 import { LoadingField } from './LoadingField';
+import { TagPicker } from './Tags';
 import type {
   CreateTaskInput,
   DeletionPreview,
   GithubPr,
   GithubStatus,
   Snapshot,
+  Tag,
   TaskKind,
   TaskView,
   UpdateTaskInput,
@@ -102,6 +104,9 @@ export function TaskDialog({
   dialogTitle,
   submitLabel,
   initialKind,
+  createTag,
+  renameTag,
+  deleteTag,
 }: {
   task?: TaskView;
   parentId?: string | null;
@@ -110,11 +115,18 @@ export function TaskDialog({
   prs: GithubPr[];
   github: GithubStatus | null;
   close: () => void;
-  submit: (input: CreateTaskInput | UpdateTaskInput, id?: string) => Promise<boolean>;
+  submit: (
+    input: CreateTaskInput | UpdateTaskInput,
+    id?: string,
+    customTagIds?: string[],
+  ) => Promise<boolean>;
   busy: boolean;
   dialogTitle?: string;
   submitLabel?: string;
   initialKind?: TaskKind;
+  createTag: (name: string, color: string) => Promise<Tag | undefined>;
+  renameTag: (id: string, name: string, color: string) => Promise<boolean>;
+  deleteTag: (tag: Tag) => void;
 }) {
   const [kind, setKind] = useState<TaskKind>(
     task?.kind ?? initialKind ?? (prUrl !== undefined ? 'pr' : parentId ? 'manual' : 'container'),
@@ -125,6 +137,7 @@ export function TaskDialog({
   const [description, setDescription] = useState(task?.description ?? '');
   const [url, setUrl] = useState(task?.prUrl ?? prUrl ?? '');
   const [parent, setParent] = useState(parentId ?? '');
+  const [tagIds, setTagIds] = useState(task?.tagIds.filter((id) => id !== 'favorites') ?? []);
   const githubLoading = !github || github.syncing;
   return (
     <Dialog
@@ -146,9 +159,9 @@ export function TaskDialog({
                     ? { prUrl: null }
                     : {}
                 : {}),
-            ...(!task ? { kind, parentId: parent || null } : {}),
+            ...(!task ? { kind, parentId: parent || null, tagIds } : {}),
           };
-          if (await submit(input as CreateTaskInput | UpdateTaskInput, task?.id)) close();
+          if (await submit(input as CreateTaskInput | UpdateTaskInput, task?.id, tagIds)) close();
         }}
       >
         {!task && (
@@ -275,6 +288,19 @@ export function TaskDialog({
             </select>
           </label>
         )}
+        <label>
+          Tags <span className="optional">optional</span>
+        </label>
+        <TagPicker
+          tags={snapshot.tags}
+          selectedIds={tagIds}
+          busy={busy}
+          onAdd={(id) => setTagIds((current) => [...current, id])}
+          onRemove={(id) => setTagIds((current) => current.filter((tagId) => tagId !== id))}
+          onCreate={createTag}
+          onRename={renameTag}
+          onDelete={deleteTag}
+        />
         <footer>
           <button className="button" type="button" onClick={close}>
             Cancel
@@ -285,6 +311,55 @@ export function TaskDialog({
           </button>
         </footer>
       </form>
+    </Dialog>
+  );
+}
+
+export function TagDeleteDialog({
+  tag,
+  affectedTasks,
+  close,
+  confirm,
+  busy,
+}: {
+  tag: Tag;
+  affectedTasks: TaskView[];
+  close: () => void;
+  confirm: () => void;
+  busy: boolean;
+}) {
+  return (
+    <Dialog title="Delete this tag?" close={close} danger>
+      <div className="delete-heading">
+        <AlertTriangle size={24} />
+        <p>
+          <strong>{tag.name}</strong>
+          <br />
+          This tag will be removed from {affectedTasks.length} task
+          {affectedTasks.length === 1 ? '' : 's'}. The tasks themselves will be kept.
+        </p>
+      </div>
+      {!!affectedTasks.length && (
+        <div className="impact-list">
+          {affectedTasks.map((task) => (
+            <div key={task.id}>
+              <Box size={16} />
+              <span>
+                {task.title}
+                <small>{task.kind}</small>
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+      <footer>
+        <button className="button" onClick={close}>
+          Keep tag
+        </button>
+        <button className="button danger" disabled={busy} onClick={confirm}>
+          Delete tag
+        </button>
+      </footer>
     </Dialog>
   );
 }

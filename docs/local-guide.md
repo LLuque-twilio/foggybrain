@@ -256,7 +256,7 @@ The UI offers the same review-and-confirm workflow under **Workspace sync** in t
 
 For first sync, an empty local graph can pull remote state, or a missing remote file can receive local state. Two nonempty sides without a shared baseline are blocked. Preserve both: use a separate new local data directory for a pull or a distinct unused remote path for an independent publication, rather than wiping existing data.
 
-Portable `version: 1` JSON includes editable task fields, dependencies, and references. It excludes PR verification, derived completion, layouts, and timestamps. PR state is reverified locally by server polling. SQLite holds the sync baseline and automatic full local backups in `foggybrain_sync_backups`; there is no restore API or automatic pruning. Keep independent backups. **Git history and local backups retain deleted sensitive information**; deleting a task is not secure erasure. See [manual sync CLI details](cli.md#manual-state-sync) for response fields and recovery safeguards.
+Portable `version: 2` JSON includes editable task fields, custom tags, tag memberships, dependencies, and references. It excludes the canonical Favorites definition, PR verification, derived completion, layouts, and timestamps. Version 1 input upgrades in memory with no custom tags or memberships. PR state is reverified locally by server polling. SQLite holds the sync baseline and automatic full local backups in `foggybrain_sync_backups`; there is no restore API or automatic pruning. Keep independent backups. **Git history and local backups retain deleted sensitive information**; deleting a task is not secure erasure. See [manual sync CLI details](cli.md#manual-state-sync) for response fields and recovery safeguards.
 
 ## Configuration And Data
 

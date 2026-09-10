@@ -33,6 +33,7 @@ import type {
   GithubStatus,
   Layout,
   Snapshot,
+  Tag,
   TaskView,
   UpdateTaskInput,
   Workspace,
@@ -41,9 +42,17 @@ import { workspaceApi } from './api';
 import { Graph } from './Graph';
 import { Detail } from './Detail';
 import { DependencyDialog } from './DependencyDialog';
-import { DeleteDialog, Dialog, DialogErrorContext, ReferenceDialog, TaskDialog } from './Dialogs';
+import {
+  DeleteDialog,
+  Dialog,
+  DialogErrorContext,
+  ReferenceDialog,
+  TagDeleteDialog,
+  TaskDialog,
+} from './Dialogs';
 import { Status, statusLabels } from './Status';
 import { SyncDialog } from './SyncDialog';
+import { ListView } from './List';
 
 type Modal =
   | { type: 'create'; parentId?: string | null; prUrl?: string }
@@ -51,10 +60,11 @@ type Modal =
   | { type: 'dependency'; task: TaskView; direction: ConnectTaskInput['direction'] }
   | { type: 'reference'; containerId: string }
   | { type: 'delete'; task: TaskView; preview: DeletionPreview }
+  | { type: 'tag-delete'; tag: Tag; affectedTasks: TaskView[] }
   | { type: 'help' }
   | { type: 'sync'; initialPreview?: boolean }
   | null;
-const empty: Snapshot = { tasks: [], dependencies: [], references: [], layouts: [] };
+const empty: Snapshot = { tasks: [], dependencies: [], references: [], layouts: [], tags: [] };
 const route = () => window.location.hash.slice(1) || '/';
 
 export function WorkspaceApp({
@@ -190,7 +200,7 @@ export function WorkspaceApp({
       navigate(`/tasks/${id}`);
       setSelectedId(null);
     } else {
-      navigate(task.parentId ? `/tasks/${task.parentId}` : '/map');
+      if (path !== '/list') navigate(task.parentId ? `/tasks/${task.parentId}` : '/map');
       setSelectedId(id);
     }
   };
@@ -200,24 +210,28 @@ export function WorkspaceApp({
   const backLabel =
     backPath === '/map'
       ? 'Workspace map'
-      : backPath === '/prs'
-        ? 'Pull requests'
-        : backPath.startsWith('/tasks/')
-          ? (snapshot.tasks.find((task) => `/tasks/${task.id}` === backPath)?.title ??
-            'Previous graph')
-          : 'Overview';
+      : backPath === '/list'
+        ? 'List'
+        : backPath === '/prs'
+          ? 'Pull requests'
+          : backPath.startsWith('/tasks/')
+            ? (snapshot.tasks.find((task) => `/tasks/${task.id}` === backPath)?.title ??
+              'Previous graph')
+            : 'Overview';
   const goBack = () => {
     if (previousPath) window.history.back();
     else navigate(backPath);
   };
   const isGraph = path === '/map' || !!currentId;
   const isPrs = path === '/prs';
+  const isList = path === '/list';
   const isSettings = path === '/settings';
   const viewId = currentId ?? 'root';
-  const selected = snapshot.tasks.find(
-    (task) =>
-      task.id === selectedId &&
-      (viewId === 'root' ? task.parentId === null : current?.childrenIds.includes(task.id)),
+  const selected = snapshot.tasks.find((task) =>
+    isList
+      ? task.id === selectedId
+      : task.id === selectedId &&
+        (viewId === 'root' ? task.parentId === null : current?.childrenIds.includes(task.id)),
   );
   const edge = snapshot.dependencies.find((edge) => edge.id === edgeId);
   const roots = snapshot.tasks.filter((task) => task.parentId === null);
@@ -236,10 +250,22 @@ export function WorkspaceApp({
       task.description.toLowerCase().includes(query.toLowerCase()),
   );
 
-  async function saveTask(input: CreateTaskInput | UpdateTaskInput, id?: string) {
+  async function saveTask(
+    input: CreateTaskInput | UpdateTaskInput,
+    id?: string,
+    customTagIds?: string[],
+  ) {
     let created: TaskView | undefined;
     const success = await run(async () => {
       created = await api<TaskView>(id ? `/tasks/${id}` : '/tasks', id ? 'PATCH' : 'POST', input);
+      const previous = id
+        ? snapshot.tasks
+            .find((task) => task.id === id)
+            ?.tagIds.filter((tagId) => tagId !== 'favorites')
+        : undefined;
+      if (id && customTagIds && JSON.stringify(previous) !== JSON.stringify(customTagIds)) {
+        created = await api<TaskView>(`/tasks/${id}/tags`, 'PUT', { tagIds: customTagIds });
+      }
     });
     if (success && created && !id) {
       if (created.parentId) {
@@ -252,6 +278,37 @@ export function WorkspaceApp({
       }
     }
     return success;
+  }
+
+  async function createTag(name: string, color: string) {
+    let tag: Tag | undefined;
+    const success = await run(async () => {
+      tag = await api<Tag>('/tags', 'POST', { name, color });
+    });
+    return success ? tag : undefined;
+  }
+
+  function renameTag(id: string, name: string, color: string) {
+    return run(() => api(`/tags/${id}`, 'PATCH', { name, color }));
+  }
+
+  function previewTagDelete(tag: Tag) {
+    void run(async () => {
+      const preview = await api<{ tag: Tag; affectedTasks: TaskView[] }>(
+        `/tags/${tag.id}/deletion-preview`,
+      );
+      setModal({ type: 'tag-delete', tag: preview.tag, affectedTasks: preview.affectedTasks });
+    });
+  }
+
+  function toggleTag(task: TaskView, tagId: string, attached: boolean) {
+    void run(() =>
+      api(
+        `/tasks/${task.id}/tags/${tagId}`,
+        attached ? 'PUT' : 'DELETE',
+        attached ? {} : undefined,
+      ),
+    );
   }
 
   async function previewDelete(task: TaskView) {
@@ -315,6 +372,10 @@ export function WorkspaceApp({
           <button className={isGraph ? 'active' : ''} onClick={() => navigate('/map')}>
             <Network size={17} />
             Workspace map
+          </button>
+          <button className={isList ? 'active' : ''} onClick={() => navigate('/list')}>
+            <ListChecks size={17} />
+            List<span className="nav-count">{snapshot.tasks.length}</span>
           </button>
           <button className={isPrs ? 'active' : ''} onClick={() => navigate('/prs')}>
             <GitPullRequest size={17} />
@@ -413,7 +474,7 @@ export function WorkspaceApp({
               </>
             ) : (
               <span className="current">
-                {isSettings ? 'Settings' : isPrs ? 'Pull requests' : 'Overview'}
+                {isSettings ? 'Settings' : isPrs ? 'Pull requests' : isList ? 'List' : 'Overview'}
               </span>
             )}
           </nav>
@@ -453,6 +514,41 @@ export function WorkspaceApp({
             <LoaderCircle className="spin" size={24} />
             Finding a little clarity...
           </div>
+        ) : isList ? (
+          <ListView
+            snapshot={snapshot}
+            query={query}
+            setQuery={setQuery}
+            selected={selected}
+            busy={busy}
+            open={open}
+            toggleFavorite={(task) =>
+              toggleTag(task, 'favorites', !task.tagIds.includes('favorites'))
+            }
+            detail={(task) => (
+              <Detail
+                key={task.id}
+                task={task}
+                snapshot={snapshot}
+                viewId="list"
+                busy={busy}
+                close={() => setSelectedId(null)}
+                edit={() => setModal({ type: 'edit', task })}
+                open={open}
+                done={() =>
+                  void run(() => api(`/tasks/${task.id}/done`, 'POST', { done: !task.manualDone }))
+                }
+                remove={() => void previewDelete(task)}
+                unlink={(id) => void run(() => api(`/references/${id}`, 'DELETE'))}
+                addDependency={(direction) => setModal({ type: 'dependency', task, direction })}
+                removeDependency={(id) => void run(() => api(`/dependencies/${id}`, 'DELETE'))}
+                toggleTag={(tagId, attached) => toggleTag(task, tagId, attached)}
+                createTag={createTag}
+                renameTag={renameTag}
+                deleteTag={previewTagDelete}
+              />
+            )}
+          />
         ) : isGraph ? (
           currentId && !current ? (
             <div className="empty-state">
@@ -669,6 +765,10 @@ export function WorkspaceApp({
                       setModal({ type: 'dependency', task: selected, direction });
                     }}
                     removeDependency={(id) => void run(() => api(`/dependencies/${id}`, 'DELETE'))}
+                    toggleTag={(tagId, attached) => toggleTag(selected, tagId, attached)}
+                    createTag={createTag}
+                    renameTag={renameTag}
+                    deleteTag={previewTagDelete}
                   />
                 )}
               </div>
@@ -1008,6 +1108,9 @@ export function WorkspaceApp({
               if (!mutation.current) setModal(null);
             }}
             submit={(input) => run(() => api(`/tasks/${modal.task.id}/connections`, 'POST', input))}
+            createTag={createTag}
+            renameTag={renameTag}
+            deleteTag={previewTagDelete}
           />
         )}
         {modal?.type === 'sync' && (
@@ -1029,6 +1132,9 @@ export function WorkspaceApp({
             close={() => setModal(null)}
             submit={saveTask}
             busy={busy}
+            createTag={createTag}
+            renameTag={renameTag}
+            deleteTag={previewTagDelete}
           />
         )}
         {modal?.type === 'edit' && (
@@ -1040,6 +1146,9 @@ export function WorkspaceApp({
             close={() => setModal(null)}
             submit={saveTask}
             busy={busy}
+            createTag={createTag}
+            renameTag={renameTag}
+            deleteTag={previewTagDelete}
           />
         )}
         {modal?.type === 'reference' && (
@@ -1087,6 +1196,20 @@ export function WorkspaceApp({
                 setModal(null);
                 if (currentId && result.deleted.includes(currentId)) navigate('/');
                 if (selectedId && result.deleted.includes(selectedId)) setSelectedId(null);
+              })
+            }
+          />
+        )}
+        {modal?.type === 'tag-delete' && (
+          <TagDeleteDialog
+            tag={modal.tag}
+            affectedTasks={modal.affectedTasks}
+            close={() => setModal(null)}
+            busy={busy}
+            confirm={() =>
+              void run(async () => {
+                await api(`/tags/${modal.tag.id}?confirm=true`, 'DELETE');
+                setModal(null);
               })
             }
           />

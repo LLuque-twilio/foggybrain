@@ -33,7 +33,13 @@ function rejectsUnchanged(store: Store, action: () => unknown, status = 400) {
 
 test('empty store and task defaults; returned values do not mutate storage', (t) => {
   const store = memory(t);
-  assert.deepEqual(store.snapshot(), { tasks: [], dependencies: [], references: [], layouts: [] });
+  assert.deepEqual(store.snapshot(), {
+    tasks: [],
+    dependencies: [],
+    references: [],
+    tags: [{ id: 'favorites', name: 'Favorites', color: '#d4af37', system: true }],
+    layouts: [],
+  });
   const task = manual(store, '  Write tests  ');
   assert.equal(task.title, 'Write tests');
   assert.equal(task.description, '');
@@ -1318,7 +1324,7 @@ test('portable state validates exact shapes, IDs, memberships and graph before i
     null,
     [],
     {},
-    { ...state, version: 2 },
+    { ...state, version: 3 },
     { ...state, layouts: [] },
     { ...state, references: null },
   ];
@@ -1378,6 +1384,70 @@ test('portable state validates exact shapes, IDs, memberships and graph before i
   }
   for (const value of invalid) assert.throws(() => validatePortableState(value), DomainError);
   assert.deepEqual(store.exportState(), state);
+});
+
+test('tags validate memberships, protect Favorites, and cascade deletion', (t) => {
+  const store = memory(t);
+  const task = manual(store);
+  const tags = ['One', 'Two', 'Three'].map((name, index) =>
+    store.createTag({ name, color: `#00000${index}` }),
+  );
+  assert.equal(store.snapshot().tags[0].id, 'favorites');
+  assert.deepEqual(
+    store.updateTask(task.id, { tagIds: [...tags.map((tag) => tag.id), 'favorites'] }).tagIds,
+    [...tags.map((tag) => tag.id), 'favorites'],
+  );
+  assert.throws(() => store.createTag({ name: ' favorites', color: '#123456' }), DomainError);
+  assert.throws(() => store.createTag({ name: 'one', color: '#123456' }), DomainError);
+  assert.throws(() => store.createTag({ name: 'Four', color: 'red' }), DomainError);
+  const fourth = store.createTag({ name: 'Four', color: '#abcdef' });
+  assert.throws(() => store.attachTaskTag(task.id, fourth.id), /at most 3/);
+  assert.throws(() => store.updateTag('favorites', { name: 'Starred' }), DomainError);
+  assert.throws(() => store.deleteTag('favorites'), DomainError);
+  assert.throws(() => store.replaceTaskTags(task.id, ['favorites']), DomainError);
+  assert.deepEqual(store.replaceTaskTags(task.id, [tags[0].id]).tagIds, ['favorites', tags[0].id]);
+  const preview = store.previewTagDeletion(tags[0].id);
+  assert.equal(preview.tag.id, tags[0].id);
+  assert.deepEqual(
+    preview.affectedTasks.map((entry) => entry.id),
+    [task.id],
+  );
+  assert.deepEqual(store.deleteTag(tags[0].id), [task.id]);
+  assert.deepEqual(view(store, task).tagIds, ['favorites']);
+});
+
+test('portable v1 upgrades to v2 and v2 omits and rejects the Favorites definition', (t) => {
+  const store = memory(t);
+  const task = manual(store);
+  const legacy = {
+    version: 1,
+    tasks: store.exportState().tasks.map(({ tagIds: _tagIds, ...entry }) => entry),
+    dependencies: [],
+    references: [],
+  };
+  assert.deepEqual(validatePortableState(legacy), {
+    version: 2,
+    tasks: [{ ...legacy.tasks[0], tagIds: [] }],
+    dependencies: [],
+    references: [],
+    tags: [],
+  });
+  store.attachTaskTag(task.id, 'favorites');
+  assert.deepEqual(store.exportState().tags, []);
+  assert.deepEqual(store.exportState().tasks[0].tagIds, ['favorites']);
+  for (const tag of [
+    { id: 'favorites', name: 'Favorites', color: '#d4af37', system: true },
+    { id: 'other', name: 'Other', color: '#123456', system: true },
+    { id: 'other', name: 'favorites', color: '#123456', system: false },
+  ]) {
+    assert.throws(
+      () => validatePortableState({ ...store.exportState(), tags: [tag] }),
+      DomainError,
+    );
+  }
+  const dangling = store.exportState();
+  dangling.tasks[0].tagIds = ['missing'];
+  assert.throws(() => validatePortableState(dangling), /missing tag/);
 });
 
 for (const mode of ['merge', 'revert'] as const)
@@ -1490,6 +1560,20 @@ test('sync imports reset readiness and errors for a changed PR URL on the same t
   assert.equal(imported.prMergeStatus, 'unknown');
   assert.equal(imported.prError, null);
   assert.equal(imported.prCheckedAt, null);
+});
+
+test('sync preserves updatedAt when reconstructed tag memberships are unchanged', (t) => {
+  const store = memory(t);
+  const task = manual(store);
+  const tag = store.createTag({ name: 'Release', color: '#7c5cff' });
+  const tagged = store.attachTaskTag(task.id, tag.id);
+  const target = { repo: 'o/r', branch: 'main', path: 'state.json' };
+  const local = store.exportState();
+  store.finishSync(
+    target,
+    store.prepareSync(target, store.syncRecord(target), local, structuredClone(local), null),
+  );
+  assert.equal(view(store, task).updatedAt, tagged.updatedAt);
 });
 
 test('sync optimistic storage check does not clobber concurrent graph changes or baseline changes', (t) => {

@@ -17,7 +17,7 @@ import type {
 } from './shared.js';
 
 const MAX_CONTENT = 1024 * 1024;
-const collections = ['tasks', 'dependencies', 'references'] as const;
+const collections = ['tasks', 'dependencies', 'references', 'tags'] as const;
 const equal = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
 class RejectedSyncWrite extends DomainError {}
@@ -110,6 +110,41 @@ function merge(
       } else item = choose(`${collection}/${id}`, b, l, r);
       if (item) (merged[collection] as unknown[]).push(item);
     }
+  }
+  const tagValue = (state: PortableState, tagId: string) => ({
+    tag: state.tags.find((tag) => tag.id === tagId) ?? null,
+    taskIds: state.tasks
+      .filter((task) => task.tagIds.includes(tagId))
+      .map((task) => task.id)
+      .sort(),
+  });
+  const dangling = new Set(
+    merged.tasks.flatMap((task) =>
+      task.tagIds.filter(
+        (tagId) => tagId !== 'favorites' && !merged.tags.some((tag) => tag.id === tagId),
+      ),
+    ),
+  );
+  for (const tagId of dangling) {
+    if (!base.tags.some((tag) => tag.id === tagId)) continue;
+    const localValue = tagValue(local, tagId);
+    const remoteValue = tagValue(remote, tagId);
+    if ((localValue.tag === null) === (remoteValue.tag === null)) continue;
+    conflicts.push({
+      path: `tags/${tagId}/memberships`,
+      base: tagValue(base, tagId),
+      local: localValue,
+      remote: remoteValue,
+    });
+    const selected = resolution === 'remote' ? remoteValue : localValue;
+    merged.tags = merged.tags.filter((tag) => tag.id !== tagId);
+    if (selected.tag) merged.tags.push(selected.tag);
+    const memberships = new Set(selected.taskIds);
+    for (const task of merged.tasks) {
+      task.tagIds = task.tagIds.filter((id) => id !== tagId);
+      if (selected.tag && memberships.has(task.id)) task.tagIds.push(tagId);
+    }
+    merged.tags.sort((a, b) => a.id.localeCompare(b.id));
   }
   let validationError: string | null = null;
   for (const conflict of conflicts) {

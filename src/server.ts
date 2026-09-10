@@ -7,7 +7,14 @@ import { applyConfigFile, configFilePath, readConfigFile, readTokenFromGhCli } f
 import { Store, DomainError } from './core.js';
 import { GithubPoller, parsePollInterval } from './github.js';
 import { readSyncConfig, StateSync } from './sync.js';
-import type { CreateTaskInput, Layout, UpdateTaskInput } from './shared.js';
+import type {
+  CreateTagInput,
+  CreateTaskInput,
+  Layout,
+  SetTaskTagsInput,
+  UpdateTagInput,
+  UpdateTaskInput,
+} from './shared.js';
 import { WorkspaceManager } from './workspaces.js';
 
 class HttpError extends Error {
@@ -55,6 +62,21 @@ function stringField(body: Record<string, unknown>, key: string, optional = fals
 function id(req: Request): string {
   if (typeof req.params.id !== 'string') throw new HttpError(400, 'Invalid ID.');
   return req.params.id;
+}
+
+function param(req: Request, name: string): string {
+  const value = req.params[name];
+  if (typeof value !== 'string') throw new HttpError(400, 'Invalid ID.');
+  return value;
+}
+
+function stringArrayField(body: Record<string, unknown>, key: string, optional = false): void {
+  if (optional && !(key in body)) return;
+  if (
+    !Array.isArray(body[key]) ||
+    (body[key] as unknown[]).some((value) => typeof value !== 'string')
+  )
+    throw new HttpError(400, `${key} must be an array of strings.`);
 }
 
 function localHost(host: string | undefined, port: number): boolean {
@@ -240,19 +262,21 @@ function domainRoutes(
     res.json(store.snapshot());
   });
   app.post('/tasks', (req, res) => {
-    const body = object(req.body, ['title', 'description', 'kind', 'parentId', 'prUrl']);
+    const body = object(req.body, ['title', 'description', 'kind', 'parentId', 'prUrl', 'tagIds']);
     stringField(body, 'title');
     stringField(body, 'description', true);
     stringField(body, 'prUrl', true);
     if (!['container', 'manual', 'pr'].includes(body.kind as string))
       throw new HttpError(400, 'kind must be container, manual, or pr.');
     if ('parentId' in body && body.parentId !== null) stringField(body, 'parentId');
+    stringArrayField(body, 'tagIds', true);
     res.status(201).json(store.createTask(body as unknown as CreateTaskInput));
   });
   app.patch('/tasks/:id', (req, res) => {
-    const body = object(req.body, ['title', 'description', 'prUrl']);
+    const body = object(req.body, ['title', 'description', 'prUrl', 'tagIds']);
     for (const field of ['title', 'description']) stringField(body, field, true);
     if (body.prUrl !== null) stringField(body, 'prUrl', true);
+    stringArrayField(body, 'tagIds', true);
     res.json(store.updateTask(id(req), body as UpdateTaskInput));
   });
   app.post('/tasks/:id/connections', (req, res) => {
@@ -269,6 +293,39 @@ function domainRoutes(
   app.delete('/tasks/:id', (req, res) => {
     if (req.query.confirm !== 'true') throw new HttpError(400, 'Deletion requires confirm=true.');
     res.json({ deleted: store.deleteTask(id(req)) });
+  });
+  app.post('/tags', (req, res) => {
+    const body = object(req.body, ['name', 'color']);
+    stringField(body, 'name');
+    stringField(body, 'color');
+    res.status(201).json(store.createTag(body as unknown as CreateTagInput));
+  });
+  app.patch('/tags/:id', (req, res) => {
+    const body = object(req.body, ['name', 'color']);
+    stringField(body, 'name', true);
+    stringField(body, 'color', true);
+    res.json(store.updateTag(id(req), body as UpdateTagInput));
+  });
+  app.get('/tags/:id/deletion-preview', (req, res) => {
+    res.json(store.previewTagDeletion(id(req)));
+  });
+  app.delete('/tags/:id', (req, res) => {
+    if (req.query.confirm !== 'true') throw new HttpError(400, 'Deletion requires confirm=true.');
+    res.json({ detachedTaskIds: store.deleteTag(id(req)) });
+  });
+  app.put('/tasks/:taskId/tags', (req, res) => {
+    const body = object(req.body, ['tagIds']);
+    stringArrayField(body, 'tagIds');
+    res.json(
+      store.replaceTaskTags(param(req, 'taskId'), (body as unknown as SetTaskTagsInput).tagIds),
+    );
+  });
+  app.put('/tasks/:taskId/tags/:tagId', (req, res) => {
+    object(req.body, []);
+    res.json(store.attachTaskTag(param(req, 'taskId'), param(req, 'tagId')));
+  });
+  app.delete('/tasks/:taskId/tags/:tagId', (req, res) => {
+    res.json(store.detachTaskTag(param(req, 'taskId'), param(req, 'tagId')));
   });
   app.post('/dependencies', (req, res) => {
     const body = object(req.body, ['prerequisiteId', 'dependentId']);

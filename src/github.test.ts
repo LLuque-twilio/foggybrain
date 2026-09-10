@@ -20,6 +20,7 @@ function task(id: string, prUrl = `https://github.com/other/private/pull/${id}`)
     prMergeStatus: 'unknown',
     prCheckedAt: null,
     prError: null,
+    tagIds: [],
     createdAt: new Date(NOW).toISOString(),
     updatedAt: new Date(NOW).toISOString(),
     status: 'available',
@@ -30,7 +31,7 @@ function task(id: string, prUrl = `https://github.com/other/private/pull/${id}`)
 }
 
 function fakeStore(tasks: TaskView[] = []) {
-  const snapshot: Snapshot = { tasks, dependencies: [], references: [], layouts: [] };
+  const snapshot: Snapshot = { tasks, dependencies: [], references: [], tags: [], layouts: [] };
   const updates: ({ id: string } & Parameters<Store['updatePr']>[1])[] = [];
   const store = {
     snapshot: () => structuredClone(snapshot),

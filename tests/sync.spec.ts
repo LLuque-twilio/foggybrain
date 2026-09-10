@@ -48,7 +48,7 @@ test.beforeEach(async ({ page }) => {
     }),
   );
   await page.route('**/api/workspaces/default/state', (route) =>
-    route.fulfill({ json: { tasks: [], dependencies: [], references: [], layouts: [] } }),
+    route.fulfill({ json: { tasks: [], dependencies: [], references: [], tags: [], layouts: [] } }),
   );
   await page.route('**/api/workspaces/default/github/status', (route) =>
     route.fulfill({
@@ -86,6 +86,7 @@ for (const mode of ['merge', 'revert'] as const) {
                 prMergeStatus: 'unknown',
                 prCheckedAt: null,
                 prError: null,
+                tagIds: [],
                 createdAt: '2026-09-08T00:00:00Z',
                 updatedAt: '2026-09-08T00:00:00Z',
                 status: 'available',
@@ -97,6 +98,7 @@ for (const mode of ['merge', 'revert'] as const) {
           : [],
         dependencies: [],
         references: [],
+        tags: [],
         layouts: [],
       };
       return route.fulfill({ json: snapshot });
