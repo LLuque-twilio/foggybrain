@@ -1989,7 +1989,9 @@ details ul {
   margin-top: 8px;
 }
 .detail-tags {
-  margin-top: 18px;
+  margin: 22px 0;
+  padding-bottom: 20px;
+  border-bottom: 1px solid #e6ecdd;
 }
 .tag-picker {
   position: relative;
