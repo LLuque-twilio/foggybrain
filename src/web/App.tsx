@@ -53,6 +53,7 @@ import {
 import { Status, statusLabels } from './Status';
 import { SyncDialog } from './SyncDialog';
 import { ListView } from './List';
+import { TaskDetailSheet } from './TaskDetailSheet';
 
 type Modal =
   | { type: 'create'; parentId?: string | null; prUrl?: string }
@@ -522,6 +523,7 @@ export function WorkspaceApp({
             selected={selected}
             busy={busy}
             open={open}
+            close={() => setSelectedId(null)}
             toggleFavorite={(task) =>
               toggleTag(task, 'favorites', !task.tagIds.includes('favorites'))
             }
@@ -738,6 +740,8 @@ export function WorkspaceApp({
                     </div>
                   )}
                 </div>
+              </div>
+              <TaskDetailSheet title={selected?.title} close={() => setSelectedId(null)}>
                 {selected && (
                   <Detail
                     key={selected.id}
@@ -771,7 +775,7 @@ export function WorkspaceApp({
                     deleteTag={previewTagDelete}
                   />
                 )}
-              </div>
+              </TaskDetailSheet>
               <div className="graph-legend">
                 {(['available', 'blocked', 'ready', 'completed'] as const).map((status) => (
                   <span key={status}>

@@ -1,5 +1,9 @@
 @import '@fontsource-variable/dm-sans';
 @import '@fontsource-variable/manrope';
+@layer theme, base, components, utilities;
+@import 'tailwindcss/theme.css' layer(theme);
+@import 'tw-animate-css';
+@import 'tailwindcss/utilities.css' layer(utilities);
 
 :root {
   font-family:
@@ -2205,7 +2209,7 @@ details ul {
 .task-list-head,
 .task-list-row {
   display: grid;
-  grid-template-columns: 42px 70px minmax(180px, 1.5fr) 105px minmax(140px, 1fr);
+  grid-template-columns: 42px 70px minmax(220px, 1fr) 105px 180px;
   align-items: center;
   gap: 10px;
 }
@@ -2252,22 +2256,31 @@ details ul {
   display: none;
 }
 .list-task-title {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
+  display: block;
 }
-.list-task-title > b {
-  color: #8ba079;
-  font-size: 15px;
-  line-height: 1.1;
+.list-task-title > span {
+  display: block;
+  min-width: 0;
 }
 .list-task-title strong {
-  display: block;
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
   color: #425a3b;
   font:
     600 12px/1.4 'Manrope Variable',
     sans-serif;
   overflow-wrap: anywhere;
+}
+.task-detail-sheet {
+  overflow: hidden;
+  padding: 0;
+}
+.task-detail-sheet .detail-panel {
+  width: 100%;
+  height: 100%;
+  border-left: 0;
 }
 .list-task-title small {
   display: block;
@@ -2290,7 +2303,7 @@ details ul {
   }
   .task-list-head,
   .task-list-row {
-    grid-template-columns: 36px 38px minmax(150px, 1fr) 90px minmax(105px, 0.8fr);
+    grid-template-columns: 36px 38px minmax(180px, 1fr) 90px 130px;
     gap: 7px;
   }
 }

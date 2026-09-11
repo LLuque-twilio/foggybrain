@@ -3,6 +3,7 @@ import { Search, Star } from 'lucide-react';
 import type { Snapshot, Tag, TaskView } from '../shared';
 import { Detail } from './Detail';
 import { StarToggle, TagBadges } from './Tags';
+import { TaskDetailSheet } from './TaskDetailSheet';
 
 const kindLabels = { container: 'Container', manual: 'Manual step', pr: 'PR merge' };
 
@@ -13,6 +14,7 @@ export function ListView({
   selected,
   busy,
   open,
+  close,
   detail,
   toggleFavorite,
 }: {
@@ -22,6 +24,7 @@ export function ListView({
   selected?: TaskView;
   busy: boolean;
   open: (id: string) => void;
+  close: () => void;
   detail: (task: TaskView) => ReactNode;
   toggleFavorite: (task: TaskView) => void;
 }) {
@@ -132,7 +135,6 @@ export function ListView({
                 <span className="mobile-cell-label">{task.status}</span>
               </span>
               <span role="cell" className="list-task-title">
-                <b>•</b>
                 <span>
                   <strong>{task.title}</strong>
                   {task.description && <small>{task.description}</small>}
@@ -149,7 +151,9 @@ export function ListView({
           {!filtered.length && <div className="list-empty">No tasks match these filters.</div>}
         </div>
       </div>
-      {selected && detail(selected)}
+      <TaskDetailSheet title={selected?.title} close={close}>
+        {selected && detail(selected)}
+      </TaskDetailSheet>
     </section>
   );
 }
