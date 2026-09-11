@@ -1,6 +1,7 @@
 name: CI
 
 on:
+  workflow_call:
   pull_request:
   push:
     branches: [master]
@@ -10,43 +11,17 @@ permissions:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: true
 
 jobs:
   checks:
     name: Checks
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    outputs:
-      release: ${{ steps.version.outputs.release }}
-      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0
           persist-credentials: false
-      - name: Detect an unreleased version
-        id: version
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-        run: |
-          echo "release=false" >> "$GITHUB_OUTPUT"
-          if [ "$EVENT_NAME" != "push" ]; then
-            exit 0
-          fi
-
-          VERSION=$(node -p 'require("./package.json").version')
-          node -e '
-            const assert = require("node:assert/strict");
-            assert.equal(require("./package.json").name, "foggybrain");
-            assert.match(process.argv[1], /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/);
-          ' "$VERSION"
-          if git rev-parse --verify --quiet "refs/tags/v$VERSION" >/dev/null; then
-            exit 0
-          fi
-
-          echo "release=true" >> "$GITHUB_OUTPUT"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -58,84 +33,3 @@ jobs:
       - run: pnpm build
       - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm test:e2e
-      - name: Preserve the checked build
-        if: steps.version.outputs.release == 'true'
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
-        with:
-          name: release-dist
-          path: dist
-          if-no-files-found: error
-          retention-days: 1
-
-  release:
-    name: Release v${{ needs.checks.outputs.version }}
-    needs: checks
-    if: needs.checks.outputs.release == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
-        with:
-          name: release-dist
-          path: dist
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: '22'
-      - name: Package the release archive
-        env:
-          VERSION: ${{ needs.checks.outputs.version }}
-        run: |
-          test "$(node -p 'require("./package.json").version')" = "$VERSION"
-          STAGE="stage/foggybrain-$VERSION"
-          mkdir -p "$STAGE"
-          cp -R dist bin package.json pnpm-lock.yaml "$STAGE/"
-          pnpm install --dir "$STAGE" --prod --frozen-lockfile --ignore-scripts \
-            --config.node-linker=hoisted
-          rm -f "$STAGE/pnpm-lock.yaml"
-          tar -czf "foggybrain-$VERSION.tar.gz" -C stage "foggybrain-$VERSION"
-          if tar -tvzf "foggybrain-$VERSION.tar.gz" | grep -q '^l'; then
-            echo "Archive contains symlinks; the packaged node_modules is not self-contained." >&2
-            exit 1
-          fi
-          sha256sum "foggybrain-$VERSION.tar.gz" > SHA256SUMS
-      - name: Verify the archive runs without a checkout
-        run: |
-          mkdir -p verify
-          tar -xzf "foggybrain-$VERSION.tar.gz" -C verify --strip-components=1
-          test "$(node verify/bin/foggy.mjs --version)" = "$VERSION"
-          node verify/bin/foggy.mjs --json stop
-        env:
-          FOGGY_DATA_DIR: ${{ runner.temp }}/foggy-verify
-          VERSION: ${{ needs.checks.outputs.version }}
-      - name: Tag and publish the release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          VERSION: ${{ needs.checks.outputs.version }}
-        run: |
-          TAG="v$VERSION"
-          if TAG_SHA=$(gh api "repos/$GH_REPO/git/ref/tags/$TAG" --jq .object.sha 2>/dev/null); then
-            if [ "$TAG_SHA" != "$GITHUB_SHA" ]; then
-              echo "$TAG already points to $TAG_SHA instead of $GITHUB_SHA." >&2
-              exit 1
-            fi
-          else
-            gh api --method POST "repos/$GH_REPO/git/refs" \
-              -f ref="refs/tags/$TAG" -f sha="$GITHUB_SHA"
-          fi
-
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" "foggybrain-$VERSION.tar.gz" SHA256SUMS --clobber
-            exit 0
-          fi
-          flags=""
-          case "$TAG" in *-*) flags="--prerelease" ;; esac
-          # shellcheck disable=SC2086
-          gh release create "$TAG" "foggybrain-$VERSION.tar.gz" SHA256SUMS \
-            --verify-tag --generate-notes --title "FoggyBrain $TAG" $flags
