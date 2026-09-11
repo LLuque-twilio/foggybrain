@@ -662,6 +662,10 @@ test('contract routes preserve core completion, relationship and deletion semant
     positions: [{ nodeId: child.id, x: 12, y: -4.5 }],
   };
   assert.deepEqual((await request('/api/layout', 'PUT', layout)).body, layout);
+  assert.deepEqual((await request('/api/preferences', 'PUT', { hideCompleted: false })).body, {
+    hideCompleted: false,
+  });
+  assert.deepEqual((await request('/api/state')).body.preferences, { hideCompleted: false });
   assert.equal(
     (await request(`/api/tasks/${shared.id}/done`, 'POST', { done: false })).status,
     200,
@@ -1074,6 +1078,9 @@ test('JSON validation rejects coercible booleans, unsupported fields, invalid ty
     assert.equal((await request('/api/layout', 'PUT', body)).status, 400);
   const overflow = `{"viewId":"root","mode":"manual","positions":[{"nodeId":"${manual.id}","x":1e309,"y":0}]}`;
   assert.equal((await request('/api/layout', 'PUT', undefined, {}, overflow)).status, 400);
+  for (const body of [{}, { hideCompleted: 'false' }, { hideCompleted: true, extra: true }]) {
+    assert.equal((await request('/api/preferences', 'PUT', body)).status, 400);
+  }
 });
 
 test('Host and Origin checks reject DNS rebinding, foreign browsers and disallowed local ports without CORS', async (t) => {

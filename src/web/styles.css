@@ -1956,7 +1956,7 @@ details ul {
 .tag-badge i,
 .tag-chip i,
 .tag-option i,
-.filter-tags i {
+[data-slot='dropdown-menu-checkbox-item'] i {
   width: 7px;
   height: 7px;
   border-radius: 50%;
@@ -2169,36 +2169,40 @@ details ul {
   margin: 0;
   padding: 7px 9px;
 }
-.filter-tags {
+.filter-menus {
   display: flex;
   flex: 1;
   flex-wrap: wrap;
   gap: 6px;
 }
-.filter-tags button {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 5px 8px;
-  border: 1px solid #dce4d4;
+.list-filter-trigger {
+  height: 32px;
+  padding: 0 10px;
+  border-color: #dce4d4;
+  background: #f7f9f3;
+  color: #53634d;
+  font-size: 10px;
+}
+.filter-count {
+  display: inline-grid;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  place-items: center;
   border-radius: 999px;
-  background: #f4f6ef;
-  color: #65725e;
+  background: #e5ebdd;
+  color: #526647;
   font-size: 9px;
 }
-.filter-tags button[aria-pressed='true'] {
-  border-color: #829d70;
-  background: #e1ead8;
-  color: #3d5937;
-}
-.filter-tags .favorite-filter {
-  border-color: #dfd29a;
-  background: #faf4d9;
-  color: #856b19;
-}
-.filter-tags .favorite-filter[aria-pressed='true'] {
-  border-color: #b99b31;
-  background: #f0df96;
+.hide-completed-filter {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-shrink: 0;
+  margin: 0 0 0 auto;
+  color: #53634d;
+  font-size: 10px;
+  cursor: pointer;
 }
 .task-list {
   overflow: hidden;
@@ -2321,7 +2325,7 @@ details ul {
     width: 100%;
     margin-right: 0;
   }
-  .filter-tags {
+  .filter-menus {
     flex-basis: 100%;
   }
   .task-list {

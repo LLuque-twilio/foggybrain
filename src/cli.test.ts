@@ -52,6 +52,7 @@ const snapshot: Snapshot = {
   dependencies: [{ id: 'dep-1', prerequisiteId: 'a', dependentId: 'b' }],
   references: [{ id: 'ref-1', containerId: 'c', taskId: 'b' }],
   layouts: [],
+  preferences: { hideCompleted: true },
 };
 const preview: DeletionPreview = {
   taskIds: ['c', 'a'],
@@ -1110,6 +1111,7 @@ test('CLI scoped graph deduplicates nested shared children and excludes external
       { viewId: 'c', mode: 'auto', positions: [] },
       { viewId: 'root', mode: 'auto', positions: [] },
     ],
+    preferences: { hideCompleted: true },
   };
   const { run } = await fixture(t, () => ({ body: nested }));
   const result = await run(['--json', 'graph', 'c']);
@@ -1121,6 +1123,7 @@ test('CLI scoped graph deduplicates nested shared children and excludes external
     references: nested.references,
     tags: [],
     layouts: [nested.layouts[0]],
+    preferences: nested.preferences,
   });
 });
 

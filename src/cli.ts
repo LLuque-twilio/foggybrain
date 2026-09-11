@@ -647,6 +647,7 @@ export async function main(argv = process.argv): Promise<void> {
             (reference) => ids.has(reference.containerId) && ids.has(reference.taskId),
           ),
           layouts: snapshot.layouts.filter((layout) => ids.has(layout.viewId)),
+          preferences: snapshot.preferences,
         };
       }
       if (program.opts().json) output(graph);

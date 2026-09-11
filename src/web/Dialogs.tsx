@@ -1,13 +1,6 @@
-import {
-  createContext,
-  useContext,
-  useEffect,
-  useRef,
-  useState,
-  type PointerEvent,
-  type ReactNode,
-} from 'react';
+import { createContext, useContext, useState, type ReactNode } from 'react';
 import { AlertTriangle, ArrowRight, Box, GitPullRequest, Link2, ListChecks, X } from 'lucide-react';
+import { Dialog as DialogPrimitive, DialogContent, DialogTitle } from './components/ui/dialog';
 import { LoadingField } from './LoadingField';
 import { TagPicker } from './Tags';
 import type {
@@ -35,59 +28,33 @@ export function Dialog({
   children: ReactNode;
   danger?: boolean;
 }) {
-  const ref = useRef<HTMLDialogElement>(null);
-  const backdropPointer = useRef<number | null>(null);
   const error = useContext(DialogErrorContext);
-  function isBackdrop(event: PointerEvent<HTMLDialogElement>) {
-    const bounds = event.currentTarget.getBoundingClientRect();
-    return (
-      event.target === event.currentTarget &&
-      (event.clientX < bounds.left ||
-        event.clientX > bounds.right ||
-        event.clientY < bounds.top ||
-        event.clientY > bounds.bottom)
-    );
-  }
-  useEffect(() => {
-    const element = ref.current!;
-    element.showModal();
-    return () => element.close();
-  }, []);
   return (
-    <dialog
-      ref={ref}
-      className={`dialog ${danger ? 'dialog-danger' : ''}`}
-      aria-label={title}
-      onCancel={(event) => {
-        event.preventDefault();
-        close();
-      }}
-      onPointerDown={(event) => {
-        backdropPointer.current =
-          event.isPrimary && event.button === 0 && isBackdrop(event) ? event.pointerId : null;
-      }}
-      onPointerUp={(event) => {
-        const startedOnBackdrop = backdropPointer.current === event.pointerId;
-        backdropPointer.current = null;
-        if (startedOnBackdrop && isBackdrop(event)) close();
-      }}
-      onPointerCancel={() => {
-        backdropPointer.current = null;
-      }}
-    >
-      <header>
-        <h2>{title}</h2>
-        <button className="icon-button" onClick={close} aria-label="Close dialog">
-          <X size={19} />
-        </button>
-      </header>
-      {error && (
-        <div className="callout warning" role="alert">
-          {error}
-        </div>
-      )}
-      {children}
-    </dialog>
+    <DialogPrimitive open onOpenChange={(open) => !open && close()}>
+      <DialogContent
+        className={`dialog ${danger ? 'dialog-danger' : ''}`}
+        aria-label={title}
+        showCloseButton={false}
+        onEscapeKeyDown={(event) => {
+          if (event.target instanceof HTMLElement && event.target.matches('[role="combobox"]')) {
+            event.preventDefault();
+          }
+        }}
+      >
+        <header>
+          <DialogTitle>{title}</DialogTitle>
+          <button className="icon-button" onClick={close} aria-label="Close dialog">
+            <X size={19} />
+          </button>
+        </header>
+        {error && (
+          <div className="callout warning" role="alert">
+            {error}
+          </div>
+        )}
+        {children}
+      </DialogContent>
+    </DialogPrimitive>
   );
 }
 

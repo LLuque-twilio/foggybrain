@@ -24,6 +24,9 @@ test.beforeEach(async ({ request }) => {
   for (const tag of snapshot.tags.filter((tag) => !tag.system)) {
     expect((await request.delete(`/api/tags/${tag.id}?confirm=true`)).ok()).toBeTruthy();
   }
+  expect(
+    (await request.put('/api/preferences', { data: { hideCompleted: true } })).ok(),
+  ).toBeTruthy();
 });
 
 test('create/edit through UI, keyboard dialog, local assets, and responsive shell', async ({
@@ -42,7 +45,7 @@ test('create/edit through UI, keyboard dialog, local assets, and responsive shel
   ).toBeTruthy();
   await page.screenshot({ path: test.info().outputPath('overview.png'), fullPage: true });
   await page.getByRole('button', { name: 'Create your first task' }).click();
-  const dialog = page.locator('dialog.dialog');
+  const dialog = page.locator('.dialog');
   await dialog.getByLabel('Summary').fill('Ship to stage');
   await dialog.getByLabel('Description').fill('Release the API without holding it all in my head.');
   await dialog.getByRole('button', { name: 'Create task', exact: true }).click();
@@ -161,7 +164,7 @@ test('link existing container, navigate its graph, confirm deletion impact and u
   const smoke = await create(request, 'Smoke tests', 'manual', prod.id);
   await page.goto(`/#/tasks/${prod.id}`);
   await page.getByRole('button', { name: 'Link task', exact: true }).click();
-  const dialog = page.locator('dialog.dialog');
+  const dialog = page.locator('.dialog');
   await dialog.getByRole('button', { name: /Ship to stage/ }).click();
   await dialog.getByRole('button', { name: 'Link task', exact: true }).click();
   await expect(node(page, stage.id)).toBeVisible();
@@ -355,7 +358,7 @@ for (const { kind, label, direction } of [
     await parentDialog.getByRole('button', { name: 'Create new task or PR' }).click();
     const dialog = page.getByRole('dialog', { name: `Create ${direction}`, exact: true });
     await expect(parentDialog).not.toBeVisible();
-    await expect(page.locator('dialog.dialog')).toHaveCount(1);
+    await expect(page.locator('.dialog')).toHaveCount(1);
     await expect(dialog.getByRole('button', { name: 'Manual step', exact: true })).toHaveAttribute(
       'aria-pressed',
       'true',
@@ -384,7 +387,7 @@ for (const { kind, label, direction } of [
       },
     });
     const created = (await response.json()) as TaskView;
-    await expect(page.locator('dialog.dialog')).not.toBeVisible();
+    await expect(page.locator('.dialog')).not.toBeVisible();
     await expect(page).toHaveURL(new RegExp(`#/tasks/${parent.id}$`));
     await expect(page.locator('.graph-title h1')).toHaveText(parent.title);
     await expect(
@@ -456,7 +459,7 @@ test('canceling inline creation restores chain placement and existing selection 
   );
   await expect(dialog.getByRole('button', { name: 'Connect prerequisite' })).toBeEnabled();
   await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
-  await expect(page.locator('dialog.dialog')).not.toBeVisible();
+  await expect(page.locator('.dialog')).not.toBeVisible();
   expect(writes).toEqual([]);
   const after = (await (await request.get('/api/state')).json()) as Snapshot;
   expect(after.tasks).toEqual(before.tasks);
@@ -464,7 +467,7 @@ test('canceling inline creation restores chain placement and existing selection 
   expect(after.references).toEqual(before.references);
 });
 
-test('list filters with OR semantics, stars tasks, and opens leaves and containers appropriately', async ({
+test('list filters combine tag OR selections with type and status criteria', async ({
   request,
   page,
 }) => {
@@ -487,25 +490,65 @@ test('list filters with OR semantics, stars tasks, and opens leaves and containe
   const betaTaskResponse = await request.post('/api/tasks', {
     data: { title: 'Beta task', kind: 'manual', tagIds: [beta.id] },
   });
+  const betaPrResponse = await request.post('/api/tasks', {
+    data: {
+      title: 'Beta PR',
+      kind: 'pr',
+      prUrl: 'https://github.com/example/release/pull/10',
+      tagIds: [beta.id],
+    },
+  });
   const container = (await containerResponse.json()) as TaskView;
   const alphaTask = (await alphaTaskResponse.json()) as TaskView;
   const betaTask = (await betaTaskResponse.json()) as TaskView;
+  const betaPr = (await betaPrResponse.json()) as TaskView;
   expect(
-    (await request.put(`/api/tasks/${betaTask.id}/tags/favorites`, { data: {} })).ok(),
+    (await request.post(`/api/tasks/${betaTask.id}/done`, { data: { done: true } })).ok(),
+  ).toBeTruthy();
+  expect(
+    (await request.put(`/api/tasks/${betaPr.id}/tags/favorites`, { data: {} })).ok(),
   ).toBeTruthy();
 
   await page.goto('/#/list');
   const rows = page.locator('.task-list-row');
+  const hideCompleted = page.getByRole('checkbox', { name: 'Hide completed?' });
+  await expect(hideCompleted).toBeChecked();
   await expect(rows).toHaveCount(3);
-  await page.getByRole('button', { name: 'Alpha', exact: true }).click();
+  await expect(rows.filter({ hasText: 'Beta task' })).toHaveCount(0);
+
+  await page.getByRole('button', { name: 'Tags filter' }).click();
+  await page.getByRole('menuitemcheckbox', { name: 'Alpha', exact: true }).click();
   await expect(rows).toHaveCount(2);
-  await page.getByRole('button', { name: 'Beta', exact: true }).click();
+  await page.getByRole('menuitemcheckbox', { name: 'Beta', exact: true }).click();
   await expect(rows).toHaveCount(3);
-  await page.getByRole('button', { name: 'Clear filters' }).click();
-  await page.getByRole('button', { name: 'Favorites', exact: true }).click();
+  await page.keyboard.press('Escape');
+
+  await page.getByRole('button', { name: 'Type filter' }).click();
+  await page.getByRole('menuitemcheckbox', { name: 'Manual step', exact: true }).click();
+  await expect(rows).toHaveCount(1);
+  await expect(rows).toContainText('Alpha task');
+  await page.keyboard.press('Escape');
+
+  await hideCompleted.uncheck();
+  await page.getByRole('button', { name: 'Status filter' }).click();
+  await page.getByRole('menuitemcheckbox', { name: 'Completed', exact: true }).click();
   await expect(rows).toHaveCount(1);
   await expect(rows).toContainText('Beta task');
-  await page.getByRole('button', { name: 'Clear filters' }).click();
+  await page.keyboard.press('Escape');
+
+  await page.getByRole('button', { name: 'Reset filters' }).click();
+  await expect(rows).toHaveCount(4);
+  await page.reload();
+  await expect(hideCompleted).not.toBeChecked();
+  await expect(rows).toHaveCount(4);
+  await hideCompleted.check();
+  await expect(rows).toHaveCount(3);
+  await page.getByRole('button', { name: 'Tags filter' }).click();
+  await page.getByRole('menuitemcheckbox', { name: 'Favorites', exact: true }).click();
+  await page.keyboard.press('Escape');
+  await expect(rows).toHaveCount(1);
+  await expect(rows).toContainText('Beta PR');
+  await page.getByRole('button', { name: 'Reset filters' }).click();
 
   await page.getByText(alphaTask.title, { exact: true }).click();
   await expect(page).toHaveURL(/#\/list$/);
@@ -733,7 +776,7 @@ for (const kind of ['manual', 'pr'] as const) {
     );
     await page.goto(`/#/tasks/${parent.id}`);
     await page.getByRole('button', { name: 'Add your first step' }).click();
-    const dialog = page.locator('dialog.dialog');
+    const dialog = page.locator('.dialog');
     await dialog
       .getByRole('button', { name: kind === 'pr' ? 'PR merge' : 'Manual step', exact: true })
       .click();
@@ -783,7 +826,7 @@ test('manual PR gate can be created, changed, removed, and added without losing 
   const parent = await create(request, 'Release', 'container');
   await page.goto(`/#/tasks/${parent.id}`);
   await page.getByRole('button', { name: 'Add your first step' }).click();
-  const dialog = page.locator('dialog.dialog');
+  const dialog = page.locator('.dialog');
   await dialog.getByLabel('Summary').fill('Implement release');
   await dialog.getByLabel('Description').fill('Keep the manual context');
   await expect(dialog.getByLabel('GitHub PR URL')).not.toHaveAttribute('required');
@@ -854,7 +897,7 @@ test('PR dropdown reports empty and stale GitHub results without blocking URL en
   );
   await page.goto('/#/prs');
   await page.getByRole('button', { name: 'Link a PR by URL' }).click();
-  const dialog = page.locator('dialog.dialog');
+  const dialog = page.locator('.dialog');
   await expect(dialog).toContainText('No authored open pull requests found.');
   await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
   await page.route('**/api/workspaces/default/github/status', (route) =>
@@ -884,7 +927,7 @@ test('PR picker shows in-field refresh progress without blocking manual URL entr
   );
   await page.goto('/#/prs');
   await page.getByRole('button', { name: 'Link a PR by URL' }).click();
-  const dialog = page.locator('dialog.dialog');
+  const dialog = page.locator('.dialog');
   await expect(dialog.getByLabel('Your open pull requests')).toHaveAttribute('aria-busy', 'true');
   await expect(dialog.locator('.field-spinner')).toBeVisible();
   await expect(dialog.getByRole('status')).toContainText('Refreshing your open pull requests');
@@ -902,7 +945,7 @@ test('invalid PR errors stay inside dialog, PR tab works without credentials', a
   await page.goto('/#/prs');
   await expect(page.getByText('Connect GitHub when you are ready.')).toBeVisible();
   await page.getByRole('button', { name: 'Link a PR by URL' }).click();
-  const dialog = page.locator('dialog.dialog');
+  const dialog = page.locator('.dialog');
   await expect(dialog.getByLabel('GitHub PR URL')).toBeVisible();
   await expect(dialog).toContainText('GitHub is not connected.');
   await dialog.getByLabel('Summary').fill('Merge my PR');
@@ -1123,7 +1166,7 @@ test('deletion rechecks changed impact and requires a fresh confirmation', async
   const prod = await create(request, 'Newly affected prod', 'container');
   await page.goto(`/#/tasks/${stage.id}`);
   await page.getByRole('button', { name: 'Delete container', exact: true }).click();
-  const dialog = page.locator('dialog.dialog');
+  const dialog = page.locator('.dialog');
   await expect(dialog).toContainText('No other tasks depend on this task.');
   await request.post('/api/references', { data: { containerId: prod.id, taskId: stage.id } });
   await dialog.getByRole('button', { name: 'Delete permanently' }).click();

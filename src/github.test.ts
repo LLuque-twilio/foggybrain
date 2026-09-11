@@ -31,7 +31,14 @@ function task(id: string, prUrl = `https://github.com/other/private/pull/${id}`)
 }
 
 function fakeStore(tasks: TaskView[] = []) {
-  const snapshot: Snapshot = { tasks, dependencies: [], references: [], tags: [], layouts: [] };
+  const snapshot: Snapshot = {
+    tasks,
+    dependencies: [],
+    references: [],
+    tags: [],
+    layouts: [],
+    preferences: { hideCompleted: true },
+  };
   const updates: ({ id: string } & Parameters<Store['updatePr']>[1])[] = [];
   const store = {
     snapshot: () => structuredClone(snapshot),

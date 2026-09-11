@@ -21,6 +21,7 @@ import type {
   TagDeletionPreview,
   UpdateTagInput,
   UpdateTaskInput,
+  WorkspacePreferences,
 } from './shared.js';
 
 export class DomainError extends Error {
@@ -39,6 +40,7 @@ interface StoredSnapshot {
   references: TaskReference[];
   tags: Tag[];
   layouts: Layout[];
+  preferences: WorkspacePreferences;
 }
 
 export const FAVORITES_TAG: Tag = {
@@ -376,6 +378,7 @@ export function validatePortableState(value: unknown): PortableState {
     references: value.references as unknown as TaskReference[],
     tags,
     layouts: [],
+    preferences: { hideCompleted: true },
   };
   for (const task of state.tasks) if (task.parentId !== null) containerById(state, task.parentId);
   const memberships = new Set(
@@ -430,7 +433,7 @@ export class Store {
           target TEXT PRIMARY KEY,
           payload TEXT NOT NULL
         );
-        -- Full local snapshots, including PR cache and layouts, retained before sync writes.
+        -- Full local snapshots, including PR cache, layouts, and preferences, retained before sync writes.
         CREATE TABLE IF NOT EXISTS foggybrain_sync_backups (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           target TEXT NOT NULL,
@@ -438,11 +441,16 @@ export class Store {
           payload TEXT NOT NULL
         );
       `);
-      this.db
-        .prepare('INSERT OR IGNORE INTO foggybrain_snapshot (id, payload) VALUES (1, ?)')
-        .run(
-          JSON.stringify({ tasks: [], dependencies: [], references: [], tags: [], layouts: [] }),
-        );
+      this.db.prepare('INSERT OR IGNORE INTO foggybrain_snapshot (id, payload) VALUES (1, ?)').run(
+        JSON.stringify({
+          tasks: [],
+          dependencies: [],
+          references: [],
+          tags: [],
+          layouts: [],
+          preferences: { hideCompleted: true },
+        }),
+      );
     } catch (error) {
       this.db.close();
       throw error;
@@ -453,6 +461,7 @@ export class Store {
     const row = this.db.prepare('SELECT payload FROM foggybrain_snapshot WHERE id = 1').get()!;
     const state = JSON.parse(row.payload as string) as StoredSnapshot;
     state.tags ??= [];
+    state.preferences ??= { hideCompleted: true };
     if (!state.tags.some((tag) => tag.id === FAVORITES_TAG.id))
       state.tags.push({ ...FAVORITES_TAG });
     for (const task of state.tasks) {
@@ -937,6 +946,16 @@ export class Store {
       if (index === -1) state.layouts.push(layout);
       else state.layouts[index] = layout;
     }).layouts.find((layout) => layout.viewId === input.viewId)!;
+  }
+
+  savePreferences(input: WorkspacePreferences): WorkspacePreferences {
+    objectInput(input, ['hideCompleted']);
+    if (typeof input.hideCompleted !== 'boolean') {
+      throw new DomainError('hideCompleted must be a boolean');
+    }
+    return this.mutate((state) => {
+      state.preferences = { hideCompleted: input.hideCompleted };
+    }).preferences;
   }
 
   updatePr(

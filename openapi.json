@@ -2239,6 +2239,87 @@
         }
       }
     },
+    "/api/preferences": {
+      "put": {
+        "operationId": "saveWorkspacePreferences",
+        "summary": "Save workspace UI preferences",
+        "description": "Uses the persisted default workspace; returns 404 when none exists. See CONTRACT.md for state-dependent validation and semantics.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "headers": {
+              "Cache-Control": {
+                "description": "API responses are not cached, including credential-backed discovery.",
+                "schema": { "type": "string", "const": "no-store" }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/WorkspacePreferences" }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed JSON/URL, unsupported fields, invalid input, or missing confirmation.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "403": {
+            "description": "Host, Origin, or cross-site request rejected by the local-tool boundary.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "404": {
+            "description": "Route, workspace, task, or relationship not found; no default workspace exists.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "409": {
+            "description": "Graph conflict, workspace limit, active sync, or stale preview; review state before retrying.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "413": {
+            "description": "JSON body exceeds the 256kb limit.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "415": {
+            "description": "Unsupported Content-Type, JSON charset, or content encoding.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "500": {
+            "description": "Unexpected internal server error; details are not exposed.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "503": {
+            "description": "Selected credentials/configuration unavailable or workspace service stopped.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          }
+        },
+        "x-query-policy": "undeclared-ignored",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/WorkspacePreferences" }
+            }
+          }
+        }
+      }
+    },
     "/api/github/status": {
       "get": {
         "operationId": "getGithubStatus",
@@ -4375,6 +4456,95 @@
         }
       }
     },
+    "/api/workspaces/{workspaceId}/preferences": {
+      "put": {
+        "operationId": "saveWorkspacePreferencesScoped",
+        "summary": "Save workspace UI preferences",
+        "description": "Uses only the explicitly selected workspace. See CONTRACT.md for state-dependent validation and semantics.",
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Server-returned workspace ID. Unknown IDs fail without fallback."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "headers": {
+              "Cache-Control": {
+                "description": "API responses are not cached, including credential-backed discovery.",
+                "schema": { "type": "string", "const": "no-store" }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/WorkspacePreferences" }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed JSON/URL, unsupported fields, invalid input, or missing confirmation.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "403": {
+            "description": "Host, Origin, or cross-site request rejected by the local-tool boundary.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "404": {
+            "description": "Route, workspace, task, or relationship not found; no default workspace exists.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "409": {
+            "description": "Graph conflict, workspace limit, active sync, or stale preview; review state before retrying.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "413": {
+            "description": "JSON body exceeds the 256kb limit.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "415": {
+            "description": "Unsupported Content-Type, JSON charset, or content encoding.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "500": {
+            "description": "Unexpected internal server error; details are not exposed.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "503": {
+            "description": "Selected credentials/configuration unavailable or workspace service stopped.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          }
+        },
+        "x-query-policy": "undeclared-ignored",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/WorkspacePreferences" }
+            }
+          }
+        }
+      }
+    },
     "/api/workspaces/{workspaceId}/github/status": {
       "get": {
         "operationId": "getGithubStatusScoped",
@@ -5032,6 +5202,12 @@
         "required": ["viewId", "mode", "positions"],
         "additionalProperties": false
       },
+      "WorkspacePreferences": {
+        "type": "object",
+        "properties": { "hideCompleted": { "type": "boolean" } },
+        "required": ["hideCompleted"],
+        "additionalProperties": false
+      },
       "Snapshot": {
         "type": "object",
         "properties": {
@@ -5045,9 +5221,10 @@
             "items": { "$ref": "#/components/schemas/TaskReference" }
           },
           "tags": { "type": "array", "items": { "$ref": "#/components/schemas/Tag" } },
-          "layouts": { "type": "array", "items": { "$ref": "#/components/schemas/Layout" } }
+          "layouts": { "type": "array", "items": { "$ref": "#/components/schemas/Layout" } },
+          "preferences": { "$ref": "#/components/schemas/WorkspacePreferences" }
         },
-        "required": ["tasks", "dependencies", "references", "tags", "layouts"],
+        "required": ["tasks", "dependencies", "references", "tags", "layouts", "preferences"],
         "additionalProperties": false
       },
       "CreateTaskInput": {

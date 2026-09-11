@@ -38,8 +38,8 @@ test('generated OpenAPI matches the checked-in document and passes SwaggerParser
     JSON.parse(readFileSync(new URL('../openapi.json', import.meta.url), 'utf8')),
   );
   await validateOpenApi(document);
-  assert.equal(operations.length, 59);
-  assert.equal(new Set(operations.map(({ operation }) => operation.operationId)).size, 59);
+  assert.equal(operations.length, 61);
+  assert.equal(new Set(operations.map(({ operation }) => operation.operationId)).size, 61);
 });
 
 test('OpenAPI inventory matches independently parsed Express registrations and domain mounts', () => {
@@ -414,6 +414,9 @@ test('all operations conform over HTTP with real isolated workspace/domain store
       positions: [{ nodeId: task.id, x: 12.5, y: -3 }],
     };
     assert.deepEqual(await call('PUT', `${prefix}/layout`, 200, layout), layout);
+    assert.deepEqual(await call('PUT', `${prefix}/preferences`, 200, { hideCompleted: false }), {
+      hideCompleted: false,
+    });
     const graph = await call('GET', `${prefix}/state`, 200);
     assert.ok(graph.tasks.some((entry: { id: string }) => entry.id === task.id));
     assert.equal(graph.references[0].id, reference.id);
@@ -493,6 +496,8 @@ test('request boundaries agree with schemas; structural validity does not bypass
         '/layout',
         { viewId: 'root', mode: 'manual', positions: [{ nodeId: task.id, x: 1, y: 2, extra: 1 }] },
       ],
+      ['PUT', '/preferences', { hideCompleted: 'false' }],
+      ['PUT', '/preferences', { hideCompleted: true, extra: true }],
       [
         'PUT',
         '/layout',

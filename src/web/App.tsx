@@ -65,7 +65,14 @@ type Modal =
   | { type: 'help' }
   | { type: 'sync'; initialPreview?: boolean }
   | null;
-const empty: Snapshot = { tasks: [], dependencies: [], references: [], layouts: [], tags: [] };
+const empty: Snapshot = {
+  tasks: [],
+  dependencies: [],
+  references: [],
+  layouts: [],
+  tags: [],
+  preferences: { hideCompleted: true },
+};
 const route = () => window.location.hash.slice(1) || '/';
 
 export function WorkspaceApp({
@@ -522,6 +529,10 @@ export function WorkspaceApp({
             setQuery={setQuery}
             selected={selected}
             busy={busy}
+            savedHideCompleted={snapshot.preferences.hideCompleted}
+            saveHideCompleted={(hideCompleted) =>
+              run(() => api('/preferences', 'PUT', { hideCompleted }))
+            }
             open={open}
             close={() => setSelectedId(null)}
             toggleFavorite={(task) =>
@@ -1234,22 +1245,25 @@ export function WorkspaceApp({
                 Reopening a step recalculates everything downstream.
               </p>
               <h3>A terminal-friendly brain</h3>
-              <p>The UI and CLI share one local server. For source commands:</p>
+              <p>
+                The UI and CLI share one local server. Start it, open the dashboard, or work
+                directly from your terminal:
+              </p>
               <pre>
                 <code>
                   {
-                    'pnpm foggy task list\npnpm foggy task create "Ship to stage" --kind container\npnpm --silent run foggy --json graph'
+                    'foggy start\nfoggy dashboard\nfoggy task list\nfoggy task create "Ship to stage" --kind container\nfoggy graph'
                   }
                 </code>
               </pre>
               <p>
-                After building, optionally run <code>pnpm link</code> to use <code>foggy</code>{' '}
-                directly. Full command and agent documentation lives in <code>docs/cli.md</code>.
+                Run <code>foggy --help</code> for all commands and <code>foggy upgrade</code> to
+                install the latest release.
               </p>
               <h3>GitHub, without browser secrets</h3>
               <p>
-                Set <code>GH_TOKEN</code> in the server's environment or local <code>.env</code>,
-                then restart. Use a read-only token for the repositories you need. Merge checks run
+                Run <code>foggy config</code> to save a read-only GitHub token for the repositories
+                you need, then restart with <code>foggy stop && foggy start</code>. Merge checks run
                 every minute while the server is running.
               </p>
               <h3>Arrange it your way</h3>

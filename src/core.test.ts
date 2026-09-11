@@ -39,6 +39,7 @@ test('empty store and task defaults; returned values do not mutate storage', (t)
     references: [],
     tags: [{ id: 'favorites', name: 'Favorites', color: '#d4af37', system: true }],
     layouts: [],
+    preferences: { hideCompleted: true },
   });
   const task = manual(store, '  Write tests  ');
   assert.equal(task.title, 'Write tests');
@@ -1193,7 +1194,20 @@ test('layouts validate shape and finite coordinates and upsert without retaining
   );
 });
 
-test('SQLite disk persistence includes graph, PR verification, layouts, and reopening after restart', (t) => {
+test('workspace preferences default, validate, and persist without retaining caller objects', (t) => {
+  const store = memory(t);
+  assert.deepEqual(store.snapshot().preferences, { hideCompleted: true });
+  const input = { hideCompleted: false };
+  const saved = store.savePreferences(input);
+  input.hideCompleted = true;
+  saved.hideCompleted = true;
+  assert.deepEqual(store.snapshot().preferences, { hideCompleted: false });
+  for (const invalid of [null, {}, { hideCompleted: 'false' }, { hideCompleted: true, extra: 1 }]) {
+    rejectsUnchanged(store, () => store.savePreferences(invalid as never));
+  }
+});
+
+test('SQLite disk persistence includes graph, PR verification, layouts, preferences, and reopening after restart', (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'foggybrain-core-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const path = join(directory, 'nested', 'brain.sqlite');
@@ -1216,6 +1230,7 @@ test('SQLite disk persistence includes graph, PR verification, layouts, and reop
     mode: 'manual',
     positions: [{ nodeId: child.id, x: 50, y: 100 }],
   });
+  first.savePreferences({ hideCompleted: false });
   const expected = first.snapshot();
   first.close();
   first.close();

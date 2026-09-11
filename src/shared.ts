@@ -62,12 +62,17 @@ export interface Layout {
   positions: { nodeId: string; x: number; y: number }[];
 }
 
+export interface WorkspacePreferences {
+  hideCompleted: boolean;
+}
+
 export interface Snapshot {
   tasks: TaskView[];
   dependencies: Dependency[];
   references: TaskReference[];
   tags: Tag[];
   layouts: Layout[];
+  preferences: WorkspacePreferences;
 }
 
 export interface CreateTaskInput {

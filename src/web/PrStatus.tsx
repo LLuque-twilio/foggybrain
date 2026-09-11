@@ -11,6 +11,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import type { PrMergeStatus, TaskView } from '../shared';
+import { Badge } from './components/ui/badge';
 
 const readiness = {
   unknown: { label: 'Readiness unknown', Icon: CircleDashed, tone: 'neutral' },
@@ -35,7 +36,7 @@ export function PrStatus({ task }: { task: TaskView }) {
           : readiness[task.prMergeStatus];
   const StatusIcon = task.prError ? AlertTriangle : Icon;
   return (
-    <span
+    <Badge
       className={`pr-status pr-status-${task.prError ? 'warning' : tone}`}
       title={
         task.prError
@@ -48,6 +49,6 @@ export function PrStatus({ task }: { task: TaskView }) {
         {label}
         {task.prError ? ' (stale)' : ''}
       </span>
-    </span>
+    </Badge>
   );
 }

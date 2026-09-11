@@ -339,6 +339,14 @@ const domain: Route[] = [
       'viewId is root or a container ID. Coordinates must be finite; node membership and duplicate positions are checked by the server.',
   },
   {
+    method: 'put',
+    path: '/preferences',
+    id: 'saveWorkspacePreferences',
+    summary: 'Save workspace UI preferences',
+    body: 'WorkspacePreferences',
+    response: 'WorkspacePreferences',
+  },
+  {
     method: 'get',
     path: '/github/status',
     id: 'getGithubStatus',

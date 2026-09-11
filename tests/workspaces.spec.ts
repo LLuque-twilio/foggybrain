@@ -411,7 +411,14 @@ test.beforeEach(async ({ page }) => {
     }
     if (suffix === '/state')
       return route.fulfill({
-        json: { tasks: [], dependencies: [], references: [], tags: [], layouts: [] },
+        json: {
+          tasks: [],
+          dependencies: [],
+          references: [],
+          tags: [],
+          layouts: [],
+          preferences: { hideCompleted: true },
+        },
       });
     if (suffix === '/github/prs') return route.fulfill({ json: [] });
     if (suffix === '/github/status')
@@ -601,6 +608,8 @@ test('rename and connect preserve identity, validate configuration, and require 
   await expect(dialog).toContainText('GH_TOKEN / GITHUB_TOKEN / gh auth token');
   await expect(dialog).toContainText('Contents read/write');
   await dialog.getByRole('button', { name: 'Save workspace' }).click();
+  await expect(page.getByRole('dialog')).toHaveAccessibleName('Push to origin');
+  await page.getByRole('button', { name: 'Close dialog' }).click();
   await expect(page.getByRole('combobox', { name: 'Workspace', exact: true })).toContainText(
     'Research (Cloud)',
   );
@@ -1017,7 +1026,14 @@ test('workspace switching isolates graph results and resets search state', async
       childrenIds: [],
     };
     return route.fulfill({
-      json: { tasks: [task], dependencies: [], references: [], tags: [], layouts: [] },
+      json: {
+        tasks: [task],
+        dependencies: [],
+        references: [],
+        tags: [],
+        layouts: [],
+        preferences: { hideCompleted: true },
+      },
     });
   });
   await page.goto('/');
@@ -1218,6 +1234,7 @@ for (const flow of ['create', 'connect'] as const) {
           references: [],
           tags: [],
           layouts: [],
+          preferences: { hideCompleted: true },
         },
       });
     });

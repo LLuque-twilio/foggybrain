@@ -14,6 +14,7 @@ import type {
   SetTaskTagsInput,
   UpdateTagInput,
   UpdateTaskInput,
+  WorkspacePreferences,
 } from './shared.js';
 import { WorkspaceManager } from './workspaces.js';
 
@@ -368,6 +369,13 @@ function domainRoutes(
       }
     }
     res.json(store.saveLayout(body as unknown as Layout));
+  });
+  app.put('/preferences', (req, res) => {
+    const body = object(req.body, ['hideCompleted']);
+    if (typeof body.hideCompleted !== 'boolean') {
+      throw new HttpError(400, 'hideCompleted must be a boolean.');
+    }
+    res.json(store.savePreferences(body as unknown as WorkspacePreferences));
   });
   app.get('/github/status', (_req, res) => {
     res.json(github.getStatus());

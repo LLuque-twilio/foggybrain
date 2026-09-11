@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { LoadingField } from './LoadingField';
+import { Input } from './components/ui/input';
 
 export interface SearchableSelectProps {
   label: string;
@@ -67,7 +68,7 @@ export function SearchableSelect({
       <div className="repository-picker">
         <label htmlFor={id}>{label}</label>
         <LoadingField loading={loading}>
-          <input
+          <Input
             id={id}
             role="combobox"
             aria-autocomplete="list"
@@ -115,6 +116,7 @@ export function SearchableSelect({
               } else if (event.key === 'Escape' && expanded) {
                 event.preventDefault();
                 event.stopPropagation();
+                event.nativeEvent.stopImmediatePropagation();
                 setOpen(false);
                 setActive(-1);
               }

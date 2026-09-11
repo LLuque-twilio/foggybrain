@@ -48,7 +48,16 @@ test.beforeEach(async ({ page }) => {
     }),
   );
   await page.route('**/api/workspaces/default/state', (route) =>
-    route.fulfill({ json: { tasks: [], dependencies: [], references: [], tags: [], layouts: [] } }),
+    route.fulfill({
+      json: {
+        tasks: [],
+        dependencies: [],
+        references: [],
+        tags: [],
+        layouts: [],
+        preferences: { hideCompleted: true },
+      },
+    }),
   );
   await page.route('**/api/workspaces/default/github/status', (route) =>
     route.fulfill({
@@ -100,6 +109,7 @@ for (const mode of ['merge', 'revert'] as const) {
         references: [],
         tags: [],
         layouts: [],
+        preferences: { hideCompleted: true },
       };
       return route.fulfill({ json: snapshot });
     });

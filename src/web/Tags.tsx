@@ -1,6 +1,9 @@
 import { useState } from 'react';
 import { Check, Pencil, Plus, Star, Trash2, X } from 'lucide-react';
 import type { Tag } from '../shared';
+import { Badge } from './components/ui/badge';
+import { Button } from './components/ui/button';
+import { Input } from './components/ui/input';
 
 const colors = ['#7c5cff', '#4f8a67', '#c06c4b', '#477ea8', '#a05f87', '#8a7b3f'];
 
@@ -13,15 +16,15 @@ function suggestedColor(name: string) {
 
 export function TagBadge({ tag }: { tag: Tag }) {
   return tag.system ? (
-    <span className="tag-badge favorite-badge">
+    <Badge variant="favorite" className="tag-badge favorite-badge">
       <Star size={10} fill="currentColor" />
       {tag.name}
-    </span>
+    </Badge>
   ) : (
-    <span className="tag-badge">
+    <Badge className="tag-badge">
       <i style={{ backgroundColor: tag.color }} />
       {tag.name}
-    </span>
+    </Badge>
   );
 }
 
@@ -50,7 +53,9 @@ export function StarToggle({
   onToggle: () => void;
 }) {
   return (
-    <button
+    <Button
+      variant="ghost"
+      size="icon"
       className={`star-toggle ${starred ? 'is-starred' : ''}`}
       aria-label={`${starred ? 'Remove' : 'Add'} ${title} ${starred ? 'from' : 'to'} Favorites`}
       aria-pressed={starred}
@@ -58,7 +63,7 @@ export function StarToggle({
       onClick={onToggle}
     >
       <Star size={17} fill={starred ? 'currentColor' : 'none'} />
-    </button>
+    </Button>
   );
 }
 
@@ -99,18 +104,20 @@ export function TagPicker({
     <div className="tag-picker">
       <div className="tag-picker-chips">
         {selected.map((tag) => (
-          <span className="tag-chip" key={tag.id}>
+          <Badge className="tag-chip" key={tag.id}>
             <i style={{ backgroundColor: tag.color }} />
             {tag.name}
-            <button
+            <Button
+              variant="ghost"
+              size="icon"
               type="button"
               aria-label={`Remove tag ${tag.name}`}
               disabled={busy}
               onClick={() => void onRemove(tag.id)}
             >
               <X size={12} />
-            </button>
-          </span>
+            </Button>
+          </Badge>
         ))}
         {!selected.length && <span className="tag-picker-empty">No tags yet</span>}
       </div>
@@ -127,7 +134,7 @@ export function TagPicker({
           Add tag
         </summary>
         <div className="tag-picker-popover">
-          <input
+          <Input
             aria-label="Find or create a tag"
             placeholder="Find a tag..."
             value={query}
@@ -140,19 +147,19 @@ export function TagPicker({
             {listed.map((tag) =>
               editing?.id === tag.id ? (
                 <div className="tag-edit-row" key={tag.id}>
-                  <input
+                  <Input
                     aria-label={`Rename ${tag.name}`}
                     value={editName}
                     maxLength={40}
                     onChange={(event) => setEditName(event.target.value)}
                   />
-                  <input
+                  <Input
                     aria-label={`Color for ${tag.name}`}
                     type="color"
                     value={editColor}
                     onChange={(event) => setEditColor(event.target.value)}
                   />
-                  <button
+                  <Button
                     type="button"
                     className="icon-button"
                     aria-label={`Save ${tag.name}`}
@@ -162,7 +169,7 @@ export function TagPicker({
                     }}
                   >
                     <Check size={14} />
-                  </button>
+                  </Button>
                 </div>
               ) : (
                 <div
@@ -171,7 +178,8 @@ export function TagPicker({
                   aria-selected={selectedIds.includes(tag.id)}
                   key={tag.id}
                 >
-                  <button
+                  <Button
+                    variant="ghost"
                     type="button"
                     disabled={busy || selectedIds.includes(tag.id)}
                     onClick={() => void onAdd(tag.id)}
@@ -179,8 +187,8 @@ export function TagPicker({
                     <i style={{ backgroundColor: tag.color }} />
                     {tag.name}
                     {selectedIds.includes(tag.id) && <Check size={12} />}
-                  </button>
-                  <button
+                  </Button>
+                  <Button
                     type="button"
                     className="icon-button"
                     aria-label={`Edit tag ${tag.name}`}
@@ -191,22 +199,23 @@ export function TagPicker({
                     }}
                   >
                     <Pencil size={13} />
-                  </button>
-                  <button
+                  </Button>
+                  <Button
                     type="button"
                     className="icon-button destructive"
                     aria-label={`Delete tag ${tag.name}`}
                     onClick={() => onDelete(tag)}
                   >
                     <Trash2 size={13} />
-                  </button>
+                  </Button>
                 </div>
               ),
             )}
             {!listed.length && !query.trim() && <p className="muted">No workspace tags yet.</p>}
           </div>
           {query.trim() && !exact && !creating && (
-            <button
+            <Button
+              variant="ghost"
               type="button"
               className="tag-create-offer"
               onClick={() => {
@@ -215,17 +224,17 @@ export function TagPicker({
               }}
             >
               <Plus size={13} /> Create tag '{query.trim()}'
-            </button>
+            </Button>
           )}
           {creating && (
             <div className="tag-create-row">
-              <input
+              <Input
                 aria-label="New tag color"
                 type="color"
                 value={color}
                 onChange={(event) => setColor(event.target.value)}
               />
-              <button
+              <Button
                 type="button"
                 className="button primary"
                 disabled={busy}
@@ -238,7 +247,7 @@ export function TagPicker({
                 }}
               >
                 Create and add
-              </button>
+              </Button>
             </div>
           )}
         </div>
