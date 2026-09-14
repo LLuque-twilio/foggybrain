@@ -21,15 +21,16 @@ async function selectCloudTarget(page: Page) {
 }
 
 async function navigation(page: Page) {
-  const open = page.getByRole('button', { name: 'Open navigation' });
+  const open = page.locator('button[aria-label="Open navigation"]');
   const mobileNavigation = page.locator('.mobile-navigation');
+  await expect(open).toBeAttached();
   if (await open.isVisible()) {
     const navigationState = (await mobileNavigation.count())
       ? await mobileNavigation.getAttribute('data-state')
       : null;
     if (navigationState !== 'open') {
       await expect(mobileNavigation).toHaveCount(0);
-      await open.dispatchEvent('click');
+      await open.click();
     }
     await mobileNavigation.evaluate(async (element) => {
       await new Promise(requestAnimationFrame);
