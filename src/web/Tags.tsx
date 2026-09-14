@@ -3,7 +3,15 @@ import { Check, Pencil, Plus, Star, Trash2, X } from 'lucide-react';
 import type { Tag } from '../shared';
 import { Badge } from './components/ui/badge';
 import { Button } from './components/ui/button';
+import {
+  Command,
+  CommandEmpty,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from './components/ui/command';
 import { Input } from './components/ui/input';
+import { Popover, PopoverContent, PopoverTrigger } from './components/ui/popover';
 
 const colors = ['#7c5cff', '#4f8a67', '#c06c4b', '#477ea8', '#a05f87', '#8a7b3f'];
 
@@ -121,98 +129,103 @@ export function TagPicker({
         ))}
         {!selected.length && <span className="tag-picker-empty">No tags yet</span>}
       </div>
-      <details>
-        <summary
-          className="button tag-picker-trigger"
-          title={atLimit ? 'A task can have up to 3 tags. Favorites does not count.' : undefined}
-          aria-disabled={atLimit || busy}
-          onClick={(event) => {
-            if (atLimit || busy) event.preventDefault();
-          }}
-        >
-          <Plus size={13} />
-          Add tag
-        </summary>
-        <div className="tag-picker-popover">
-          <Input
-            aria-label="Find or create a tag"
-            placeholder="Find a tag..."
-            value={query}
-            onChange={(event) => {
-              setQuery(event.target.value);
-              setCreating(false);
-            }}
-          />
-          <div className="tag-options" role="listbox" aria-label="Workspace tags">
-            {listed.map((tag) =>
-              editing?.id === tag.id ? (
-                <div className="tag-edit-row" key={tag.id}>
-                  <Input
-                    aria-label={`Rename ${tag.name}`}
-                    value={editName}
-                    maxLength={40}
-                    onChange={(event) => setEditName(event.target.value)}
-                  />
-                  <Input
-                    aria-label={`Color for ${tag.name}`}
-                    type="color"
-                    value={editColor}
-                    onChange={(event) => setEditColor(event.target.value)}
-                  />
-                  <Button
-                    type="button"
-                    className="icon-button"
-                    aria-label={`Save ${tag.name}`}
-                    disabled={busy || !editName.trim()}
-                    onClick={async () => {
-                      if (await onRename(tag.id, editName, editColor)) setEditing(null);
-                    }}
+      <Popover>
+        <PopoverTrigger asChild>
+          <Button
+            type="button"
+            className="tag-picker-trigger"
+            title={atLimit ? 'A task can have up to 3 tags. Favorites does not count.' : undefined}
+            aria-disabled={atLimit || busy}
+            disabled={atLimit || busy}
+          >
+            <Plus size={13} />
+            Add tag
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent className="tag-picker-popover" align="start" sideOffset={5}>
+          <Command shouldFilter={false}>
+            <CommandInput
+              aria-label="Find or create a tag"
+              placeholder="Find a tag..."
+              value={query}
+              onValueChange={(value: string) => {
+                setQuery(value);
+                setCreating(false);
+              }}
+            />
+            <CommandList className="tag-options" aria-label="Workspace tags">
+              {!listed.length && (
+                <CommandEmpty className="muted">
+                  {!query.trim() ? 'No workspace tags yet.' : null}
+                </CommandEmpty>
+              )}
+              {listed.map((tag) =>
+                editing?.id === tag.id ? (
+                  <div className="tag-edit-row" key={tag.id}>
+                    <Input
+                      aria-label={`Rename ${tag.name}`}
+                      value={editName}
+                      maxLength={40}
+                      onChange={(event) => setEditName(event.target.value)}
+                    />
+                    <Input
+                      aria-label={`Color for ${tag.name}`}
+                      type="color"
+                      value={editColor}
+                      onChange={(event) => setEditColor(event.target.value)}
+                    />
+                    <Button
+                      type="button"
+                      className="icon-button"
+                      aria-label={`Save ${tag.name}`}
+                      disabled={busy || !editName.trim()}
+                      onClick={async () => {
+                        if (await onRename(tag.id, editName, editColor)) setEditing(null);
+                      }}
+                    >
+                      <Check size={14} />
+                    </Button>
+                  </div>
+                ) : (
+                  <div
+                    className={`tag-option-row ${selectedIds.includes(tag.id) ? 'is-selected' : ''}`}
+                    key={tag.id}
                   >
-                    <Check size={14} />
-                  </Button>
-                </div>
-              ) : (
-                <div
-                  className="tag-option"
-                  role="option"
-                  aria-selected={selectedIds.includes(tag.id)}
-                  key={tag.id}
-                >
-                  <Button
-                    variant="ghost"
-                    type="button"
-                    disabled={busy || selectedIds.includes(tag.id)}
-                    onClick={() => void onAdd(tag.id)}
-                  >
-                    <i style={{ backgroundColor: tag.color }} />
-                    {tag.name}
-                    {selectedIds.includes(tag.id) && <Check size={12} />}
-                  </Button>
-                  <Button
-                    type="button"
-                    className="icon-button"
-                    aria-label={`Edit tag ${tag.name}`}
-                    onClick={() => {
-                      setEditing(tag);
-                      setEditName(tag.name);
-                      setEditColor(tag.color);
-                    }}
-                  >
-                    <Pencil size={13} />
-                  </Button>
-                  <Button
-                    type="button"
-                    className="icon-button destructive"
-                    aria-label={`Delete tag ${tag.name}`}
-                    onClick={() => onDelete(tag)}
-                  >
-                    <Trash2 size={13} />
-                  </Button>
-                </div>
-              ),
-            )}
-            {!listed.length && !query.trim() && <p className="muted">No workspace tags yet.</p>}
-          </div>
+                    <CommandItem
+                      className="tag-option"
+                      value={tag.id}
+                      disabled={busy || selectedIds.includes(tag.id)}
+                      onSelect={() => void onAdd(tag.id)}
+                    >
+                      <i style={{ backgroundColor: tag.color }} />
+                      {tag.name}
+                      {selectedIds.includes(tag.id) && <Check size={12} />}
+                    </CommandItem>
+                    <Button
+                      type="button"
+                      className="icon-button"
+                      aria-label={`Edit tag ${tag.name}`}
+                      onClick={() => {
+                        setEditing(tag);
+                        setEditName(tag.name);
+                        setEditColor(tag.color);
+                      }}
+                    >
+                      <Pencil size={13} />
+                    </Button>
+                    <Button
+                      type="button"
+                      className="icon-button destructive"
+                      aria-label={`Delete tag ${tag.name}`}
+                      onClick={() => onDelete(tag)}
+                    >
+                      <Trash2 size={13} />
+                    </Button>
+                  </div>
+                ),
+              )}
+            </CommandList>
+          </Command>
           {query.trim() && !exact && !creating && (
             <Button
               variant="ghost"
@@ -250,8 +263,8 @@ export function TagPicker({
               </Button>
             </div>
           )}
-        </div>
-      </details>
+        </PopoverContent>
+      </Popover>
       <small>{selected.length} of 3 tags</small>
     </div>
   );

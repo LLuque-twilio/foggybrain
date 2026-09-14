@@ -159,7 +159,7 @@ for (const mode of ['merge', 'revert'] as const) {
       await expect(dialog).toContainText('automatic local backup');
       await expect(dialog).toContainText('Revert never writes to GitHub');
       await expect(dialog).toContainText(`${target.repo} / ${target.branch} / ${target.path}`);
-      await expect(dialog.getByRole('button', { name: /for conflicts/ })).toHaveCount(0);
+      await expect(dialog.getByRole('radio', { name: /for conflicts/ })).toHaveCount(0);
       await expect(dialog.getByRole('region', { name: 'Changes to remote state' })).toHaveCount(0);
     }
     await expect(dialog.getByRole('button', { name: apply, exact: true })).toBeDisabled();
@@ -227,11 +227,11 @@ for (const resolution of ['local', 'remote'] as const) {
     await expect(dialog).toContainText('Original title');
     await expect(dialog).toContainText('Remote title');
     await expect(dialog.getByRole('button', { name: 'Apply sync', exact: true })).toBeDisabled();
-    await dialog.getByRole('button', { name: `Use ${resolution} for conflicts` }).click();
+    await dialog.getByRole('radio', { name: `Use ${resolution} for conflicts` }).click();
     await expect(dialog).toContainText(`Selected conflict resolution: ${resolution}`);
     await expect(
-      dialog.getByRole('button', { name: `Use ${resolution} for conflicts` }),
-    ).toHaveAttribute('aria-pressed', 'true');
+      dialog.getByRole('radio', { name: `Use ${resolution} for conflicts` }),
+    ).toBeChecked();
     expect(bodies).toEqual([{}, { resolution }]);
     expect(applies).toBe(0);
     await expect(dialog.getByRole('checkbox')).not.toBeChecked();

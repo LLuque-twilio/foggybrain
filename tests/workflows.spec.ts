@@ -359,11 +359,8 @@ for (const { kind, label, direction } of [
     const dialog = page.getByRole('dialog', { name: `Create ${direction}`, exact: true });
     await expect(parentDialog).not.toBeVisible();
     await expect(page.locator('.dialog')).toHaveCount(1);
-    await expect(dialog.getByRole('button', { name: 'Manual step', exact: true })).toHaveAttribute(
-      'aria-pressed',
-      'true',
-    );
-    await dialog.getByRole('button', { name: label, exact: true }).click();
+    await expect(dialog.getByRole('radio', { name: 'Manual step', exact: true })).toBeChecked();
+    await dialog.getByRole('radio', { name: label, exact: true }).click();
     await dialog.getByLabel('Summary').fill(`New ${kind} gate`);
     await expect(dialog.getByLabel('Lives in')).toHaveValue(parent.id);
     const prUrl = 'https://github.com/example/release/pull/123';
@@ -619,12 +616,17 @@ test('tag picker creates, caps, renames, previews deletion, and replaces dialog 
   await page.goto('/#/list');
   await page.locator('.task-list-row').filter({ hasText: task.title }).click();
   const detail = page.getByRole('complementary', { name: 'Task details' });
+  const tagSearch = page.getByRole('combobox', { name: 'Find or create a tag' });
+  await detail.getByText('Add tag', { exact: true }).click();
+  await expect(tagSearch).toBeVisible();
+  await detail.getByRole('heading', { name: task.title }).click();
+  await expect(tagSearch).not.toBeVisible();
   await detail.getByText('Add tag', { exact: true }).click();
 
   for (const name of ['Focus', 'Plan', 'Later']) {
-    await detail.getByLabel('Find or create a tag').fill(name);
-    await detail.getByRole('button', { name: `Create tag '${name}'` }).click();
-    await detail.getByRole('button', { name: 'Create and add' }).click();
+    await tagSearch.fill(name);
+    await page.getByRole('button', { name: `Create tag '${name}'` }).click();
+    await page.getByRole('button', { name: 'Create and add' }).click();
     await expect(detail.getByRole('button', { name: `Remove tag ${name}` })).toBeVisible();
   }
   await expect(detail.locator('.tag-picker-trigger')).toHaveAttribute('aria-disabled', 'true');
@@ -633,11 +635,21 @@ test('tag picker creates, caps, renames, previews deletion, and replaces dialog 
     'A task can have up to 3 tags. Favorites does not count.',
   );
 
-  await detail.getByRole('button', { name: 'Edit tag Focus' }).click();
-  await detail.getByLabel('Rename Focus').fill('Deep focus');
-  await detail.getByRole('button', { name: 'Save Focus' }).click();
+  await detail.getByRole('button', { name: 'Remove tag Focus' }).click();
+  await detail.getByText('Add tag', { exact: true }).click();
+  await tagSearch.fill('Focus');
+  await tagSearch.press('ArrowDown');
+  await tagSearch.press('Enter');
+  await expect(detail.getByRole('button', { name: 'Remove tag Focus' })).toBeVisible();
+  await expect(
+    page.getByRole('option', { name: 'Focus', exact: true }).getByRole('button'),
+  ).toHaveCount(0);
+
+  await page.getByRole('button', { name: 'Edit tag Focus' }).click();
+  await page.getByLabel('Rename Focus').fill('Deep focus');
+  await page.getByRole('button', { name: 'Save Focus' }).click();
   await expect(detail.getByText('Deep focus', { exact: true }).first()).toBeVisible();
-  await detail.getByRole('button', { name: 'Delete tag Deep focus' }).click();
+  await page.getByRole('button', { name: 'Delete tag Deep focus' }).click();
   const deleteDialog = page.getByRole('dialog', { name: 'Delete this tag?' });
   await expect(deleteDialog).toContainText('Deep focus');
   await expect(deleteDialog).toContainText('removed from 1 task');
@@ -778,7 +790,7 @@ for (const kind of ['manual', 'pr'] as const) {
     await page.getByRole('button', { name: 'Add your first step' }).click();
     const dialog = page.locator('.dialog');
     await dialog
-      .getByRole('button', { name: kind === 'pr' ? 'PR merge' : 'Manual step', exact: true })
+      .getByRole('radio', { name: kind === 'pr' ? 'PR merge' : 'Manual step', exact: true })
       .click();
     const picker = dialog.getByLabel('Your open pull requests');
     await expect(picker.locator('option')).toHaveText([

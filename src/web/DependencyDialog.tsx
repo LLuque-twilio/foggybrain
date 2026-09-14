@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { ArrowRight, Plus } from 'lucide-react';
 import type { ConnectTaskInput, GithubPr, GithubStatus, Snapshot, Tag, TaskView } from '../shared';
+import { Button } from './components/ui/button';
 import { Dialog, TaskDialog } from './Dialogs';
 import { SearchableSelect } from './SearchableSelect';
 
@@ -172,7 +173,7 @@ export function DependencyDialog({
               : `${task.title} \u2192 ${selected.title}${edge ? ` \u2192 ${title(edge.dependentId)}` : ''}`}
           </p>
         )}
-        <button
+        <Button
           className="button full"
           type="button"
           disabled={busy || !canConnect}
@@ -183,19 +184,20 @@ export function DependencyDialog({
         >
           <Plus size={15} />
           Create new task or PR
-        </button>
+        </Button>
         <footer>
-          <button className="button" type="button" disabled={busy} onClick={close}>
+          <Button className="button" type="button" disabled={busy} onClick={close}>
             Cancel
-          </button>
-          <button
+          </Button>
+          <Button
+            variant="primary"
             className="button primary"
             type="submit"
             disabled={busy || !canConnect || !selected}
           >
             Connect {direction}
             <ArrowRight size={15} />
-          </button>
+          </Button>
         </footer>
       </form>
     </Dialog>

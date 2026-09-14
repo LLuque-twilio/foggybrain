@@ -26,6 +26,7 @@ import {
   ListChecks,
 } from 'lucide-react';
 import type { Layout, Snapshot, TaskView } from '../shared';
+import { Tooltip, TooltipContent, TooltipTrigger } from './components/ui/tooltip';
 import { Status } from './Status';
 import { PrStatus } from './PrStatus';
 
@@ -57,18 +58,22 @@ function Step({ data, selected }: NodeProps<StepNode>) {
         <span>
           {data.reference && <Link2 size={13} aria-label="Shared reference" />}
           {task.prUrl && (
-            <a
-              className="node-pr-link nodrag nopan"
-              href={task.prUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              aria-label={`Open PR for ${task.title} on GitHub`}
-              title="Open PR on GitHub"
-              onClick={(event) => event.stopPropagation()}
-              onDoubleClick={(event) => event.stopPropagation()}
-            >
-              <ExternalLink size={14} aria-hidden="true" />
-            </a>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <a
+                  className="node-pr-link nodrag nopan"
+                  href={task.prUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label={`Open PR for ${task.title} on GitHub`}
+                  onClick={(event) => event.stopPropagation()}
+                  onDoubleClick={(event) => event.stopPropagation()}
+                >
+                  <ExternalLink size={14} aria-hidden="true" />
+                </a>
+              </TooltipTrigger>
+              <TooltipContent>Open PR on GitHub</TooltipContent>
+            </Tooltip>
           )}
         </span>
       </div>

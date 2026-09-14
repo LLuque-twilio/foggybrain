@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import type { SyncPreview, SyncStatus, Workspace } from '../shared';
 import type { WorkspaceApi } from './api';
+import { Button } from './components/ui/button';
+import { Checkbox } from './components/ui/checkbox';
+import { RadioGroup, RadioGroupItem } from './components/ui/radio-group';
 import { Dialog, DialogErrorContext } from './Dialogs';
 
 export function SyncDialog({
@@ -271,19 +274,23 @@ export function SyncDialog({
                       </dl>
                     </div>
                   ))}
-                  <div className="sync-actions">
+                  <RadioGroup
+                    className="sync-actions"
+                    aria-label="Conflict resolution"
+                    value={preview.resolution ?? undefined}
+                    onValueChange={(value) => void request('preview', value as 'local' | 'remote')}
+                  >
                     {(['local', 'remote'] as const).map((side) => (
-                      <button
-                        className="button"
+                      <RadioGroupItem
+                        className="button size-auto aspect-auto"
                         key={side}
+                        value={side}
                         disabled={busy}
-                        aria-pressed={preview.resolution === side}
-                        onClick={() => void request('preview', side)}
                       >
                         Use {side} for conflicts
-                      </button>
+                      </RadioGroupItem>
                     ))}
-                  </div>
+                  </RadioGroup>
                 </section>
               )}
               {preview.mode === 'merge' && (
@@ -303,11 +310,10 @@ export function SyncDialog({
               )}
               {preview.canApply && hasChanges && (
                 <label className="sync-confirm">
-                  <input
-                    type="checkbox"
+                  <Checkbox
                     checked={confirmed}
                     disabled={busy}
-                    onChange={(event) => setConfirmed(event.target.checked)}
+                    onCheckedChange={(checked) => setConfirmed(checked === true)}
                   />
                   {preview.mode === 'revert'
                     ? 'I confirm discarding unsynced local changes and replacing this workspace from origin.'
@@ -320,10 +326,10 @@ export function SyncDialog({
           <footer>
             {mode === null ? (
               <>
-                <button className="button" disabled={busy} onClick={() => void request('status')}>
+                <Button className="button" disabled={busy} onClick={() => void request('status')}>
                   Refresh status
-                </button>
-                <button
+                </Button>
+                <Button
                   className="button sync-push"
                   disabled={
                     busy || workspace.type === 'local' || !status?.configured || status.syncing
@@ -331,8 +337,8 @@ export function SyncDialog({
                   onClick={() => void request('preview')}
                 >
                   Push to origin
-                </button>
-                <button
+                </Button>
+                <Button
                   className="button sync-reset"
                   disabled={
                     busy || workspace.type === 'local' || !status?.configured || status.syncing
@@ -340,11 +346,11 @@ export function SyncDialog({
                   onClick={() => void request('preview', undefined, 'revert')}
                 >
                   Reset to origin
-                </button>
+                </Button>
               </>
             ) : (
               <>
-                <button
+                <Button
                   className="button"
                   disabled={busy}
                   onClick={() => {
@@ -356,24 +362,24 @@ export function SyncDialog({
                   }}
                 >
                   Back to sync options
-                </button>
-                <button
+                </Button>
+                <Button
                   className="button"
                   disabled={busy || !status?.configured || status.syncing}
                   onClick={() => void request('preview', undefined, mode)}
                 >
                   Refresh preview
-                </button>
+                </Button>
               </>
             )}
             {preview && hasChanges && (
-              <button
+              <Button
                 className={`button ${mode === 'revert' ? 'sync-reset' : 'sync-push'}`}
                 disabled={busy || !preview.canApply || !confirmed}
                 onClick={() => void request('apply')}
               >
                 {preview.mode === 'revert' ? 'Confirm reset to origin' : 'Apply sync'}
-              </button>
+              </Button>
             )}
           </footer>
         </div>

@@ -54,6 +54,8 @@ import { Status, statusLabels } from './Status';
 import { SyncDialog } from './SyncDialog';
 import { ListView } from './List';
 import { TaskDetailSheet } from './TaskDetailSheet';
+import { Button } from './components/ui/button';
+import { Sheet, SheetContent, SheetTitle } from './components/ui/sheet';
 
 type Modal =
   | { type: 'create'; parentId?: string | null; prUrl?: string }
@@ -106,8 +108,21 @@ export function WorkspaceApp({
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState('');
   const [sidebar, setSidebar] = useState(false);
+  const [mobileNavigation, setMobileNavigation] = useState(
+    () => window.matchMedia('(max-width: 700px)').matches,
+  );
   const refreshId = useRef(0);
   const mutation = useRef(false);
+
+  useEffect(() => {
+    const media = window.matchMedia('(max-width: 700px)');
+    const updateNavigation = () => {
+      setMobileNavigation(media.matches);
+      if (!media.matches) setSidebar(false);
+    };
+    media.addEventListener('change', updateNavigation);
+    return () => media.removeEventListener('change', updateNavigation);
+  }, []);
 
   useEffect(() => {
     if (!initialSyncPreview) return;
@@ -340,122 +355,139 @@ export function WorkspaceApp({
     ancestor = snapshot.tasks.find((task) => task.id === ancestor!.parentId);
   }
 
+  const navigation = (
+    <>
+      <button className="brand" onClick={() => navigate('/')}>
+        <span className="brand-mark">
+          <CloudFog size={25} />
+        </span>
+        <span>
+          FoggyBrain<small>A LITTLE CLARITY.</small>
+        </span>
+      </button>
+      {controls}
+      <div className="nav-label">YOUR SPACE</div>
+      <nav aria-label="Main navigation">
+        <button
+          aria-haspopup="dialog"
+          disabled={busy}
+          onClick={() => {
+            setError('');
+            setSidebar(false);
+            setModal({ type: 'sync' });
+          }}
+        >
+          <RefreshCw size={17} />
+          {workspace.type === 'cloud' ? 'Workspace sync' : 'About local storage'}
+        </button>
+        <button className={path === '/' ? 'active' : ''} onClick={() => navigate('/')}>
+          <LayoutGrid size={17} />
+          Overview<span className="nav-count">{roots.length}</span>
+        </button>
+        <button className={isGraph ? 'active' : ''} onClick={() => navigate('/map')}>
+          <Network size={17} />
+          Workspace map
+        </button>
+        <button className={isList ? 'active' : ''} onClick={() => navigate('/list')}>
+          <ListChecks size={17} />
+          List<span className="nav-count">{snapshot.tasks.length}</span>
+        </button>
+        <button className={isPrs ? 'active' : ''} onClick={() => navigate('/prs')}>
+          <GitPullRequest size={17} />
+          Pull requests<span className="nav-count">{prs.length}</span>
+        </button>
+        <button
+          className={isSettings ? 'active' : ''}
+          aria-current={isSettings ? 'page' : undefined}
+          onClick={() => navigate('/settings')}
+        >
+          <Settings2 size={17} />
+          Settings
+        </button>
+      </nav>
+      <div className="nav-label task-nav-label">
+        TASK CONTAINERS
+        <button
+          className="icon-button"
+          onClick={() => setModal({ type: 'create' })}
+          aria-label="New container"
+        >
+          <Plus size={15} />
+        </button>
+      </div>
+      <div className="container-nav">
+        {containers.length ? (
+          containers.map((task) => (
+            <button
+              key={task.id}
+              className={currentId === task.id ? 'selected' : ''}
+              onClick={() => open(task.id)}
+            >
+              <span className={`tiny-status tiny-${task.status}`} />
+              <span>{task.title}</span>
+              {task.status === 'completed' && <Check size={13} />}
+            </button>
+          ))
+        ) : (
+          <p>Your next idea goes here.</p>
+        )}
+      </div>
+      <div className="sidebar-bottom">
+        <div className="quiet-note">
+          <Network size={22} />
+          <p>
+            You don't have to hold
+            <br />
+            it all in your head.
+          </p>
+        </div>
+        <button onClick={() => setModal({ type: 'help' })}>
+          <Terminal size={16} />
+          CLI & quick guide
+          <ArrowUpRight size={14} />
+        </button>
+        <div className="local-footer">
+          <span className="local-dot" />
+          LOCAL-FIRST<span>v0.1</span>
+        </div>
+      </div>
+    </>
+  );
+
   return (
     <div className="app-shell">
-      {sidebar && (
-        <button
-          className="sidebar-scrim"
-          aria-label="Close navigation"
-          onClick={() => setSidebar(false)}
-        />
+      {mobileNavigation ? (
+        <Sheet open={sidebar} onOpenChange={setSidebar}>
+          <SheetContent side="left" className="mobile-navigation">
+            <SheetTitle className="sr-only">Navigation</SheetTitle>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="navigation-close"
+              aria-label="Close navigation"
+              onClick={() => setSidebar(false)}
+            >
+              <X size={20} />
+            </Button>
+            {navigation}
+          </SheetContent>
+        </Sheet>
+      ) : (
+        <aside className="sidebar">{navigation}</aside>
       )}
-      <aside className={`sidebar ${sidebar ? 'sidebar-open' : ''}`}>
-        <button className="brand" onClick={() => navigate('/')}>
-          <span className="brand-mark">
-            <CloudFog size={25} />
-          </span>
-          <span>
-            FoggyBrain<small>A LITTLE CLARITY.</small>
-          </span>
-        </button>
-        {controls}
-        <div className="nav-label">YOUR SPACE</div>
-        <nav aria-label="Main navigation">
-          <button
-            aria-haspopup="dialog"
-            disabled={busy}
-            onClick={() => {
-              setError('');
-              setSidebar(false);
-              setModal({ type: 'sync' });
-            }}
-          >
-            <RefreshCw size={17} />
-            {workspace.type === 'cloud' ? 'Workspace sync' : 'About local storage'}
-          </button>
-          <button className={path === '/' ? 'active' : ''} onClick={() => navigate('/')}>
-            <LayoutGrid size={17} />
-            Overview<span className="nav-count">{roots.length}</span>
-          </button>
-          <button className={isGraph ? 'active' : ''} onClick={() => navigate('/map')}>
-            <Network size={17} />
-            Workspace map
-          </button>
-          <button className={isList ? 'active' : ''} onClick={() => navigate('/list')}>
-            <ListChecks size={17} />
-            List<span className="nav-count">{snapshot.tasks.length}</span>
-          </button>
-          <button className={isPrs ? 'active' : ''} onClick={() => navigate('/prs')}>
-            <GitPullRequest size={17} />
-            Pull requests<span className="nav-count">{prs.length}</span>
-          </button>
-          <button
-            className={isSettings ? 'active' : ''}
-            aria-current={isSettings ? 'page' : undefined}
-            onClick={() => navigate('/settings')}
-          >
-            <Settings2 size={17} />
-            Settings
-          </button>
-        </nav>
-        <div className="nav-label task-nav-label">
-          TASK CONTAINERS
-          <button
-            className="icon-button"
-            onClick={() => setModal({ type: 'create' })}
-            aria-label="New container"
-          >
-            <Plus size={15} />
-          </button>
-        </div>
-        <div className="container-nav">
-          {containers.length ? (
-            containers.map((task) => (
-              <button
-                key={task.id}
-                className={currentId === task.id ? 'selected' : ''}
-                onClick={() => open(task.id)}
-              >
-                <span className={`tiny-status tiny-${task.status}`} />
-                <span>{task.title}</span>
-                {task.status === 'completed' && <Check size={13} />}
-              </button>
-            ))
-          ) : (
-            <p>Your next idea goes here.</p>
-          )}
-        </div>
-        <div className="sidebar-bottom">
-          <div className="quiet-note">
-            <Network size={22} />
-            <p>
-              You don't have to hold
-              <br />
-              it all in your head.
-            </p>
-          </div>
-          <button onClick={() => setModal({ type: 'help' })}>
-            <Terminal size={16} />
-            CLI & quick guide
-            <ArrowUpRight size={14} />
-          </button>
-          <div className="local-footer">
-            <span className="local-dot" />
-            LOCAL-FIRST<span>v0.1</span>
-          </div>
-        </div>
-      </aside>
 
       <main className="main">
         <header className="topbar">
           <nav className="breadcrumbs" aria-label="Breadcrumb">
-            <button
+            <Button
+              variant="ghost"
+              size="icon"
               className="icon-button mobile-menu"
               aria-label="Open navigation"
               onClick={() => setSidebar(true)}
             >
               <Menu size={20} />
-            </button>
+            </Button>
             <button onClick={() => navigate('/')}>{workspace.name}</button>
             <ChevronRight size={13} />
             {isGraph ? (

@@ -10,8 +10,10 @@ import type {
 import { api } from './api';
 import { WorkspaceApp } from './App';
 import { Dialog, DialogErrorContext } from './Dialogs';
-import { LoadingField } from './LoadingField';
 import { SearchableSelect } from './SearchableSelect';
+import { Button } from './components/ui/button';
+import { Checkbox } from './components/ui/checkbox';
+import { Input } from './components/ui/input';
 
 const selectedWorkspace = () => new URL(window.location.href).searchParams.get('workspace');
 
@@ -123,9 +125,13 @@ export function App() {
               <div>
                 <h2>A fresh place to think</h2>
                 <p>Keep your tasks on this device. You can connect to cloud later.</p>
-                <button className="button primary" onClick={() => setEditor('add')}>
+                <Button
+                  className="button primary"
+                  variant="primary"
+                  onClick={() => setEditor('add')}
+                >
                   Add workspace
-                </button>
+                </Button>
               </div>
               <div>
                 <h2>Bring your workspace along</h2>
@@ -133,9 +139,9 @@ export function App() {
                   Choose an existing private repository, branch, and state file. Review a sync
                   preview before importing anything.
                 </p>
-                <button className="button" onClick={() => setEditor('add-cloud')}>
+                <Button className="button" onClick={() => setEditor('add-cloud')}>
                   Connect to cloud
-                </button>
+                </Button>
               </div>
             </div>
             {error && <p role="alert">Cannot refresh workspaces: {error}</p>}
@@ -155,13 +161,13 @@ export function App() {
         ) : (
           <p role="status">Loading workspaces...</p>
         )}
-        <button className="button" onClick={() => setRevision((value) => value + 1)}>
+        <Button className="button" onClick={() => setRevision((value) => value + 1)}>
           Retry
-        </button>
+        </Button>
         {list?.workspaces.map((entry) => (
-          <button className="button" key={entry.id} onClick={() => select(entry.id)}>
+          <Button className="button" key={entry.id} onClick={() => select(entry.id)}>
             {entry.name}
-          </button>
+          </Button>
         ))}
       </main>
     );
@@ -220,21 +226,22 @@ export function App() {
                 : 'Tasks are stored on this device. Connecting to cloud preserves local tasks and opens a sync preview. Nothing is imported or published until you review and explicitly confirm apply.'}
             </p>
             <div className="workspace-actions">
-              <button className="button" onClick={() => setEditor('rename')}>
+              <Button className="button" onClick={() => setEditor('rename')}>
                 Rename workspace
-              </button>
+              </Button>
               {workspace.type === 'local' && (
-                <button className="button" onClick={() => setEditor('connect')}>
+                <Button className="button" onClick={() => setEditor('connect')}>
                   Connect to cloud
-                </button>
+                </Button>
               )}
-              <button
+              <Button
                 className="button primary"
+                variant="primary"
                 disabled={list.workspaces.length >= Math.min(3, list.limit)}
                 onClick={() => setEditor('add')}
               >
                 Add workspace
-              </button>
+              </Button>
             </div>
             <p className="form-hint">
               {list.workspaces.length} / {Math.min(3, list.limit)} saved workspaces. Each workspace
@@ -246,9 +253,13 @@ export function App() {
                 Remove this workspace and its local data permanently. Cloud repositories are
                 untouched.
               </p>
-              <button className="button danger" onClick={() => setEditor('remove')}>
+              <Button
+                className="button danger"
+                variant="destructive"
+                onClick={() => setEditor('remove')}
+              >
                 Remove workspace
-              </button>
+              </Button>
             </section>
           </section>
         }
@@ -269,19 +280,25 @@ export function App() {
               </select>
             </label>
             <div className="workspace-actions">
-              <button className="text-button" onClick={() => setEditor('rename')}>
+              <button
+                className="text-button"
+                onClick={() => setTimeout(() => setEditor('rename'), 100)}
+              >
                 Rename
               </button>
               <button
                 className="text-button"
                 disabled={list.workspaces.length >= Math.min(3, list.limit)}
-                onClick={() => setEditor('add')}
+                onClick={() => setTimeout(() => setEditor('add'), 100)}
               >
                 Add workspace
               </button>
             </div>
             {workspace.type === 'local' && (
-              <button className="text-button" onClick={() => setEditor('connect')}>
+              <button
+                className="text-button"
+                onClick={() => setTimeout(() => setEditor('connect'), 100)}
+              >
                 Connect to cloud
               </button>
             )}
@@ -451,30 +468,36 @@ function WorkspaceRemoval({
             </>
           )}
           <label className="workspace-removal-confirm">
-            <input
-              type="checkbox"
+            <Checkbox
+              id="workspace-removal-confirm"
               checked={confirmed}
               disabled={busy || !preview?.canRemove}
-              onChange={(event) => setConfirmed(event.target.checked)}
+              onCheckedChange={(checked) => setConfirmed(checked === true)}
             />
-            I understand that this permanently removes this workspace's local data with no undo.
+            <span>
+              I understand that this permanently removes this workspace's local data with no undo.
+            </span>
           </label>
           <footer>
-            <button type="button" className="button" disabled={pending.current} onClick={cancel}>
+            <Button type="button" className="button" disabled={pending.current} onClick={cancel}>
               Cancel
-            </button>
+            </Button>
             {!preview && !busy && (
-              <button
+              <Button
                 type="button"
                 className="button"
                 onClick={() => setAttempt((value) => value + 1)}
               >
                 Review new preview
-              </button>
+              </Button>
             )}
-            <button className="button danger" disabled={busy || !preview?.canRemove || !confirmed}>
+            <Button
+              className="button danger"
+              variant="destructive"
+              disabled={busy || !preview?.canRemove || !confirmed}
+            >
               Remove permanently
-            </button>
+            </Button>
           </footer>
         </form>
       </Dialog>
@@ -514,9 +537,6 @@ function WorkspaceEditor({
   const [discovery, setDiscovery] = useState<WorkspaceRepositories | null>(null);
   const [repositoryError, setRepositoryError] = useState('');
   const [search, setSearch] = useState('');
-  const [repositoryOpen, setRepositoryOpen] = useState(false);
-  const [activeRepository, setActiveRepository] = useState(-1);
-  const repositoryList = useRef<HTMLUListElement>(null);
   const [retry, setRetry] = useState(0);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -533,8 +553,6 @@ function WorkspaceEditor({
     let active = true;
     setRepo('');
     setSearch('');
-    setRepositoryOpen(false);
-    setActiveRepository(-1);
     setDiscovery(null);
     setRepositoryError('');
     if (cloud) {
@@ -554,28 +572,12 @@ function WorkspaceEditor({
       active = false;
     };
   }, [cloud, credential, retry]);
-  const visibleRepositories =
+  const repositoryLoading = cloud && !discovery && !repositoryError;
+  const validRepository = discovery?.repositories.some((entry) => entry.fullName === repo);
+  const visibleRepositoryCount =
     discovery?.repositories.filter((entry) =>
       entry.fullName.toLowerCase().includes(search.trim().toLowerCase()),
-    ) ?? [];
-  const repositoryExpanded = repositoryOpen && !!discovery && !busy;
-  const repositoryLoading = cloud && !discovery && !repositoryError;
-  const highlightedRepository = repositoryExpanded
-    ? visibleRepositories[activeRepository]
-    : undefined;
-  const validRepository = discovery?.repositories.some((entry) => entry.fullName === repo);
-  useEffect(() => {
-    if (highlightedRepository)
-      repositoryList.current
-        ?.querySelector('[data-active="true"]')
-        ?.scrollIntoView({ block: 'nearest' });
-  }, [highlightedRepository]);
-  function chooseRepository(entry: WorkspaceRepositories['repositories'][number]) {
-    setRepo(entry.fullName);
-    setSearch(entry.fullName);
-    setRepositoryOpen(false);
-    setActiveRepository(-1);
-  }
+    ).length ?? 0;
   const title =
     mode === 'add' ? 'Add workspace' : mode === 'rename' ? 'Rename workspace' : 'Connect to cloud';
   return (
@@ -622,7 +624,7 @@ function WorkspaceEditor({
         >
           <label>
             Name
-            <input
+            <Input
               required
               autoFocus
               value={name}
@@ -671,108 +673,46 @@ function WorkspaceEditor({
               {repositoryError && (
                 <div>
                   <p role="alert">{repositoryError}</p>
-                  <button
+                  <Button
                     type="button"
                     className="button"
                     onClick={() => setRetry((value) => value + 1)}
                   >
                     Retry repositories
-                  </button>
+                  </Button>
                 </div>
               )}
               {discovery && <p className="form-hint">Authenticated as {discovery.login}.</p>}
-              <div className="repository-picker">
-                <label htmlFor="workspace-repository">Repository</label>
-                <LoadingField loading={repositoryLoading}>
-                  <input
-                    id="workspace-repository"
-                    role="combobox"
-                    aria-autocomplete="list"
-                    aria-busy={repositoryLoading}
-                    aria-describedby={repositoryLoading ? 'repository-loading' : undefined}
-                    aria-expanded={repositoryExpanded}
-                    aria-controls="workspace-repositories"
-                    aria-activedescendant={
-                      highlightedRepository
-                        ? `workspace-repository-${highlightedRepository.id}`
-                        : undefined
-                    }
-                    autoComplete="off"
-                    placeholder={
-                      repositoryLoading ? 'Loading repositories...' : 'Search private repositories'
-                    }
-                    required
-                    value={search}
-                    disabled={busy || !discovery}
-                    onFocus={() => setRepositoryOpen(true)}
-                    onClick={() => setRepositoryOpen(true)}
-                    onBlur={() => {
-                      setRepositoryOpen(false);
-                      setActiveRepository(-1);
-                    }}
-                    onChange={(event) => {
-                      setSearch(event.target.value);
-                      setRepo('');
-                      setRepositoryOpen(true);
-                      setActiveRepository(-1);
-                    }}
-                    onKeyDown={(event) => {
-                      if (event.nativeEvent.isComposing) return;
-                      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-                        event.preventDefault();
-                        setRepositoryOpen(true);
-                        const count = visibleRepositories.length;
-                        setActiveRepository(
-                          count
-                            ? !repositoryExpanded || activeRepository < 0
-                              ? event.key === 'ArrowDown'
-                                ? 0
-                                : count - 1
-                              : (activeRepository + (event.key === 'ArrowDown' ? 1 : -1) + count) %
-                                count
-                            : -1,
-                        );
-                      } else if (event.key === 'Enter' && repositoryExpanded) {
-                        event.preventDefault();
-                        if (highlightedRepository) chooseRepository(highlightedRepository);
-                      } else if (event.key === 'Escape' && repositoryExpanded) {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        setRepositoryOpen(false);
-                        setActiveRepository(-1);
-                      }
-                    }}
-                  />
-                </LoadingField>
-                <ul
-                  id="workspace-repositories"
-                  ref={repositoryList}
-                  role="listbox"
-                  aria-label="Repositories"
-                  hidden={!repositoryExpanded}
-                >
-                  {visibleRepositories.map((entry, index) => (
-                    <li
-                      key={entry.id}
-                      id={`workspace-repository-${entry.id}`}
-                      role="option"
-                      aria-selected={repo === entry.fullName}
-                      data-active={activeRepository === index}
-                      onMouseDown={(event) => event.preventDefault()}
-                      onClick={() => chooseRepository(entry)}
-                    >
-                      {entry.fullName}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-              {discovery && !visibleRepositories.length && (
-                <p role="status">
-                  {discovery.repositories.length
-                    ? 'No repositories match your search.'
-                    : 'No owned private repositories are visible to this credential. Check token repository access or choose another server credential.'}
-                </p>
-              )}
+              <SearchableSelect
+                id="workspace-repository"
+                label="Repository"
+                listLabel="Repositories"
+                options={
+                  discovery?.repositories.map((entry) => ({
+                    id: String(entry.id),
+                    value: entry.fullName,
+                    label: entry.fullName,
+                  })) ?? []
+                }
+                value={repo}
+                onChange={setRepo}
+                search={search}
+                onSearchChange={setSearch}
+                required
+                disabled={busy || !discovery}
+                loading={repositoryLoading}
+                describedBy={repositoryLoading ? 'repository-loading' : undefined}
+                placeholder={
+                  repositoryLoading ? 'Loading repositories...' : 'Search private repositories'
+                }
+                emptyMessage={
+                  discovery && !visibleRepositoryCount
+                    ? discovery.repositories.length
+                      ? 'No repositories match your search.'
+                      : 'No owned private repositories are visible to this credential. Check token repository access or choose another server credential.'
+                    : undefined
+                }
+              />
               <DiscoveryPicker
                 key={`branch/${credential}/${repo}`}
                 kind="branches"
@@ -810,11 +750,12 @@ function WorkspaceEditor({
             )
           )}
           <footer>
-            <button type="button" className="button" disabled={busy} onClick={close}>
+            <Button type="button" className="button" disabled={busy} onClick={close}>
               Cancel
-            </button>
-            <button
+            </Button>
+            <Button
               className="button primary"
+              variant="primary"
               disabled={
                 busy ||
                 !name.trim() ||
@@ -822,7 +763,7 @@ function WorkspaceEditor({
               }
             >
               {busy ? 'Saving...' : 'Save workspace'}
-            </button>
+            </Button>
           </footer>
         </form>
       </Dialog>
@@ -919,14 +860,14 @@ function DiscoveryPicker({
       {query && error && (
         <div>
           <p role="alert">{error}</p>
-          <button
+          <Button
             type="button"
             className="button"
             disabled={disabled}
             onClick={() => setRetry((value) => value + 1)}
           >
             Retry {kind}
-          </button>
+          </Button>
         </div>
       )}
     </>

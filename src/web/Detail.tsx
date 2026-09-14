@@ -13,6 +13,8 @@ import {
   X,
 } from 'lucide-react';
 import type { ConnectTaskInput, Snapshot, Tag, TaskView } from '../shared';
+import { Button } from './components/ui/button';
+import { Tooltip, TooltipContent, TooltipTrigger } from './components/ui/tooltip';
 import { Status } from './Status';
 import { PrStatus } from './PrStatus';
 import { StarToggle, TagBadges, TagPicker } from './Tags';
@@ -70,34 +72,46 @@ export function Detail({
             disabled={busy}
             onToggle={() => toggleTag('favorites', !task.tagIds.includes('favorites'))}
           />
-          <button className="icon-button" onClick={close} aria-label="Close task details">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="icon-button"
+            onClick={close}
+            aria-label="Close task details"
+          >
             <X size={18} />
-          </button>
+          </Button>
         </div>
       </div>
       <Status status={task.status} />
       <h2>{task.title}</h2>
       <TagBadges tags={snapshot.tags} tagIds={task.tagIds} />
       <div className="detail-actions">
-        <button className="text-button" onClick={edit}>
+        <Button variant="link" size="sm" className="text-button" onClick={edit}>
           <Pencil size={13} />
           Edit task
-        </button>
-        <button
-          className="text-button"
-          onClick={async () => {
-            try {
-              await navigator.clipboard.writeText(task.id);
-              setCopied(true);
-            } catch {
-              setCopied(false);
-            }
-          }}
-          title={task.id}
-        >
-          <Copy size={13} />
-          {copied ? 'ID copied' : 'Copy ID'}
-        </button>
+        </Button>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="link"
+              size="sm"
+              className="text-button"
+              onClick={async () => {
+                try {
+                  await navigator.clipboard.writeText(task.id);
+                  setCopied(true);
+                } catch {
+                  setCopied(false);
+                }
+              }}
+            >
+              <Copy size={13} />
+              {copied ? 'ID copied' : 'Copy ID'}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>{task.id}</TooltipContent>
+        </Tooltip>
       </div>
       <p className="description">
         {task.description || 'No description. Add a little context with Edit task.'}
@@ -124,21 +138,22 @@ export function Detail({
         </div>
       )}
       {task.kind === 'manual' && (
-        <button
+        <Button
+          variant={task.manualDone ? 'default' : 'primary'}
           className={`button full ${task.manualDone ? '' : 'primary'}`}
           disabled={busy}
           onClick={done}
         >
           {task.manualDone ? <RotateCcw size={16} /> : <Check size={16} />}
           {task.manualDone ? 'Reopen own work' : 'Mark own work done'}
-        </button>
+        </Button>
       )}
       {task.kind === 'container' && (
         <>
-          <button className="button full primary" onClick={() => open(task.id)}>
+          <Button variant="primary" className="button full primary" onClick={() => open(task.id)}>
             Open task graph
             <ArrowUpRight size={16} />
-          </button>
+          </Button>
           <p className="form-hint">
             {
               snapshot.tasks.filter(
@@ -200,7 +215,7 @@ export function Detail({
             </div>
           );
         })}
-        <button
+        <Button
           className="button full"
           disabled={busy}
           onClick={() => addDependency('prerequisite')}
@@ -208,7 +223,7 @@ export function Detail({
         >
           <Plus size={16} />
           Add prerequisite
-        </button>
+        </Button>
       </section>
       <section className="detail-section">
         <h3>
@@ -234,7 +249,7 @@ export function Detail({
             </div>
           );
         })}
-        <button
+        <Button
           className="button full"
           disabled={busy}
           onClick={() => addDependency('dependent')}
@@ -242,7 +257,7 @@ export function Detail({
         >
           <Plus size={16} />
           Add dependent
-        </button>
+        </Button>
       </section>
       {(task.parentId || memberships.length > 0) && (
         <section className="detail-section">
@@ -261,15 +276,21 @@ export function Detail({
       )}
       <div className="detail-footer">
         {reference && (
-          <button className="button full" disabled={busy} onClick={() => unlink(reference.id)}>
+          <Button className="button full" disabled={busy} onClick={() => unlink(reference.id)}>
             <Link2 size={14} />
             Unlink from this graph
-          </button>
+          </Button>
         )}
-        <button className="text-button destructive" onClick={remove} disabled={busy}>
+        <Button
+          variant="link"
+          size="sm"
+          className="text-button destructive"
+          onClick={remove}
+          disabled={busy}
+        >
           <Trash2 size={14} />
           Delete {task.kind === 'container' ? 'container' : 'task'} everywhere
-        </button>
+        </Button>
       </div>
     </aside>
   );

@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import type { PrMergeStatus, TaskView } from '../shared';
 import { Badge } from './components/ui/badge';
+import { Tooltip, TooltipContent, TooltipTrigger } from './components/ui/tooltip';
 
 const readiness = {
   unknown: { label: 'Readiness unknown', Icon: CircleDashed, tone: 'neutral' },
@@ -35,20 +36,24 @@ export function PrStatus({ task }: { task: TaskView }) {
           ? { label: 'Not checked', Icon: CircleDashed, tone: 'neutral' }
           : readiness[task.prMergeStatus];
   const StatusIcon = task.prError ? AlertTriangle : Icon;
+  const description = task.prError
+    ? `Last known PR status: ${label}. ${task.prError}`
+    : `PR status: ${label}. Only a verified merge satisfies this gate.`;
   return (
-    <Badge
-      className={`pr-status pr-status-${task.prError ? 'warning' : tone}`}
-      title={
-        task.prError
-          ? `Last known PR status: ${label}. ${task.prError}`
-          : `PR status: ${label}. Only a verified merge satisfies this gate.`
-      }
-    >
-      <StatusIcon size={12} aria-hidden="true" />
-      <span>
-        {label}
-        {task.prError ? ' (stale)' : ''}
-      </span>
-    </Badge>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Badge
+          className={`pr-status pr-status-${task.prError ? 'warning' : tone}`}
+          aria-label={description}
+        >
+          <StatusIcon size={12} aria-hidden="true" />
+          <span>
+            {label}
+            {task.prError ? ' (stale)' : ''}
+          </span>
+        </Badge>
+      </TooltipTrigger>
+      <TooltipContent>{description}</TooltipContent>
+    </Tooltip>
   );
 }

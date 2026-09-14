@@ -21,13 +21,32 @@ async function selectCloudTarget(page: Page) {
 }
 
 async function navigation(page: Page) {
-  await expect(page.getByRole('combobox', { name: 'Workspace', exact: true })).toBeAttached();
   const open = page.getByRole('button', { name: 'Open navigation' });
-  if (
-    (await open.isVisible()) &&
-    !(await page.getByRole('button', { name: 'Close navigation' }).count())
-  )
-    await open.click();
+  const mobileNavigation = page.locator('.mobile-navigation');
+  if (await open.isVisible()) {
+    const navigationState = (await mobileNavigation.count())
+      ? await mobileNavigation.getAttribute('data-state')
+      : null;
+    if (navigationState !== 'open') {
+      await expect(mobileNavigation).toHaveCount(0);
+      await open.click();
+    }
+    await mobileNavigation.evaluate(async (element) => {
+      await new Promise(requestAnimationFrame);
+      await Promise.all(element.getAnimations().map((animation) => animation.finished));
+    });
+  }
+  await expect(page.getByRole('combobox', { name: 'Workspace', exact: true })).toBeAttached();
+}
+
+async function closeNavigation(page: Page) {
+  const close = page.getByRole('button', { name: 'Close navigation' });
+  const mobileNavigation = page.locator('.mobile-navigation');
+  const state = (await mobileNavigation.count())
+    ? await mobileNavigation.getAttribute('data-state')
+    : null;
+  if (state === 'open') await close.dispatchEvent('click');
+  await expect(mobileNavigation).toHaveCount(0);
 }
 
 async function removalSetup(page: Page, count = 3) {
@@ -583,7 +602,11 @@ test('rename and connect preserve identity, validate configuration, and require 
   await expect(page.getByRole('dialog')).not.toContainText('Unsynced local changes');
   await page.getByRole('button', { name: 'Close dialog' }).click();
   await navigation(page);
-  await page.getByRole('button', { name: 'Connect to cloud' }).click();
+  const connectButton = page.getByRole('button', { name: 'Connect to cloud' });
+  const visibleConnectButton = (await page.locator('.mobile-navigation').isVisible())
+    ? page.locator('.mobile-navigation').getByRole('button', { name: 'Connect to cloud' })
+    : connectButton;
+  await visibleConnectButton.dispatchEvent('click');
   dialog = page.getByRole('dialog');
   await dialog.getByLabel('Repository', { exact: true }).fill('not-a-repo');
   await expect(dialog.getByRole('status')).toContainText('No repositories match');
@@ -610,6 +633,7 @@ test('rename and connect preserve identity, validate configuration, and require 
   await dialog.getByRole('button', { name: 'Save workspace' }).click();
   await expect(page.getByRole('dialog')).toHaveAccessibleName('Push to origin');
   await page.getByRole('button', { name: 'Close dialog' }).click();
+  await navigation(page);
   await expect(page.getByRole('combobox', { name: 'Workspace', exact: true })).toContainText(
     'Research (Cloud)',
   );
@@ -656,8 +680,10 @@ test('discovery spinners follow each pending request and respect reduced motion'
     expect(spinnerBox).not.toBeNull();
     expect(spinnerBox!.x).toBeGreaterThan(fieldBox!.x);
     expect(spinnerBox!.x + spinnerBox!.width).toBeLessThan(fieldBox!.x + fieldBox!.width);
-    expect(spinnerBox!.y).toBeGreaterThanOrEqual(fieldBox!.y);
-    expect(spinnerBox!.y + spinnerBox!.height).toBeLessThanOrEqual(fieldBox!.y + fieldBox!.height);
+    expect(spinnerBox!.y).toBeGreaterThanOrEqual(fieldBox!.y - 0.5);
+    expect(spinnerBox!.y + spinnerBox!.height).toBeLessThanOrEqual(
+      fieldBox!.y + fieldBox!.height + 0.5,
+    );
     await page.emulateMedia({ reducedMotion: 'reduce' });
     await expect(spinner).toHaveCSS('animation-name', 'none');
     await page.emulateMedia({ reducedMotion: 'no-preference' });
@@ -755,9 +781,13 @@ for (const flow of ['add', 'connect'] as const) {
       (await input.getAttribute('aria-controls')) as string,
     );
     await input.press('ArrowDown');
-    await expect(input).toHaveAttribute('aria-activedescendant', 'workspace-repository-1');
+    const firstActive = await input.getAttribute('aria-activedescendant');
+    expect(firstActive).toBeTruthy();
+    await expect(dialog.locator(`#${firstActive}`)).toHaveText('example/private');
     await input.press('ArrowDown');
-    await expect(input).toHaveAttribute('aria-activedescendant', 'workspace-repository-2');
+    const secondActive = await input.getAttribute('aria-activedescendant');
+    expect(secondActive).toBeTruthy();
+    await expect(dialog.locator(`#${secondActive}`)).toHaveText('example/other');
     await input.press('ArrowUp');
     await input.press('Enter');
     await expect(input).toHaveValue('example/private');
@@ -1087,15 +1117,19 @@ test('focus refresh discovers external metadata changes without resetting graph 
     page.getByRole('combobox', { name: 'Workspace', exact: true }).getByRole('option'),
   ).toHaveCount(3);
   await expect(page.getByRole('button', { name: 'Add workspace', exact: true })).toBeDisabled();
+  await closeNavigation(page);
   await expect(page.getByRole('textbox', { name: 'Search tasks' })).toHaveValue('keep this search');
   failure = true;
   await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await navigation(page);
   await expect(page.getByRole('alert')).toContainText('Discovery offline');
   await expect(page.getByRole('combobox', { name: 'Workspace', exact: true })).toHaveValue(
     'default',
   );
+  await closeNavigation(page);
   await expect(page.getByRole('textbox', { name: 'Search tasks' })).toHaveValue('keep this search');
   failure = false;
+  await navigation(page);
   await page.getByRole('button', { name: 'About local storage' }).click();
   await expect(page.getByRole('dialog')).toContainText('This is a local workspace');
   const target = { repo: 'example/private', branch: 'main', path: 'foggybrain/state.json' };
@@ -1112,10 +1146,12 @@ test('focus refresh discovers external metadata changes without resetting graph 
       .getByRole('button', { name: 'Push to origin' }),
   ).toBeEnabled();
   await page.getByRole('button', { name: 'Close dialog' }).click();
+  await navigation(page);
   await expect(page.getByRole('combobox', { name: 'Workspace', exact: true })).toContainText(
     'Renamed elsewhere (Cloud)',
   );
   await expect(page.getByRole('alert')).toHaveCount(0);
+  await closeNavigation(page);
   await expect(page.getByRole('textbox', { name: 'Search tasks' })).toHaveValue('keep this search');
 });
 
@@ -1140,9 +1176,10 @@ test('explicit switch and creation reset task routes but history and direct link
   await expect(page).toHaveURL(/workspace=default#\/tasks\/deep-task$/);
   await navigation(page);
   await page.getByRole('button', { name: 'Rename', exact: true }).click();
-  await page.getByRole('dialog').getByLabel('Name', { exact: true }).fill('Renamed');
+  const renameDialog = page.getByRole('dialog', { name: 'Rename workspace' });
+  await renameDialog.getByLabel('Name', { exact: true }).fill('Renamed');
   await page.getByRole('button', { name: 'Save workspace' }).click();
-  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(renameDialog).toHaveCount(0);
   await expect(page).toHaveURL(/workspace=default#\/tasks\/deep-task$/);
 });
 

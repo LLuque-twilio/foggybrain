@@ -1,6 +1,10 @@
 import { createContext, useContext, useState, type ReactNode } from 'react';
 import { AlertTriangle, ArrowRight, Box, GitPullRequest, Link2, ListChecks, X } from 'lucide-react';
 import { Dialog as DialogPrimitive, DialogContent, DialogTitle } from './components/ui/dialog';
+import { Button } from './components/ui/button';
+import { Input } from './components/ui/input';
+import { RadioGroup, RadioGroupItem } from './components/ui/radio-group';
+import { Textarea } from './components/ui/textarea';
 import { LoadingField } from './LoadingField';
 import { TagPicker } from './Tags';
 import type {
@@ -43,9 +47,16 @@ export function Dialog({
       >
         <header>
           <DialogTitle>{title}</DialogTitle>
-          <button className="icon-button" onClick={close} aria-label="Close dialog">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="icon-button"
+            onClick={close}
+            aria-label="Close dialog"
+          >
             <X size={19} />
-          </button>
+          </Button>
         </header>
         {error && (
           <div className="callout warning" role="alert">
@@ -132,7 +143,12 @@ export function TaskDialog({
         }}
       >
         {!task && (
-          <div className="kind-picker" role="group" aria-label="Task type">
+          <RadioGroup
+            className="kind-picker"
+            aria-label="Task type"
+            value={kind}
+            onValueChange={(value) => setKind(value as TaskKind)}
+          >
             {(
               [
                 ['manual', ListChecks, 'Manual step'],
@@ -140,18 +156,12 @@ export function TaskDialog({
                 ['container', Box, 'Container'],
               ] as const
             ).map(([value, Icon, label]) => (
-              <button
-                key={value}
-                type="button"
-                className={kind === value ? 'active' : ''}
-                onClick={() => setKind(value)}
-                aria-pressed={kind === value}
-              >
+              <RadioGroupItem className="size-auto aspect-auto" key={value} value={value}>
                 <Icon size={18} />
                 {label}
-              </button>
+              </RadioGroupItem>
             ))}
-          </div>
+          </RadioGroup>
         )}
         <p className="form-hint">
           {kind === 'container'
@@ -162,7 +172,7 @@ export function TaskDialog({
         </p>
         <label>
           Summary
-          <input
+          <Input
             required
             autoFocus
             placeholder={
@@ -175,7 +185,7 @@ export function TaskDialog({
         </label>
         <label>
           Description <span className="optional">optional</span>
-          <textarea
+          <Textarea
             placeholder="Keep useful context out of your head."
             rows={3}
             value={description}
@@ -224,7 +234,7 @@ export function TaskDialog({
             <label>
               GitHub PR URL
               {kind === 'manual' && <span className="optional">optional</span>}
-              <input
+              <Input
                 type="url"
                 required={kind === 'pr'}
                 placeholder="https://github.com/owner/repo/pull/123"
@@ -269,9 +279,9 @@ export function TaskDialog({
           onDelete={deleteTag}
         />
         <footer>
-          <button className="button" type="button" onClick={close}>
+          <Button className="button" type="button" onClick={close}>
             Cancel
-          </button>
+          </Button>
           <button className="button primary" disabled={busy} type="submit">
             {submitLabel ?? (task ? 'Save changes' : 'Create task')}
             <ArrowRight size={15} />
@@ -320,12 +330,12 @@ export function TagDeleteDialog({
         </div>
       )}
       <footer>
-        <button className="button" onClick={close}>
+        <Button className="button" onClick={close}>
           Keep tag
-        </button>
-        <button className="button danger" disabled={busy} onClick={confirm}>
+        </Button>
+        <Button className="button danger" disabled={busy} onClick={confirm}>
           Delete tag
-        </button>
+        </Button>
       </footer>
     </Dialog>
   );
@@ -361,7 +371,7 @@ export function ReferenceDialog({
       </p>
       <label>
         Find a task
-        <input
+        <Input
           autoFocus
           placeholder="Search by summary..."
           value={query}
@@ -391,10 +401,10 @@ export function ReferenceDialog({
         )}
       </div>
       <footer>
-        <button className="button" onClick={close}>
+        <Button className="button" onClick={close}>
           Cancel
-        </button>
-        <button
+        </Button>
+        <Button
           className="button primary"
           disabled={!chosen || busy}
           onClick={async () => {
@@ -403,7 +413,7 @@ export function ReferenceDialog({
         >
           Link task
           <Link2 size={15} />
-        </button>
+        </Button>
       </footer>
     </Dialog>
   );
@@ -474,12 +484,12 @@ export function DeleteDialog({
         targets are kept.
       </p>
       <footer>
-        <button className="button" onClick={close}>
+        <Button className="button" onClick={close}>
           Keep task
-        </button>
-        <button className="button danger" disabled={busy} onClick={confirm}>
+        </Button>
+        <Button className="button danger" disabled={busy} onClick={confirm}>
           Delete permanently
-        </button>
+        </Button>
       </footer>
     </Dialog>
   );
