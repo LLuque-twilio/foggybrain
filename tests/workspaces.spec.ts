@@ -29,7 +29,7 @@ async function navigation(page: Page) {
       : null;
     if (navigationState !== 'open') {
       await expect(mobileNavigation).toHaveCount(0);
-      await open.click();
+      await open.dispatchEvent('click');
     }
     await mobileNavigation.evaluate(async (element) => {
       await new Promise(requestAnimationFrame);
