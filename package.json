@@ -62,7 +62,7 @@
     "@xyflow/react": "^12.8.4",
     "ajv": "^8.20.0",
     "concurrently": "^10.0.5",
-    "lucide-react": "^0.468.0",
+    "lucide-react": "^1.45.0",
     "prettier": "^3.9.6",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
