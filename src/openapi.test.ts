@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
 import { Ajv2020 } from 'ajv/dist/2020.js';
-import ts from 'typescript';
+import { ts } from 'ts-json-schema-generator';
 import {
   generateOpenApi,
   validateOpenApi,
