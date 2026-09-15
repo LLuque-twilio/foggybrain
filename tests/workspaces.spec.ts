@@ -675,6 +675,8 @@ test('discovery spinners follow each pending request and respect reduced motion'
     await expect(spinner).toBeVisible();
     await expect(spinner).toHaveCSS('animation-name', 'spin');
     await expect(dialog.locator('.field-spinner')).toHaveCount(1);
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await expect(spinner).toHaveCSS('animation-name', 'none');
     const fieldBox = await field.boundingBox();
     const spinnerBox = await spinner.boundingBox();
     expect(fieldBox).not.toBeNull();
@@ -685,8 +687,6 @@ test('discovery spinners follow each pending request and respect reduced motion'
     expect(spinnerBox!.y + spinnerBox!.height).toBeLessThanOrEqual(
       fieldBox!.y + fieldBox!.height + 0.5,
     );
-    await page.emulateMedia({ reducedMotion: 'reduce' });
-    await expect(spinner).toHaveCSS('animation-name', 'none');
     await page.emulateMedia({ reducedMotion: 'no-preference' });
     await expect.poll(() => releases.has(kind)).toBe(true);
     releases.get(kind)!();
