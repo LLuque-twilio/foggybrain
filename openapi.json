@@ -5084,7 +5084,7 @@
         "type": "object",
         "properties": {
           "id": { "type": "string" },
-          "title": { "type": "string", "maxLength": 300 },
+          "title": { "type": "string", "maxLength": 512 },
           "description": { "type": "string", "maxLength": 10000 },
           "kind": { "$ref": "#/components/schemas/TaskKind" },
           "parentId": { "type": ["string", "null"] },
@@ -5126,7 +5126,7 @@
         "type": "object",
         "properties": {
           "id": { "type": "string" },
-          "title": { "type": "string", "maxLength": 300 },
+          "title": { "type": "string", "maxLength": 512 },
           "description": { "type": "string", "maxLength": 10000 },
           "kind": { "$ref": "#/components/schemas/TaskKind" },
           "parentId": { "type": ["string", "null"] },
@@ -5253,7 +5253,7 @@
       "CreateTaskInput": {
         "type": "object",
         "properties": {
-          "title": { "type": "string", "pattern": "\\S", "maxLength": 300 },
+          "title": { "type": "string", "pattern": "\\S", "maxLength": 512 },
           "description": { "type": "string", "maxLength": 10000 },
           "kind": { "$ref": "#/components/schemas/TaskKind" },
           "parentId": { "type": ["string", "null"] },
@@ -5297,7 +5297,7 @@
       "UpdateTaskInput": {
         "type": "object",
         "properties": {
-          "title": { "type": "string", "pattern": "\\S", "maxLength": 300 },
+          "title": { "type": "string", "pattern": "\\S", "maxLength": 512 },
           "description": { "type": "string", "maxLength": 10000 },
           "prUrl": { "type": ["string", "null"] },
           "externalLinks": {
@@ -5410,7 +5410,7 @@
         "type": "object",
         "properties": {
           "id": { "type": "string" },
-          "title": { "type": "string", "maxLength": 300 },
+          "title": { "type": "string", "maxLength": 512 },
           "description": { "type": "string", "maxLength": 10000 },
           "kind": { "$ref": "#/components/schemas/TaskKind" },
           "parentId": { "type": ["string", "null"] },

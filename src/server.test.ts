@@ -1160,7 +1160,7 @@ test('JSON validation rejects coercible booleans, unsupported fields, invalid ty
 
 test('task title and description limits are enforced at the API boundary', async (t) => {
   const { request } = await fixture(t);
-  const title = 't'.repeat(300);
+  const title = 't'.repeat(512);
   const description = 'd'.repeat(10_000);
   const created = await request('/api/tasks', 'POST', {
     title,

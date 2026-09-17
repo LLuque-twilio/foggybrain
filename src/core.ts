@@ -97,7 +97,7 @@ function text(value: unknown, name: string, nonempty = false): string {
     throw new DomainError(`${name} must be ${nonempty ? 'a nonempty' : 'a'} string`);
   }
   const normalized = nonempty ? value.trim() : value;
-  const maxLength = name === 'Title' ? 300 : name === 'Description' ? 10000 : undefined;
+  const maxLength = name === 'Title' ? 512 : name === 'Description' ? 10000 : undefined;
   if (maxLength !== undefined && normalized.length > maxLength)
     throw new DomainError(`${name} must be at most ${maxLength} characters`);
   return normalized;
