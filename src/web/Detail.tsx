@@ -15,20 +15,34 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
-import type { ConnectTaskInput, Snapshot, Tag, TaskView } from '../shared';
+import type {
+  ConnectTaskInput,
+  ExternalLink,
+  GithubPr,
+  GithubStatus,
+  Snapshot,
+  Tag,
+  TaskView,
+  UpdateTaskInput,
+} from '../shared';
 import { Button } from './components/ui/button';
+import { Input } from './components/ui/input';
+import { Textarea } from './components/ui/textarea';
 import { Tooltip, TooltipContent, TooltipTrigger } from './components/ui/tooltip';
 import { Status } from './Status';
 import { PrStatus } from './PrStatus';
 import { StarToggle, TagBadges, TagPicker } from './Tags';
+import { ExternalLinkFields, PrUrlFields, type ExternalLinkDraft } from './TaskFields';
 
 export function Detail({
   task,
   snapshot,
   viewId,
+  prs,
+  github,
   busy,
   close,
-  edit,
+  update,
   open,
   done,
   remove,
@@ -43,9 +57,11 @@ export function Detail({
   task: TaskView;
   snapshot: Snapshot;
   viewId: string;
+  prs: GithubPr[];
+  github: GithubStatus | null;
   busy: boolean;
   close: () => void;
-  edit: () => void;
+  update: (input: UpdateTaskInput) => Promise<boolean>;
   open: (id: string) => void;
   done: () => void;
   remove: () => void;
@@ -58,6 +74,11 @@ export function Detail({
   deleteTag: (tag: Tag) => void;
 }) {
   const [copied, setCopied] = useState(false);
+  const [editing, setEditing] = useState<'title' | 'description' | 'links' | 'pr' | null>(null);
+  const [title, setTitle] = useState(task.title);
+  const [description, setDescription] = useState(task.description);
+  const [externalLinkDrafts, setExternalLinkDrafts] = useState<ExternalLinkDraft[]>([]);
+  const [prUrl, setPrUrl] = useState(task.prUrl ?? '');
   const incoming = snapshot.dependencies.filter((edge) => edge.dependentId === task.id);
   const outgoing = snapshot.dependencies.filter((edge) => edge.prerequisiteId === task.id);
   const reference = snapshot.references.find(
@@ -65,6 +86,13 @@ export function Detail({
   );
   const memberships = snapshot.references.filter((ref) => ref.taskId === task.id);
   const externalLinks = task.externalLinks ?? [];
+  const beginExternalLinkEdit = (add: boolean) => {
+    setExternalLinkDrafts([
+      ...externalLinks.map((link) => ({ ...link, inferType: false })),
+      ...(add ? [{ url: '', label: '', type: 'generic' as const, inferType: true }] : []),
+    ]);
+    setEditing('links');
+  };
   return (
     <aside className="detail-panel" aria-label="Task details">
       <div className="detail-top">
@@ -88,13 +116,54 @@ export function Detail({
         </div>
       </div>
       <Status status={task.status} />
-      <h2>{task.title}</h2>
+      {editing === 'title' ? (
+        <form
+          className="detail-editor detail-title-editor"
+          onSubmit={async (event) => {
+            event.preventDefault();
+            if (await update({ title })) setEditing(null);
+          }}
+        >
+          <label>
+            Task title
+            <Input
+              required
+              autoFocus
+              maxLength={300}
+              value={title}
+              onChange={(event) => setTitle(event.target.value)}
+            />
+          </label>
+          <div className="detail-editor-actions">
+            <Button type="button" className="button" onClick={() => setEditing(null)}>
+              Cancel
+            </Button>
+            <Button type="submit" variant="primary" className="button primary" disabled={busy}>
+              Save title
+            </Button>
+          </div>
+        </form>
+      ) : (
+        <div className="detail-title-row">
+          <h2>{task.title}</h2>
+          {editing === null && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="icon-button detail-edit-button"
+              aria-label="Edit title"
+              onClick={() => {
+                setTitle(task.title);
+                setEditing('title');
+              }}
+            >
+              <Pencil size={13} />
+            </Button>
+          )}
+        </div>
+      )}
       <TagBadges tags={snapshot.tags} tagIds={task.tagIds} />
       <div className="detail-actions">
-        <Button variant="link" size="sm" className="text-button" onClick={edit}>
-          <Pencil size={13} />
-          Edit task
-        </Button>
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
@@ -118,10 +187,55 @@ export function Detail({
         </Tooltip>
       </div>
       <section className="detail-section detail-about">
-        <h3>About</h3>
-        <p className="description">
-          {task.description || 'No description. Add a little context with Edit task.'}
-        </p>
+        <div className="detail-section-heading">
+          <h3>About</h3>
+          {editing === null && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="icon-button detail-edit-button"
+              aria-label={task.description ? 'Edit description' : 'Add description'}
+              onClick={() => {
+                setDescription(task.description);
+                setEditing('description');
+              }}
+            >
+              {task.description ? <Pencil size={13} /> : <Plus size={14} />}
+            </Button>
+          )}
+        </div>
+        {editing === 'description' ? (
+          <form
+            className="detail-editor"
+            onSubmit={async (event) => {
+              event.preventDefault();
+              if (await update({ description })) setEditing(null);
+            }}
+          >
+            <label>
+              Description
+              <Textarea
+                autoFocus
+                rows={4}
+                placeholder="Keep useful context out of your head."
+                value={description}
+                onChange={(event) => setDescription(event.target.value)}
+              />
+            </label>
+            <div className="detail-editor-actions">
+              <Button type="button" className="button" onClick={() => setEditing(null)}>
+                Cancel
+              </Button>
+              <Button type="submit" variant="primary" className="button primary" disabled={busy}>
+                Save description
+              </Button>
+            </div>
+          </form>
+        ) : (
+          <p className="description">
+            {task.description || 'No description yet. Add a little context when it helps.'}
+          </p>
+        )}
         <div className="detail-tags">
           <h4>Tags</h4>
           <TagPicker
@@ -136,12 +250,48 @@ export function Detail({
           />
         </div>
       </section>
-      {externalLinks.length > 0 && (
-        <section className="detail-section external-links">
+      <section className="detail-section external-links">
+        <div className="detail-section-heading">
           <h3>
             External resources <span>{externalLinks.length}</span>
           </h3>
-          {externalLinks.map((link) => {
+          {editing === null && externalLinks.length > 0 && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="icon-button detail-edit-button"
+              aria-label="Edit external resources"
+              onClick={() => beginExternalLinkEdit(false)}
+            >
+              <Pencil size={13} />
+            </Button>
+          )}
+        </div>
+        {editing === 'links' ? (
+          <form
+            className="detail-editor external-links-editor"
+            onSubmit={async (event) => {
+              event.preventDefault();
+              const links = externalLinkDrafts.map(({ inferType: _, ...link }) => link);
+              if (await update({ externalLinks: links as ExternalLink[] })) setEditing(null);
+            }}
+          >
+            <div className="external-links-heading">
+              <p>Add supporting tickets, documents, and reference material.</p>
+              <span>{externalLinkDrafts.length} / 5</span>
+            </div>
+            <ExternalLinkFields links={externalLinkDrafts} setLinks={setExternalLinkDrafts} />
+            <div className="detail-editor-actions">
+              <Button type="button" className="button" onClick={() => setEditing(null)}>
+                Cancel
+              </Button>
+              <Button type="submit" variant="primary" className="button primary" disabled={busy}>
+                Save resources
+              </Button>
+            </div>
+          </form>
+        ) : externalLinks.length > 0 ? (
+          externalLinks.map((link) => {
             const Icon =
               link.type === 'github'
                 ? GitBranch
@@ -170,9 +320,23 @@ export function Detail({
                 <ArrowUpRight size={13} />
               </a>
             );
-          })}
-        </section>
-      )}
+          })
+        ) : (
+          <>
+            <p className="form-hint">No external resources yet.</p>
+            {editing === null && (
+              <Button
+                className="button full"
+                disabled={busy}
+                onClick={() => beginExternalLinkEdit(true)}
+              >
+                <Plus size={15} />
+                Add external resource
+              </Button>
+            )}
+          </>
+        )}
+      </section>
       <section className="detail-section detail-progress">
         <h3>Progress</h3>
         {task.status === 'ready' && (
@@ -210,7 +374,31 @@ export function Detail({
             </p>
           </>
         )}
-        {task.prUrl && (
+        {editing === 'pr' ? (
+          <form
+            className="detail-editor detail-pr-editor"
+            onSubmit={async (event) => {
+              event.preventDefault();
+              if (await update({ prUrl: prUrl.trim() || null })) setEditing(null);
+            }}
+          >
+            <PrUrlFields
+              kind={task.kind as 'manual' | 'pr'}
+              url={prUrl}
+              setUrl={setPrUrl}
+              prs={prs}
+              github={github}
+            />
+            <div className="detail-editor-actions">
+              <Button type="button" className="button" onClick={() => setEditing(null)}>
+                Cancel
+              </Button>
+              <Button type="submit" variant="primary" className="button primary" disabled={busy}>
+                Save PR gate
+              </Button>
+            </div>
+          </form>
+        ) : task.prUrl ? (
           <div className="pr-detail">
             {task.kind === 'manual' && (
               <p className="form-hint">
@@ -233,8 +421,34 @@ export function Detail({
             {task.prError && (
               <div className="callout warning">{task.prError} Last verified state is retained.</div>
             )}
+            {editing === null && (
+              <Button
+                variant="link"
+                size="sm"
+                className="text-button"
+                onClick={() => {
+                  setPrUrl(task.prUrl ?? '');
+                  setEditing('pr');
+                }}
+              >
+                <Pencil size={13} />
+                Edit PR gate
+              </Button>
+            )}
           </div>
-        )}
+        ) : task.kind === 'manual' && editing === null ? (
+          <Button
+            className="button full"
+            disabled={busy}
+            onClick={() => {
+              setPrUrl('');
+              setEditing('pr');
+            }}
+          >
+            <Plus size={15} />
+            Add PR gate
+          </Button>
+        ) : null}
       </section>
       <section className="detail-section">
         <h3>

@@ -76,7 +76,6 @@ export function DependencyDialog({
           setCreating(false);
         }}
         submit={async (input) => {
-          if (!('kind' in input)) return false;
           const success = await submit({ ...connection, task: input });
           if (success) close();
           return success;

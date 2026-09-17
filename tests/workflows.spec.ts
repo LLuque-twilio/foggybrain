@@ -29,7 +29,7 @@ test.beforeEach(async ({ request }) => {
   ).toBeTruthy();
 });
 
-test('create/edit through UI, keyboard dialog, local assets, and responsive shell', async ({
+test('create and inline edit through UI, keyboard sheet, local assets, and responsive shell', async ({
   context,
   page,
 }) => {
@@ -66,20 +66,26 @@ test('create/edit through UI, keyboard dialog, local assets, and responsive shel
     page.locator('.node-title').filter({ hasText: 'Implement the change' }),
   ).toBeVisible();
   await expect(page.getByRole('complementary', { name: 'Task details' })).toBeVisible();
-  await page.getByRole('button', { name: 'Edit task', exact: true }).click();
-  await dialog.getByLabel('Summary').fill('Implement API v2');
-  await dialog.getByRole('button', { name: 'Save changes' }).click();
+  await page.getByRole('button', { name: 'Edit title' }).click();
+  await page.getByLabel('Task title').fill('Implement API v2');
+  await page.getByRole('button', { name: 'Save title' }).click();
   await expect(page.locator('.node-title')).toHaveText('Implement API v2');
   await page.getByRole('button', { name: 'Mark own work done' }).click();
   await expect(page.locator('.graph-title .status')).toHaveText('Completed');
   await page.getByRole('button', { name: 'Close task details' }).click();
   await page.getByRole('button', { name: 'Edit container' }).click();
+  await expect(page.getByRole('complementary', { name: 'Task details' })).toBeVisible();
   await page.keyboard.press('Escape');
-  await expect(dialog).not.toBeVisible();
+  await expect(page.getByRole('complementary', { name: 'Task details' })).not.toBeVisible();
   expect(
     await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
   ).toBeTruthy();
   await page.screenshot({ path: test.info().outputPath('graph.png'), fullPage: true });
+  await page.getByRole('button', { name: 'Back to Overview', exact: true }).click();
+  await page.getByRole('button', { name: 'Edit Ship to stage' }).click();
+  await expect(page.getByRole('complementary', { name: 'Task details' })).toContainText(
+    'Ship to stage',
+  );
   expect(errors).toEqual([]);
   expect(remote).toEqual([]);
 });
@@ -131,23 +137,21 @@ test('external resources infer editable types and appear in task details', async
   await page.goto('/#/map');
   await node(page, task.id).click();
   const detail = page.getByRole('complementary', { name: 'Task details' });
-  await detail.getByRole('button', { name: 'Edit task', exact: true }).click();
-  const dialog = page.getByRole('dialog', { name: 'Edit task' });
-  await dialog.getByRole('button', { name: 'Add external resource' }).click();
-  await dialog.getByLabel('Resource 1 URL').fill('https://github.com/acme/app/issues/42');
-  await dialog.getByLabel('Resource 1 label').fill('Tracking ticket');
-  await expect(dialog.getByRole('combobox', { name: 'Resource 1 type' })).toHaveValue('GitHub');
-  await dialog.getByRole('combobox', { name: 'Resource 1 type' }).fill('Jira');
-  await dialog.getByRole('combobox', { name: 'Resource 1 type' }).press('ArrowDown');
-  await dialog.getByRole('combobox', { name: 'Resource 1 type' }).press('Enter');
-  await dialog.getByRole('button', { name: 'Add external resource' }).click();
-  await dialog.getByLabel('Resource 2 URL').fill('https://docs.google.com/document/d/design');
-  await expect(dialog.getByRole('combobox', { name: 'Resource 2 type' })).toHaveValue('Google Doc');
+  await detail.getByRole('button', { name: 'Add external resource' }).click();
+  await detail.getByLabel('Resource 1 URL').fill('https://github.com/acme/app/issues/42');
+  await detail.getByLabel('Resource 1 label').fill('Tracking ticket');
+  await expect(detail.getByRole('combobox', { name: 'Resource 1 type' })).toHaveValue('GitHub');
+  await detail.getByRole('combobox', { name: 'Resource 1 type' }).fill('Jira');
+  await detail.getByRole('combobox', { name: 'Resource 1 type' }).press('ArrowDown');
+  await detail.getByRole('combobox', { name: 'Resource 1 type' }).press('Enter');
+  await detail.getByRole('button', { name: 'Add external resource' }).click();
+  await detail.getByLabel('Resource 2 URL').fill('https://docs.google.com/document/d/design');
+  await expect(detail.getByRole('combobox', { name: 'Resource 2 type' })).toHaveValue('Google Doc');
   const saved = page.waitForResponse(
     (response) =>
       response.url().endsWith(`/tasks/${task.id}`) && response.request().method() === 'PATCH',
   );
-  await dialog.getByRole('button', { name: 'Save changes' }).click();
+  await detail.getByRole('button', { name: 'Save resources' }).click();
   expect((await saved).request().postDataJSON().externalLinks).toEqual([
     {
       url: 'https://github.com/acme/app/issues/42',
@@ -162,10 +166,9 @@ test('external resources infer editable types and appear in task details', async
   ]);
   await expect(detail.getByRole('link', { name: /Tracking ticket Jira/ })).toBeVisible();
   await expect(detail.getByRole('link', { name: /docs.google.com Google Doc/ })).toBeVisible();
-  await detail.getByRole('button', { name: 'Edit task', exact: true }).click();
-  const reopened = page.getByRole('dialog', { name: 'Edit task' });
-  await reopened.getByLabel('Resource 1 URL').fill('https://github.com/acme/app/issues/43');
-  await expect(reopened.getByRole('combobox', { name: 'Resource 1 type' })).toHaveValue('Jira');
+  await detail.getByRole('button', { name: 'Edit external resources' }).click();
+  await detail.getByLabel('Resource 1 URL').fill('https://github.com/acme/app/issues/43');
+  await expect(detail.getByRole('combobox', { name: 'Resource 1 type' })).toHaveValue('Jira');
 });
 
 test('legacy task payloads without externalLinks remain selectable and editable', async ({
@@ -183,8 +186,9 @@ test('legacy task payloads without externalLinks remain selectable and editable'
   await node(page, task.id).click();
   const detail = page.getByRole('complementary', { name: 'Task details' });
   await expect(detail.getByRole('heading', { name: task.title })).toBeVisible();
-  await detail.getByRole('button', { name: 'Edit task', exact: true }).click();
-  await expect(page.getByRole('dialog', { name: 'Edit task' })).toBeVisible();
+  await expect(detail.getByRole('button', { name: 'Add external resource' })).toBeVisible();
+  await detail.getByRole('button', { name: 'Edit title' }).click();
+  await expect(detail.getByLabel('Task title')).toHaveValue(task.title);
 });
 
 test('root render failures show recovery UI instead of blanking the app', async ({
@@ -697,7 +701,7 @@ test('list constrains long task copy and opens details without resizing columns'
   await expect(page.getByRole('complementary', { name: 'Task details' })).toHaveCount(0);
 });
 
-test('tag picker creates, caps, renames, previews deletion, and replaces dialog tags', async ({
+test('tag picker creates, caps, renames, previews deletion, and removes tags', async ({
   request,
   page,
 }) => {
@@ -705,6 +709,10 @@ test('tag picker creates, caps, renames, previews deletion, and replaces dialog 
   await page.goto('/#/list');
   await page.locator('.task-list-row').filter({ hasText: task.title }).click();
   const detail = page.getByRole('complementary', { name: 'Task details' });
+  await detail.getByRole('button', { name: 'Add description' }).click();
+  await detail.getByLabel('Description').fill('Release organization notes');
+  await detail.getByRole('button', { name: 'Save description' }).click();
+  await expect(detail.getByText('Release organization notes')).toBeVisible();
   const tagSearch = page.getByRole('combobox', { name: 'Find or create a tag' });
   await detail.getByText('Add tag', { exact: true }).click();
   await expect(tagSearch).toBeVisible();
@@ -746,16 +754,13 @@ test('tag picker creates, caps, renames, previews deletion, and replaces dialog 
   await expect(deleteDialog).not.toBeVisible();
   await expect(detail.getByText('Deep focus', { exact: true })).toHaveCount(0);
 
-  await detail.getByRole('button', { name: 'Edit task', exact: true }).click();
-  const editDialog = page.getByRole('dialog', { name: 'Edit task' });
-  await editDialog.getByRole('button', { name: 'Remove tag Plan' }).click();
-  const replaced = page.waitForResponse(
+  const removed = page.waitForResponse(
     (response) =>
-      response.url().endsWith(`/tasks/${task.id}/tags`) && response.request().method() === 'PUT',
+      response.url().includes(`/tasks/${task.id}/tags/`) &&
+      response.request().method() === 'DELETE',
   );
-  await editDialog.getByRole('button', { name: 'Save changes' }).click();
-  const replacement = (await replaced).request().postDataJSON() as { tagIds: string[] };
-  expect(replacement.tagIds).toHaveLength(1);
+  await detail.getByRole('button', { name: 'Remove tag Plan' }).click();
+  await removed;
   await expect(detail.getByRole('button', { name: 'Remove tag Plan' })).toHaveCount(0);
   await expect(detail.getByRole('button', { name: 'Remove tag Later' })).toBeVisible();
 });
@@ -908,11 +913,13 @@ for (const kind of ['manual', 'pr'] as const) {
       prUrl: prs[1].url,
       ownSatisfied: false,
     });
-    await page.getByRole('button', { name: 'Edit task', exact: true }).click();
-    await expect(picker).toHaveValue(prs[1].url);
-    await dialog.getByLabel('GitHub PR URL').fill('https://github.com/example/other/pull/7');
-    await expect(picker).toHaveValue('');
-    await dialog.getByRole('button', { name: 'Save changes' }).click();
+    const detail = page.getByRole('complementary', { name: 'Task details' });
+    await detail.getByRole('button', { name: 'Edit PR gate' }).click();
+    const detailPicker = detail.getByLabel('Your open pull requests');
+    await expect(detailPicker).toHaveValue(prs[1].url);
+    await detail.getByLabel('GitHub PR URL').fill('https://github.com/example/other/pull/7');
+    await expect(detailPicker).toHaveValue('');
+    await detail.getByRole('button', { name: 'Save PR gate' }).click();
     await expect(page.getByRole('link', { name: 'View PR on GitHub' })).toHaveAttribute(
       'href',
       'https://github.com/example/other/pull/7',
@@ -951,29 +958,29 @@ test('manual PR gate can be created, changed, removed, and added without losing 
   await expect(card.locator('.node-manual-work')).toHaveText('Manual work done');
   await expect(card.locator('.status')).toHaveText('Available');
   await expect(detail.getByRole('button', { name: 'Reopen own work' })).toBeVisible();
-  await detail.getByRole('button', { name: 'Edit task', exact: true }).click();
-  await dialog.getByLabel('GitHub PR URL').fill('https://github.com/example/api/pull/43');
-  await dialog.getByRole('button', { name: 'Save changes' }).click();
+  await detail.getByRole('button', { name: 'Edit PR gate' }).click();
+  await detail.getByLabel('GitHub PR URL').fill('https://github.com/example/api/pull/43');
+  await detail.getByRole('button', { name: 'Save PR gate' }).click();
   await expect(detail.getByRole('link', { name: 'View PR on GitHub' })).toHaveAttribute(
     'href',
     'https://github.com/example/api/pull/43',
   );
-  await detail.getByRole('button', { name: 'Edit task', exact: true }).click();
-  await dialog.getByLabel('GitHub PR URL').fill('');
+  await detail.getByRole('button', { name: 'Edit PR gate' }).click();
+  await detail.getByLabel('GitHub PR URL').fill('');
   const removed = page.waitForResponse(
     (response) =>
       response.url().endsWith(`/tasks/${task.id}`) && response.request().method() === 'PATCH',
   );
-  await dialog.getByRole('button', { name: 'Save changes' }).click();
+  await detail.getByRole('button', { name: 'Save PR gate' }).click();
   expect((await removed).request().postDataJSON()).toMatchObject({ prUrl: null });
   await expect(card.locator('.node-pr-gate')).toHaveCount(0);
   await expect(card.getByRole('link')).toHaveCount(0);
   await expect(detail.locator('.pr-detail')).toHaveCount(0);
   await expect(card.locator('.status')).toHaveText('Completed');
   await expect(card.locator('.node-manual-work')).toHaveText('Manual work done');
-  await detail.getByRole('button', { name: 'Edit task', exact: true }).click();
-  await dialog.getByLabel('GitHub PR URL').fill('https://github.com/example/api/pull/44');
-  await dialog.getByRole('button', { name: 'Save changes' }).click();
+  await detail.getByRole('button', { name: 'Add PR gate' }).click();
+  await detail.getByLabel('GitHub PR URL').fill('https://github.com/example/api/pull/44');
+  await detail.getByRole('button', { name: 'Save PR gate' }).click();
   await expect(card.locator('.status')).toHaveText('Available');
   await expect(card.locator('.node-pr-gate .pr-status')).toHaveText('Not checked');
   await detail.getByRole('button', { name: 'Reopen own work' }).click();

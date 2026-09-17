@@ -61,7 +61,6 @@ import { Sheet, SheetContent, SheetTitle } from './components/ui/sheet';
 
 type Modal =
   | { type: 'create'; parentId?: string | null; prUrl?: string }
-  | { type: 'edit'; task: TaskView }
   | { type: 'dependency'; task: TaskView; direction: ConnectTaskInput['direction'] }
   | { type: 'reference'; containerId: string }
   | { type: 'delete'; task: TaskView; preview: DeletionPreview }
@@ -253,6 +252,12 @@ export function WorkspaceApp({
       setSelectedId(id);
     }
   };
+  const inspect = (id: string) => {
+    const task = snapshot.tasks.find((task) => task.id === id);
+    if (!task) return;
+    open(id);
+    setSelectedId(id);
+  };
   const currentId = path.startsWith('/tasks/') ? path.slice('/tasks/'.length) : null;
   const current = snapshot.tasks.find((task) => task.id === currentId);
   const backPath = previousPath ?? (current?.parentId ? `/tasks/${current.parentId}` : '/');
@@ -280,7 +285,8 @@ export function WorkspaceApp({
     isList
       ? task.id === selectedId
       : task.id === selectedId &&
-        (viewId === 'root' ? task.parentId === null : current?.childrenIds.includes(task.id)),
+        (task.id === currentId ||
+          (viewId === 'root' ? task.parentId === null : current?.childrenIds.includes(task.id))),
   );
   const edge = snapshot.dependencies.find((edge) => edge.id === edgeId);
   const roots = snapshot.tasks.filter((task) => task.parentId === null);
@@ -299,24 +305,12 @@ export function WorkspaceApp({
       task.description.toLowerCase().includes(query.toLowerCase()),
   );
 
-  async function saveTask(
-    input: CreateTaskInput | UpdateTaskInput,
-    id?: string,
-    customTagIds?: string[],
-  ) {
+  async function createTask(input: CreateTaskInput) {
     let created: TaskView | undefined;
     const success = await run(async () => {
-      created = await api<TaskView>(id ? `/tasks/${id}` : '/tasks', id ? 'PATCH' : 'POST', input);
-      const previous = id
-        ? snapshot.tasks
-            .find((task) => task.id === id)
-            ?.tagIds.filter((tagId) => tagId !== 'favorites')
-        : undefined;
-      if (id && customTagIds && JSON.stringify(previous) !== JSON.stringify(customTagIds)) {
-        created = await api<TaskView>(`/tasks/${id}/tags`, 'PUT', { tagIds: customTagIds });
-      }
+      created = await api<TaskView>('/tasks', 'POST', input);
     });
-    if (success && created && !id) {
+    if (success && created) {
       if (created.parentId) {
         navigate(`/tasks/${created.parentId}`);
         setSelectedId(created.id);
@@ -327,6 +321,10 @@ export function WorkspaceApp({
       }
     }
     return success;
+  }
+
+  function updateTask(id: string, input: UpdateTaskInput) {
+    return run(() => api<TaskView>(`/tasks/${id}`, 'PATCH', input));
   }
 
   async function createTag(name: string, color: string) {
@@ -602,9 +600,11 @@ export function WorkspaceApp({
                 task={task}
                 snapshot={snapshot}
                 viewId="list"
+                prs={prs}
+                github={github}
                 busy={busy}
                 close={() => setSelectedId(null)}
-                edit={() => setModal({ type: 'edit', task })}
+                update={(input) => updateTask(task.id, input)}
                 open={open}
                 done={() =>
                   void run(() => api(`/tasks/${task.id}/done`, 'POST', { done: !task.manualDone }))
@@ -682,7 +682,7 @@ export function WorkspaceApp({
                       <button
                         className="icon-button"
                         aria-label="Edit container"
-                        onClick={() => setModal({ type: 'edit', task: current })}
+                        onClick={() => setSelectedId(current.id)}
                       >
                         <Pencil size={17} />
                       </button>
@@ -844,10 +844,12 @@ export function WorkspaceApp({
                     key={selected.id}
                     task={selected}
                     snapshot={snapshot}
-                    viewId={viewId}
+                    viewId={selected.id === currentId ? (selected.parentId ?? 'root') : viewId}
+                    prs={prs}
+                    github={github}
                     busy={busy}
                     close={() => setSelectedId(null)}
-                    edit={() => setModal({ type: 'edit', task: selected })}
+                    update={(input) => updateTask(selected.id, input)}
                     open={open}
                     done={() =>
                       void run(() =>
@@ -1110,7 +1112,7 @@ export function WorkspaceApp({
                         <button
                           className="icon-button"
                           aria-label={`Edit ${task.title}`}
-                          onClick={() => setModal({ type: 'edit', task })}
+                          onClick={() => inspect(task.id)}
                         >
                           <Pencil size={14} />
                         </button>
@@ -1235,21 +1237,7 @@ export function WorkspaceApp({
             prs={prs}
             github={github}
             close={() => setModal(null)}
-            submit={saveTask}
-            busy={busy}
-            createTag={createTag}
-            renameTag={renameTag}
-            deleteTag={previewTagDelete}
-          />
-        )}
-        {modal?.type === 'edit' && (
-          <TaskDialog
-            task={modal.task}
-            snapshot={snapshot}
-            prs={prs}
-            github={github}
-            close={() => setModal(null)}
-            submit={saveTask}
+            submit={createTask}
             busy={busy}
             createTag={createTag}
             renameTag={renameTag}

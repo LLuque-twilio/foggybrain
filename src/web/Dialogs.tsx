@@ -1,27 +1,14 @@
 import { createContext, useContext, useState, type ReactNode } from 'react';
-import {
-  AlertTriangle,
-  ArrowRight,
-  Box,
-  GitPullRequest,
-  Link2,
-  ListChecks,
-  Plus,
-  Trash2,
-  X,
-} from 'lucide-react';
+import { AlertTriangle, ArrowRight, Box, GitPullRequest, Link2, ListChecks, X } from 'lucide-react';
 import { Dialog as DialogPrimitive, DialogContent, DialogTitle } from './components/ui/dialog';
-import { inferExternalLinkType } from '../external-links';
 import { Button } from './components/ui/button';
 import { Input } from './components/ui/input';
 import { RadioGroup, RadioGroupItem } from './components/ui/radio-group';
 import { Textarea } from './components/ui/textarea';
-import { LoadingField } from './LoadingField';
-import { SearchableSelect } from './SearchableSelect';
+import { ExternalLinkFields, PrUrlFields, type ExternalLinkDraft } from './TaskFields';
 import { TagPicker } from './Tags';
 import {
   type ExternalLink,
-  type ExternalLinkType,
   type CreateTaskInput,
   type DeletionPreview,
   type GithubPr,
@@ -30,20 +17,7 @@ import {
   type Tag,
   type TaskKind,
   type TaskView,
-  type UpdateTaskInput,
 } from '../shared';
-
-const externalLinkTypes: { value: ExternalLinkType; label: string }[] = [
-  { value: 'github', label: 'GitHub' },
-  { value: 'jira', label: 'Jira' },
-  { value: 'google-doc', label: 'Google Doc' },
-  { value: 'generic', label: 'Generic' },
-];
-
-type ExternalLinkDraft = Omit<ExternalLink, 'type'> & {
-  type: ExternalLinkType | '';
-  inferType: boolean;
-};
 
 export const DialogErrorContext = createContext('');
 
@@ -96,7 +70,6 @@ export function Dialog({
 }
 
 export function TaskDialog({
-  task,
   parentId,
   prUrl,
   snapshot,
@@ -112,18 +85,13 @@ export function TaskDialog({
   renameTag,
   deleteTag,
 }: {
-  task?: TaskView;
   parentId?: string | null;
   prUrl?: string;
   snapshot: Snapshot;
   prs: GithubPr[];
   github: GithubStatus | null;
   close: () => void;
-  submit: (
-    input: CreateTaskInput | UpdateTaskInput,
-    id?: string,
-    customTagIds?: string[],
-  ) => Promise<boolean>;
+  submit: (input: CreateTaskInput) => Promise<boolean>;
   busy: boolean;
   dialogTitle?: string;
   submitLabel?: string;
@@ -133,24 +101,16 @@ export function TaskDialog({
   deleteTag: (tag: Tag) => void;
 }) {
   const [kind, setKind] = useState<TaskKind>(
-    task?.kind ?? initialKind ?? (prUrl !== undefined ? 'pr' : parentId ? 'manual' : 'container'),
+    initialKind ?? (prUrl !== undefined ? 'pr' : parentId ? 'manual' : 'container'),
   );
-  const [title, setTitle] = useState(
-    task?.title ?? (prUrl ? `Merge PR #${prUrl.split('/').pop()}` : ''),
-  );
-  const [description, setDescription] = useState(task?.description ?? '');
-  const [url, setUrl] = useState(task?.prUrl ?? prUrl ?? '');
-  const [externalLinks, setExternalLinks] = useState<ExternalLinkDraft[]>(
-    task?.externalLinks?.map((link) => ({ ...link, inferType: false })) ?? [],
-  );
+  const [title, setTitle] = useState(prUrl ? `Merge PR #${prUrl.split('/').pop()}` : '');
+  const [description, setDescription] = useState('');
+  const [url, setUrl] = useState(prUrl ?? '');
+  const [externalLinks, setExternalLinks] = useState<ExternalLinkDraft[]>([]);
   const [parent, setParent] = useState(parentId ?? '');
-  const [tagIds, setTagIds] = useState(task?.tagIds.filter((id) => id !== 'favorites') ?? []);
-  const githubLoading = !github || github.syncing;
+  const [tagIds, setTagIds] = useState<string[]>([]);
   return (
-    <Dialog
-      title={dialogTitle ?? (task ? 'Edit task' : parentId ? 'Add a step' : 'Make a little space')}
-      close={close}
-    >
+    <Dialog title={dialogTitle ?? (parentId ? 'Add a step' : 'Make a little space')} close={close}>
       <form
         onSubmit={async (event) => {
           event.preventDefault();
@@ -158,9 +118,7 @@ export function TaskDialog({
           const input = {
             title,
             description,
-            ...(externalLinks.length ||
-            (task &&
-              JSON.stringify(submittedExternalLinks) !== JSON.stringify(task.externalLinks ?? []))
+            ...(externalLinks.length
               ? { externalLinks: submittedExternalLinks as ExternalLink[] }
               : {}),
             ...(kind === 'pr'
@@ -168,51 +126,49 @@ export function TaskDialog({
               : kind === 'manual'
                 ? url.trim()
                   ? { prUrl: url }
-                  : task
-                    ? { prUrl: null }
-                    : {}
+                  : {}
                 : {}),
-            ...(!task ? { kind, parentId: parent || null, tagIds } : {}),
+            kind,
+            parentId: parent || null,
+            tagIds,
           };
-          if (await submit(input as CreateTaskInput | UpdateTaskInput, task?.id, tagIds)) close();
+          if (await submit(input as CreateTaskInput)) close();
         }}
       >
-        {!task && (
-          <section className="task-form-section task-type-section">
-            <div className="task-form-section-heading">
-              <div>
-                <h3>Choose a task type</h3>
-                <p>Set how this work reaches completion.</p>
-              </div>
+        <section className="task-form-section task-type-section">
+          <div className="task-form-section-heading">
+            <div>
+              <h3>Choose a task type</h3>
+              <p>Set how this work reaches completion.</p>
             </div>
-            <RadioGroup
-              className="kind-picker"
-              aria-label="Task type"
-              value={kind}
-              onValueChange={(value) => setKind(value as TaskKind)}
-            >
-              {(
-                [
-                  ['manual', ListChecks, 'Manual step'],
-                  ['pr', GitPullRequest, 'PR merge'],
-                  ['container', Box, 'Container'],
-                ] as const
-              ).map(([value, Icon, label]) => (
-                <RadioGroupItem className="size-auto aspect-auto" key={value} value={value}>
-                  <Icon size={18} />
-                  {label}
-                </RadioGroupItem>
-              ))}
-            </RadioGroup>
-            <p className="form-hint task-type-hint">
-              {kind === 'container'
-                ? 'A home for connected chains, independent steps, and other task graphs.'
-                : kind === 'pr'
-                  ? 'An automatic gate. This step is satisfied when GitHub confirms the PR is merged.'
-                  : 'A step you mark done yourself, even before its prerequisites finish.'}
-            </p>
-          </section>
-        )}
+          </div>
+          <RadioGroup
+            className="kind-picker"
+            aria-label="Task type"
+            value={kind}
+            onValueChange={(value) => setKind(value as TaskKind)}
+          >
+            {(
+              [
+                ['manual', ListChecks, 'Manual step'],
+                ['pr', GitPullRequest, 'PR merge'],
+                ['container', Box, 'Container'],
+              ] as const
+            ).map(([value, Icon, label]) => (
+              <RadioGroupItem className="size-auto aspect-auto" key={value} value={value}>
+                <Icon size={18} />
+                {label}
+              </RadioGroupItem>
+            ))}
+          </RadioGroup>
+          <p className="form-hint task-type-hint">
+            {kind === 'container'
+              ? 'A home for connected chains, independent steps, and other task graphs.'
+              : kind === 'pr'
+                ? 'An automatic gate. This step is satisfied when GitHub confirms the PR is merged.'
+                : 'A step you mark done yourself, even before its prerequisites finish.'}
+          </p>
+        </section>
         <section className="task-form-section">
           <div className="task-form-section-heading">
             <div>
@@ -251,96 +207,7 @@ export function TaskDialog({
             </div>
             <span>{externalLinks.length} / 5</span>
           </div>
-          {externalLinks.map((link, index) => (
-            <div className="external-link-editor" key={index}>
-              <div className="external-link-editor-heading">
-                <strong>Resource {index + 1}</strong>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="icon-button"
-                  aria-label={`Remove resource ${index + 1}`}
-                  onClick={() =>
-                    setExternalLinks((current) => current.filter((_, item) => item !== index))
-                  }
-                >
-                  <Trash2 size={14} />
-                </Button>
-              </div>
-              <label>
-                URL
-                <Input
-                  type="url"
-                  required
-                  maxLength={2048}
-                  aria-label={`Resource ${index + 1} URL`}
-                  placeholder="https://..."
-                  value={link.url}
-                  onChange={(event) => {
-                    const nextUrl = event.target.value;
-                    setExternalLinks((current) =>
-                      current.map((item, itemIndex) =>
-                        itemIndex === index
-                          ? {
-                              ...item,
-                              url: nextUrl,
-                              type: item.inferType ? inferExternalLinkType(nextUrl) : item.type,
-                            }
-                          : item,
-                      ),
-                    );
-                  }}
-                />
-              </label>
-              <label>
-                Label <span className="optional">optional</span>
-                <Input
-                  maxLength={100}
-                  aria-label={`Resource ${index + 1} label`}
-                  placeholder="e.g. Design document"
-                  value={link.label}
-                  onChange={(event) =>
-                    setExternalLinks((current) =>
-                      current.map((item, itemIndex) =>
-                        itemIndex === index ? { ...item, label: event.target.value } : item,
-                      ),
-                    )
-                  }
-                />
-              </label>
-              <SearchableSelect
-                label={`Resource ${index + 1} type`}
-                options={externalLinkTypes}
-                value={link.type}
-                required
-                onChange={(type) =>
-                  setExternalLinks((current) =>
-                    current.map((item, itemIndex) =>
-                      itemIndex === index
-                        ? { ...item, type: type as ExternalLinkType | '', inferType: false }
-                        : item,
-                    ),
-                  )
-                }
-              />
-            </div>
-          ))}
-          {externalLinks.length < 5 && (
-            <Button
-              type="button"
-              className="button full add-external-link"
-              onClick={() =>
-                setExternalLinks((current) => [
-                  ...current,
-                  { url: '', label: '', type: 'generic', inferType: true },
-                ])
-              }
-            >
-              <Plus size={15} />
-              Add external resource
-            </Button>
-          )}
+          <ExternalLinkFields links={externalLinks} setLinks={setExternalLinks} />
         </section>
         {kind !== 'container' && (
           <section className="task-form-section">
@@ -354,60 +221,17 @@ export function TaskDialog({
                 </p>
               </div>
             </div>
-            <label>
-              Your open pull requests
-              <LoadingField loading={githubLoading}>
-                <select
-                  aria-busy={githubLoading}
-                  aria-describedby="pr-discovery-hint"
-                  value={prs.some((pr) => pr.url === url) ? url : ''}
-                  onChange={(event) => {
-                    const selected = prs.find((pr) => pr.url === event.target.value);
-                    setUrl(event.target.value);
-                    if (selected && !title.trim())
-                      setTitle(`${kind === 'pr' ? 'Merge ' : ''}${selected.title}`.slice(0, 300));
-                  }}
-                >
-                  <option value="">Select a PR or enter a URL below</option>
-                  {prs.map((pr) => (
-                    <option key={pr.url} value={pr.url}>
-                      {pr.repository} #{pr.number}: {pr.title}
-                      {pr.draft ? ' (draft)' : ''}
-                    </option>
-                  ))}
-                </select>
-              </LoadingField>
-            </label>
-            <p className="form-hint" id="pr-discovery-hint" role="status">
-              {!github
-                ? 'Loading GitHub status... You can also enter a URL below.'
-                : !github.configured
-                  ? 'GitHub is not connected. You can still enter a PR URL below.'
-                  : github.error
-                    ? `GitHub sync failed: ${github.error}. Listed PRs may be stale; you can enter a URL below.`
-                    : github.syncing
-                      ? 'Refreshing your open pull requests... You can also enter a URL below.'
-                      : !prs.length
-                        ? 'No authored open pull requests found. Enter a PR URL below.'
-                        : 'Choose one of your authored PRs, or enter any GitHub PR URL below.'}
-            </p>
-            <label>
-              GitHub PR URL
-              {kind === 'manual' && <span className="optional">optional</span>}
-              <Input
-                type="url"
-                required={kind === 'pr'}
-                placeholder="https://github.com/owner/repo/pull/123"
-                value={url}
-                onChange={(event) => setUrl(event.target.value)}
-              />
-            </label>
-            {kind === 'manual' && (
-              <p className="form-hint">
-                With a PR gate, both your manual work and a verified PR merge are required. Clear
-                the URL to remove the gate.
-              </p>
-            )}
+            <PrUrlFields
+              kind={kind as Exclude<TaskKind, 'container'>}
+              url={url}
+              setUrl={setUrl}
+              prs={prs}
+              github={github}
+              onSelect={(selected) => {
+                if (!title.trim())
+                  setTitle(`${kind === 'pr' ? 'Merge ' : ''}${selected.title}`.slice(0, 300));
+              }}
+            />
           </section>
         )}
         <section className="task-form-section">
@@ -417,21 +241,19 @@ export function TaskDialog({
               <p>Place this task where you will find it again.</p>
             </div>
           </div>
-          {!task && (
-            <label>
-              Lives in
-              <select value={parent} onChange={(event) => setParent(event.target.value)}>
-                <option value="">Workspace (top level)</option>
-                {snapshot.tasks
-                  .filter((task) => task.kind === 'container')
-                  .map((task) => (
-                    <option key={task.id} value={task.id}>
-                      {task.title}
-                    </option>
-                  ))}
-              </select>
-            </label>
-          )}
+          <label>
+            Lives in
+            <select value={parent} onChange={(event) => setParent(event.target.value)}>
+              <option value="">Workspace (top level)</option>
+              {snapshot.tasks
+                .filter((task) => task.kind === 'container')
+                .map((task) => (
+                  <option key={task.id} value={task.id}>
+                    {task.title}
+                  </option>
+                ))}
+            </select>
+          </label>
           <label>
             Tags <span className="optional">optional</span>
           </label>
@@ -451,7 +273,7 @@ export function TaskDialog({
             Cancel
           </Button>
           <button className="button primary" disabled={busy} type="submit">
-            {submitLabel ?? (task ? 'Save changes' : 'Create task')}
+            {submitLabel ?? 'Create task'}
             <ArrowRight size={15} />
           </button>
         </footer>
