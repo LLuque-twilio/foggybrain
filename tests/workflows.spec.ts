@@ -30,8 +30,12 @@ test.beforeEach(async ({ request }) => {
 });
 
 test('create/edit through UI, keyboard dialog, local assets, and responsive shell', async ({
+  context,
   page,
 }) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write'], {
+    origin: 'http://127.0.0.1:4189',
+  });
   const errors: string[] = [];
   const remote: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
@@ -50,6 +54,8 @@ test('create/edit through UI, keyboard dialog, local assets, and responsive shel
   await dialog.getByLabel('Description').fill('Release the API without holding it all in my head.');
   await dialog.getByRole('button', { name: 'Create task', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Ship to stage', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Copy container ID' }).click();
+  await expect(page.getByRole('button', { name: 'Container ID copied' })).toBeVisible();
   await expect(
     page.getByRole('heading', { name: 'A clear space for a messy idea.' }),
   ).toBeVisible();

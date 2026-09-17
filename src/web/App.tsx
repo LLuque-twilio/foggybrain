@@ -9,6 +9,7 @@ import {
   ChevronRight,
   CircleHelp,
   CloudFog,
+  Copy,
   GitPullRequest,
   LayoutGrid,
   Link2,
@@ -53,6 +54,7 @@ import {
 import { Status, statusLabels } from './Status';
 import { SyncDialog } from './SyncDialog';
 import { ListView } from './List';
+import { Tooltip, TooltipContent, TooltipTrigger } from './components/ui/tooltip';
 import { TaskDetailSheet } from './TaskDetailSheet';
 import { Button } from './components/ui/button';
 import { Sheet, SheetContent, SheetTitle } from './components/ui/sheet';
@@ -117,6 +119,7 @@ export function WorkspaceApp({
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState('');
+  const [copiedContainerId, setCopiedContainerId] = useState<string | null>(null);
   const [sidebar, setSidebar] = useState(false);
   const [mobileNavigation, setMobileNavigation] = useState(
     () => window.matchMedia('(max-width: 700px)').matches,
@@ -649,6 +652,33 @@ export function WorkspaceApp({
                 <div className="graph-heading-actions">
                   {current && (
                     <>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <button
+                            className="icon-button"
+                            aria-label={
+                              copiedContainerId === current.id
+                                ? 'Container ID copied'
+                                : 'Copy container ID'
+                            }
+                            onClick={async () => {
+                              try {
+                                await navigator.clipboard.writeText(current.id);
+                                setCopiedContainerId(current.id);
+                              } catch {
+                                setCopiedContainerId(null);
+                              }
+                            }}
+                          >
+                            {copiedContainerId === current.id ? (
+                              <Check size={17} />
+                            ) : (
+                              <Copy size={17} />
+                            )}
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent>{current.id}</TooltipContent>
+                      </Tooltip>
                       <button
                         className="icon-button"
                         aria-label="Edit container"

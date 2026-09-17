@@ -117,9 +117,25 @@ export function Detail({
           <TooltipContent>{task.id}</TooltipContent>
         </Tooltip>
       </div>
-      <p className="description">
-        {task.description || 'No description. Add a little context with Edit task.'}
-      </p>
+      <section className="detail-section detail-about">
+        <h3>About</h3>
+        <p className="description">
+          {task.description || 'No description. Add a little context with Edit task.'}
+        </p>
+        <div className="detail-tags">
+          <h4>Tags</h4>
+          <TagPicker
+            tags={snapshot.tags}
+            selectedIds={task.tagIds}
+            busy={busy}
+            onAdd={(id) => toggleTag(id, true)}
+            onRemove={(id) => toggleTag(id, false)}
+            onCreate={createTag}
+            onRename={renameTag}
+            onDelete={deleteTag}
+          />
+        </div>
+      </section>
       {externalLinks.length > 0 && (
         <section className="detail-section external-links">
           <h3>
@@ -157,79 +173,69 @@ export function Detail({
           })}
         </section>
       )}
-      <section className="detail-section detail-tags">
-        <h3>Tags</h3>
-        <TagPicker
-          tags={snapshot.tags}
-          selectedIds={task.tagIds}
-          busy={busy}
-          onAdd={(id) => toggleTag(id, true)}
-          onRemove={(id) => toggleTag(id, false)}
-          onCreate={createTag}
-          onRename={renameTag}
-          onDelete={deleteTag}
-        />
-      </section>
-      {task.status === 'ready' && (
-        <div className="callout ready-callout">
-          <Check size={16} />
-          <span>
-            Own work done. This will complete automatically when its prerequisites finish.
-          </span>
-        </div>
-      )}
-      {task.kind === 'manual' && (
-        <Button
-          variant={task.manualDone ? 'default' : 'primary'}
-          className={`button full ${task.manualDone ? '' : 'primary'}`}
-          disabled={busy}
-          onClick={done}
-        >
-          {task.manualDone ? <RotateCcw size={16} /> : <Check size={16} />}
-          {task.manualDone ? 'Reopen own work' : 'Mark own work done'}
-        </Button>
-      )}
-      {task.kind === 'container' && (
-        <>
-          <Button variant="primary" className="button full primary" onClick={() => open(task.id)}>
-            Open task graph
-            <ArrowUpRight size={16} />
+      <section className="detail-section detail-progress">
+        <h3>Progress</h3>
+        {task.status === 'ready' && (
+          <div className="callout ready-callout">
+            <Check size={16} />
+            <span>
+              Own work done. This will complete automatically when its prerequisites finish.
+            </span>
+          </div>
+        )}
+        {task.kind === 'manual' && (
+          <Button
+            variant={task.manualDone ? 'default' : 'primary'}
+            className={`button full ${task.manualDone ? '' : 'primary'}`}
+            disabled={busy}
+            onClick={done}
+          >
+            {task.manualDone ? <RotateCcw size={16} /> : <Check size={16} />}
+            {task.manualDone ? 'Reopen own work' : 'Mark own work done'}
           </Button>
-          <p className="form-hint">
-            {
-              snapshot.tasks.filter(
-                (child) => task.childrenIds.includes(child.id) && child.status === 'completed',
-              ).length
-            }{' '}
-            of {task.childrenIds.length} steps complete. All owned and referenced children count.
-          </p>
-        </>
-      )}
-      {task.prUrl && (
-        <div className="pr-detail">
-          {task.kind === 'manual' && (
+        )}
+        {task.kind === 'container' && (
+          <>
+            <Button variant="primary" className="button full primary" onClick={() => open(task.id)}>
+              Open task graph
+              <ArrowUpRight size={16} />
+            </Button>
             <p className="form-hint">
-              PR gate: completion requires both manual work done and a verified merge.
+              {
+                snapshot.tasks.filter(
+                  (child) => task.childrenIds.includes(child.id) && child.status === 'completed',
+                ).length
+              }{' '}
+              of {task.childrenIds.length} steps complete. All owned and referenced children count.
             </p>
-          )}
-          <a className="button full" href={task.prUrl!} target="_blank" rel="noreferrer">
-            <GitPullRequest size={16} />
-            View PR on GitHub
-            <ArrowUpRight size={15} />
-          </a>
-          <p>
-            Merge status: <PrStatus task={task} />
-          </p>
-          <small className="muted">
-            {task.prCheckedAt
-              ? `Last check: ${new Date(task.prCheckedAt).toLocaleString()}`
-              : 'Waiting for first check. Polling runs while the server is open.'}
-          </small>
-          {task.prError && (
-            <div className="callout warning">{task.prError} Last verified state is retained.</div>
-          )}
-        </div>
-      )}
+          </>
+        )}
+        {task.prUrl && (
+          <div className="pr-detail">
+            {task.kind === 'manual' && (
+              <p className="form-hint">
+                PR gate: completion requires both manual work done and a verified merge.
+              </p>
+            )}
+            <a className="button full" href={task.prUrl!} target="_blank" rel="noreferrer">
+              <GitPullRequest size={16} />
+              View PR on GitHub
+              <ArrowUpRight size={15} />
+            </a>
+            <p>
+              Merge status: <PrStatus task={task} />
+            </p>
+            <small className="muted">
+              {task.prCheckedAt
+                ? `Last check: ${new Date(task.prCheckedAt).toLocaleString()}`
+                : 'Waiting for first check. Polling runs while the server is open.'}
+            </small>
+            {task.prError && (
+              <div className="callout warning">{task.prError} Last verified state is retained.</div>
+            )}
+          </div>
+        )}
+      </section>
       <section className="detail-section">
         <h3>
           Prerequisites <span>{incoming.length}</span>

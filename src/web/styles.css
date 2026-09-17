@@ -1201,7 +1201,7 @@ h1 {
   background: #fcfdf8;
   border-left: 1px solid #dfe6d5;
   overflow: auto;
-  padding: 17px 22px 22px;
+  padding: 20px 22px 22px;
 }
 .detail-top {
   display: flex;
@@ -1233,14 +1233,12 @@ h1 {
   font-size: 11px;
   line-height: 1.85;
   color: var(--muted);
-  margin: 17px 0 24px;
+  margin: 0;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 .external-links-editor {
-  border-top: 1px solid #e5ebdc;
-  margin-top: 22px;
-  padding-top: 4px;
+  margin-top: 12px;
 }
 .external-links-heading {
   display: flex;
@@ -1250,6 +1248,14 @@ h1 {
 .external-links-heading span {
   color: var(--muted);
   font-size: 10px;
+}
+.external-links-heading p,
+.task-form-section-heading p {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 400;
+  line-height: 1.55;
 }
 .external-link-editor {
   border: 1px solid #dfe7d5;
@@ -1332,17 +1338,21 @@ h1 {
   color: #86632d;
 }
 .detail-section {
-  border-top: 1px solid #e6ecdd;
-  padding-top: 17px;
-  margin-top: 22px;
+  margin-top: 12px;
+  padding: 15px;
+  border: 1px solid #e1e8d8;
+  border-radius: 9px;
+  background: #f9fbf4;
 }
 .detail-section h3 {
   display: flex;
   align-items: center;
   justify-content: space-between;
   font-size: 11px;
-  color: #6c815c;
-  font-weight: 600;
+  color: #536b47;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
   margin-bottom: 12px;
 }
 .detail-section h3 > span {
@@ -1380,6 +1390,22 @@ h1 {
 }
 .detail-section > .button {
   margin-top: 10px;
+}
+.detail-about {
+  margin-top: 18px;
+}
+.detail-tags {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid #e1e8d8;
+}
+.detail-tags h4 {
+  color: #758a61;
+  font-size: 10px;
+  font-weight: 600;
+}
+.detail-progress > .button:first-of-type {
+  margin-top: 0;
 }
 .membership {
   display: flex;
@@ -1656,6 +1682,31 @@ h1 {
   font-weight: 600;
   margin: 17px 0 10px;
 }
+.task-form-section {
+  margin-top: 12px;
+  padding: 18px;
+  border: 1px solid #e1e8d8;
+  border-radius: 9px;
+  background: #f9fbf4;
+}
+.task-form-section:first-child {
+  margin-top: 0;
+}
+.task-form-section-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 15px;
+}
+.task-form-section-heading h3,
+.external-links-heading h3 {
+  color: #526a46;
+  font-size: 12px;
+  margin: 0;
+}
+.task-form-section > label:first-of-type {
+  margin-top: 0;
+}
 label {
   display: block;
   font-size: 11px;
@@ -1778,6 +1829,10 @@ textarea {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 9px;
+}
+.task-type-hint {
+  margin-bottom: 0;
+  padding: 0 2px;
 }
 .kind-picker [role='radio'] {
   display: flex;
@@ -2119,11 +2174,6 @@ details ul {
 }
 .detail-panel > .tag-badges {
   margin-top: 8px;
-}
-.detail-tags {
-  margin: 22px 0;
-  padding-bottom: 20px;
-  border-bottom: 1px solid #e6ecdd;
 }
 .tag-picker {
   position: relative;

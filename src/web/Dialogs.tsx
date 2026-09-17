@@ -178,61 +178,79 @@ export function TaskDialog({
         }}
       >
         {!task && (
-          <RadioGroup
-            className="kind-picker"
-            aria-label="Task type"
-            value={kind}
-            onValueChange={(value) => setKind(value as TaskKind)}
-          >
-            {(
-              [
-                ['manual', ListChecks, 'Manual step'],
-                ['pr', GitPullRequest, 'PR merge'],
-                ['container', Box, 'Container'],
-              ] as const
-            ).map(([value, Icon, label]) => (
-              <RadioGroupItem className="size-auto aspect-auto" key={value} value={value}>
-                <Icon size={18} />
-                {label}
-              </RadioGroupItem>
-            ))}
-          </RadioGroup>
+          <section className="task-form-section task-type-section">
+            <div className="task-form-section-heading">
+              <div>
+                <h3>Choose a task type</h3>
+                <p>Set how this work reaches completion.</p>
+              </div>
+            </div>
+            <RadioGroup
+              className="kind-picker"
+              aria-label="Task type"
+              value={kind}
+              onValueChange={(value) => setKind(value as TaskKind)}
+            >
+              {(
+                [
+                  ['manual', ListChecks, 'Manual step'],
+                  ['pr', GitPullRequest, 'PR merge'],
+                  ['container', Box, 'Container'],
+                ] as const
+              ).map(([value, Icon, label]) => (
+                <RadioGroupItem className="size-auto aspect-auto" key={value} value={value}>
+                  <Icon size={18} />
+                  {label}
+                </RadioGroupItem>
+              ))}
+            </RadioGroup>
+            <p className="form-hint task-type-hint">
+              {kind === 'container'
+                ? 'A home for connected chains, independent steps, and other task graphs.'
+                : kind === 'pr'
+                  ? 'An automatic gate. This step is satisfied when GitHub confirms the PR is merged.'
+                  : 'A step you mark done yourself, even before its prerequisites finish.'}
+            </p>
+          </section>
         )}
-        <p className="form-hint">
-          {kind === 'container'
-            ? 'A home for connected chains, independent steps, and other task graphs.'
-            : kind === 'pr'
-              ? 'An automatic gate. This step is satisfied when GitHub confirms the PR is merged.'
-              : 'A step you mark done yourself, even before its prerequisites finish.'}
-        </p>
-        <label>
-          Summary
-          <Input
-            required
-            autoFocus
-            placeholder={
-              kind === 'container' ? 'e.g. Ship the new API to stage' : 'What needs to happen?'
-            }
-            value={title}
-            onChange={(event) => setTitle(event.target.value)}
-            maxLength={300}
-          />
-        </label>
-        <label>
-          Description <span className="optional">optional</span>
-          <Textarea
-            placeholder="Keep useful context out of your head."
-            rows={3}
-            value={description}
-            onChange={(event) => setDescription(event.target.value)}
-          />
-        </label>
-        <section className="external-links-editor">
+        <section className="task-form-section">
+          <div className="task-form-section-heading">
+            <div>
+              <h3>Task details</h3>
+              <p>Give this work a clear, recognizable name.</p>
+            </div>
+          </div>
+          <label>
+            Summary
+            <Input
+              required
+              autoFocus
+              placeholder={
+                kind === 'container' ? 'e.g. Ship the new API to stage' : 'What needs to happen?'
+              }
+              value={title}
+              onChange={(event) => setTitle(event.target.value)}
+              maxLength={300}
+            />
+          </label>
+          <label>
+            Description <span className="optional">optional</span>
+            <Textarea
+              placeholder="Keep useful context out of your head."
+              rows={3}
+              value={description}
+              onChange={(event) => setDescription(event.target.value)}
+            />
+          </label>
+        </section>
+        <section className="task-form-section external-links-editor">
           <div className="external-links-heading">
-            <h3>External resources</h3>
+            <div>
+              <h3>External resources</h3>
+              <p>Add supporting tickets, documents, and reference material.</p>
+            </div>
             <span>{externalLinks.length} / 5</span>
           </div>
-          <p className="form-hint">Add supporting tickets, documents, and reference material.</p>
           {externalLinks.map((link, index) => (
             <div className="external-link-editor" key={index}>
               <div className="external-link-editor-heading">
@@ -325,7 +343,17 @@ export function TaskDialog({
           )}
         </section>
         {kind !== 'container' && (
-          <>
+          <section className="task-form-section">
+            <div className="task-form-section-heading">
+              <div>
+                <h3>Completion</h3>
+                <p>
+                  {kind === 'pr'
+                    ? 'Connect the pull request that completes this task.'
+                    : 'Optionally require a merged pull request too.'}
+                </p>
+              </div>
+            </div>
             <label>
               Your open pull requests
               <LoadingField loading={githubLoading}>
@@ -380,36 +408,44 @@ export function TaskDialog({
                 the URL to remove the gate.
               </p>
             )}
-          </>
+          </section>
         )}
-        {!task && (
+        <section className="task-form-section">
+          <div className="task-form-section-heading">
+            <div>
+              <h3>Organization</h3>
+              <p>Place this task where you will find it again.</p>
+            </div>
+          </div>
+          {!task && (
+            <label>
+              Lives in
+              <select value={parent} onChange={(event) => setParent(event.target.value)}>
+                <option value="">Workspace (top level)</option>
+                {snapshot.tasks
+                  .filter((task) => task.kind === 'container')
+                  .map((task) => (
+                    <option key={task.id} value={task.id}>
+                      {task.title}
+                    </option>
+                  ))}
+              </select>
+            </label>
+          )}
           <label>
-            Lives in
-            <select value={parent} onChange={(event) => setParent(event.target.value)}>
-              <option value="">Workspace (top level)</option>
-              {snapshot.tasks
-                .filter((task) => task.kind === 'container')
-                .map((task) => (
-                  <option key={task.id} value={task.id}>
-                    {task.title}
-                  </option>
-                ))}
-            </select>
+            Tags <span className="optional">optional</span>
           </label>
-        )}
-        <label>
-          Tags <span className="optional">optional</span>
-        </label>
-        <TagPicker
-          tags={snapshot.tags}
-          selectedIds={tagIds}
-          busy={busy}
-          onAdd={(id) => setTagIds((current) => [...current, id])}
-          onRemove={(id) => setTagIds((current) => current.filter((tagId) => tagId !== id))}
-          onCreate={createTag}
-          onRename={renameTag}
-          onDelete={deleteTag}
-        />
+          <TagPicker
+            tags={snapshot.tags}
+            selectedIds={tagIds}
+            busy={busy}
+            onAdd={(id) => setTagIds((current) => [...current, id])}
+            onRemove={(id) => setTagIds((current) => current.filter((tagId) => tagId !== id))}
+            onCreate={createTag}
+            onRename={renameTag}
+            onDelete={deleteTag}
+          />
+        </section>
         <footer>
           <Button className="button" type="button" onClick={close}>
             Cancel
