@@ -100,6 +100,7 @@ export function SearchableSelect({
                 aria-describedby={describedBy}
                 autoComplete="off"
                 required={required}
+                pattern={required && !value ? '(?!)' : undefined}
                 value={search}
                 disabled={disabled || loading}
                 placeholder={placeholder}

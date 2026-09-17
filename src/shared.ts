@@ -1,6 +1,7 @@
 export type TaskKind = 'container' | 'manual' | 'pr';
 export type TaskStatus = 'available' | 'blocked' | 'ready' | 'completed';
 export type PrState = 'unknown' | 'open' | 'closed' | 'merged';
+export type ExternalLinkType = 'github' | 'jira' | 'google-doc' | 'generic';
 export type PrMergeStatus =
   | 'unknown'
   | 'draft'
@@ -11,6 +12,14 @@ export type PrMergeStatus =
   | 'conflicts'
   | 'blocked'
   | 'ready';
+
+export interface ExternalLink {
+  /** @maxLength 2048 @pattern ^https:// */
+  url: string;
+  /** @maxLength 100 */
+  label: string;
+  type: ExternalLinkType;
+}
 
 export interface Task {
   id: string;
@@ -24,6 +33,8 @@ export interface Task {
   prMergeStatus: PrMergeStatus;
   prCheckedAt: string | null;
   prError: string | null;
+  /** @maxItems 5 */
+  externalLinks: ExternalLink[];
   tagIds: string[];
   createdAt: string;
   updatedAt: string;
@@ -82,7 +93,11 @@ export interface CreateTaskInput {
   kind: TaskKind;
   parentId?: string | null;
   prUrl?: string;
+  /** @maxItems 5 */
+  externalLinks?: ExternalLink[];
   tagIds?: string[];
+  /** Absolute Favorites membership; omitted leaves create-time tagIds behavior unchanged. */
+  favorite?: boolean;
 }
 
 export interface ConnectTaskInput {
@@ -99,7 +114,11 @@ export interface UpdateTaskInput {
   title?: string;
   description?: string;
   prUrl?: string | null;
+  /** @maxItems 5 */
+  externalLinks?: ExternalLink[];
   tagIds?: string[];
+  /** Absolute Favorites membership; omitted preserves the current membership. */
+  favorite?: boolean;
 }
 
 export interface CreateTagInput {
@@ -158,11 +177,19 @@ export interface GithubPr {
 
 export type PortableTask = Pick<
   Task,
-  'id' | 'title' | 'description' | 'kind' | 'parentId' | 'manualDone' | 'prUrl' | 'tagIds'
+  | 'id'
+  | 'title'
+  | 'description'
+  | 'kind'
+  | 'parentId'
+  | 'manualDone'
+  | 'prUrl'
+  | 'externalLinks'
+  | 'tagIds'
 >;
 
 export interface PortableState {
-  version: 2;
+  version: 3;
   tasks: PortableTask[];
   dependencies: Dependency[];
   references: TaskReference[];

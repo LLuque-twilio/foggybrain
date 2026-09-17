@@ -196,7 +196,7 @@ pnpm --silent run foggy --json github prs
 pnpm foggy task create "Merge the fix" --kind pr --pr https://github.com/OWNER/REPO/pull/123
 ```
 
-PR URLs must be HTTPS `github.com/OWNER/REPO/pull/NUMBER` URLs. `github prs` returns the server's cached **authored open PRs**, not every PR in every repository. Polling runs **only while the server is running**, not while it is shut down and not in a standalone CLI process. `github sync` requests an immediate refresh. Check the returned `configured`, `syncing`, `lastSync`, and `error` fields: a successful HTTP call can still report a GitHub failure in `error`. Poll failures retain the last verified PR state and attach an error; cached data can therefore be stale. Changing a task's PR URL resets its verified PR state.
+PR URLs must be HTTPS `github.com/OWNER/REPO/pull/NUMBER` URLs. `github prs` returns the server's cached **authored open PRs**, not every PR in every repository. Polling runs **only while the server is running**, not while it is shut down and not in a standalone CLI process. `github sync` requests an immediate refresh. Check the returned `configured`, `syncing`, `lastSync`, and `error` fields: a successful HTTP call can still report a GitHub failure in `error`. Poll failures retain the last verified PR state and attach an error; cached data can therefore be stale. Changing a task's PR URL switches to that URL's workspace-local cached verification; unseen URLs start unverified.
 
 Authored PR search is bounded by GitHub's 1,000-result limit. Partial or incomplete responses report an error and retain the previous cache rather than silently presenting a truncated list. GitHub Enterprise hosts, deployment verification, and approval/check gates are not implemented in v1.
 
@@ -256,7 +256,7 @@ The UI offers the same review-and-confirm workflow under **Workspace sync** in t
 
 For first sync, an empty local graph can pull remote state, or a missing remote file can receive local state. Two nonempty sides without a shared baseline are blocked. Preserve both: use a separate new local data directory for a pull or a distinct unused remote path for an independent publication, rather than wiping existing data.
 
-Portable `version: 2` JSON includes editable task fields, custom tags, tag memberships, dependencies, and references. It excludes the canonical Favorites definition, PR verification, derived completion, layouts, and timestamps. Version 1 input upgrades in memory with no custom tags or memberships. PR state is reverified locally by server polling. SQLite holds the sync baseline and automatic full local backups in `foggybrain_sync_backups`; there is no restore API or automatic pruning. Keep independent backups. **Git history and local backups retain deleted sensitive information**; deleting a task is not secure erasure. See [manual sync CLI details](cli.md#manual-state-sync) for response fields and recovery safeguards.
+Portable `version: 3` JSON includes editable task fields and external links, custom tags, tag memberships, dependencies, and references. It excludes the canonical Favorites definition, PR verification, derived completion, layouts, and timestamps. Version 1 and 2 inputs upgrade in memory with empty external-link lists. PR state is reverified locally by server polling. SQLite holds the sync baseline and automatic full local backups in `foggybrain_sync_backups`; there is no restore API or automatic pruning. Keep independent backups. **Git history and local backups retain deleted sensitive information**; deleting a task is not secure erasure. See [manual sync CLI details](cli.md#manual-state-sync) for response fields and recovery safeguards.
 
 ## Configuration And Data
 
@@ -294,7 +294,7 @@ Foggybrain is a **local, trusted-user tool**, not a multi-user service. Loopback
 
 ## API Reference
 
-The checked-in [openapi.json](../openapi.json) is the authoritative OpenAPI 3.1 HTTP reference for all 45 operations, including explicit-workspace routes. Import it into an OpenAPI 3.1-compatible viewer or code generator; the server does not expose an OpenAPI endpoint or documentation UI. Generation tools are development-only.
+The checked-in [openapi.json](../openapi.json) is the authoritative OpenAPI 3.1 HTTP reference for every operation, including explicit-workspace routes. Import it into an OpenAPI 3.1-compatible viewer or code generator; the server does not expose an OpenAPI endpoint or documentation UI. Generation tools are development-only.
 
 [CONTRACT.md](../CONTRACT.md) defines semantic guarantees, including completion, workspace isolation, and destructive sync safeguards. DTO field shapes originate in [src/shared.ts](../src/shared.ts); the spec does not replace runtime graph/state validation. See the [API maintainer guide](api.md) for generation and ownership and [PR verification](pr-verification.md) for readiness precedence and stale-state handling.
 
@@ -306,7 +306,7 @@ pnpm typecheck
 pnpm build
 ```
 
-After API changes, run `pnpm openapi:generate` and `pnpm openapi:check`; never hand edit `openapi.json`. The check verifies artifact freshness and OpenAPI parser validity. `pnpm test` also checks route inventory, HTTP success responses for all 45 operations, and request boundaries.
+After API changes, run `pnpm openapi:generate` and `pnpm openapi:check`; never hand edit `openapi.json`. The check verifies artifact freshness and OpenAPI parser validity. `pnpm test` also checks route inventory, HTTP success responses for every operation, and request boundaries.
 
 CLI tests spawn the real Commander-based CLI against a fake HTTP server and do not need a running Foggybrain instance or GitHub token. To run just those tests:
 

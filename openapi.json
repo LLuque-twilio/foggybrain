@@ -773,7 +773,7 @@
       "post": {
         "operationId": "createTask",
         "summary": "Create a task",
-        "description": "Uses the persisted default workspace; returns 404 when none exists. See CONTRACT.md for state-dependent validation and semantics.",
+        "description": "Creates task fields, custom tags, and optional absolute Favorites membership in one transaction. Uses the persisted default workspace; returns 404 when none exists. See CONTRACT.md for state-dependent validation and semantics.",
         "parameters": [],
         "responses": {
           "201": {
@@ -849,8 +849,8 @@
     "/api/tasks/{id}": {
       "patch": {
         "operationId": "updateTask",
-        "summary": "Update task text or PR gate",
-        "description": "At least one field is required. PR URL validity and permitted gate changes depend on task kind; null removes only a manual gate. Uses the persisted default workspace; returns 404 when none exists. See CONTRACT.md for state-dependent validation and semantics.",
+        "summary": "Update task text, PR gate, or custom tags",
+        "description": "At least one field is required. Task fields, custom tags, and optional absolute Favorites membership update in one transaction. Custom tagIds cannot contain favorites. PR URL validity and permitted gate changes depend on task kind; null removes only a manual gate. Uses the persisted default workspace; returns 404 when none exists. See CONTRACT.md for state-dependent validation and semantics.",
         "parameters": [
           {
             "name": "id",
@@ -2859,7 +2859,7 @@
       "post": {
         "operationId": "createTaskScoped",
         "summary": "Create a task",
-        "description": "Uses only the explicitly selected workspace. See CONTRACT.md for state-dependent validation and semantics.",
+        "description": "Creates task fields, custom tags, and optional absolute Favorites membership in one transaction. Uses only the explicitly selected workspace. See CONTRACT.md for state-dependent validation and semantics.",
         "parameters": [
           {
             "name": "workspaceId",
@@ -2943,8 +2943,8 @@
     "/api/workspaces/{workspaceId}/tasks/{id}": {
       "patch": {
         "operationId": "updateTaskScoped",
-        "summary": "Update task text or PR gate",
-        "description": "At least one field is required. PR URL validity and permitted gate changes depend on task kind; null removes only a manual gate. Uses only the explicitly selected workspace. See CONTRACT.md for state-dependent validation and semantics.",
+        "summary": "Update task text, PR gate, or custom tags",
+        "description": "At least one field is required. Task fields, custom tags, and optional absolute Favorites membership update in one transaction. Custom tagIds cannot contain favorites. PR URL validity and permitted gate changes depend on task kind; null removes only a manual gate. Uses only the explicitly selected workspace. See CONTRACT.md for state-dependent validation and semantics.",
         "parameters": [
           {
             "name": "workspaceId",
@@ -5055,6 +5055,7 @@
       "TaskKind": { "type": "string", "enum": ["container", "manual", "pr"] },
       "TaskStatus": { "type": "string", "enum": ["available", "blocked", "ready", "completed"] },
       "PrState": { "type": "string", "enum": ["unknown", "open", "closed", "merged"] },
+      "ExternalLinkType": { "type": "string", "enum": ["github", "jira", "google-doc", "generic"] },
       "PrMergeStatus": {
         "type": "string",
         "enum": [
@@ -5068,6 +5069,16 @@
           "blocked",
           "ready"
         ]
+      },
+      "ExternalLink": {
+        "type": "object",
+        "properties": {
+          "url": { "type": "string", "maxLength": 2048, "pattern": "^https://" },
+          "label": { "type": "string", "maxLength": 100 },
+          "type": { "$ref": "#/components/schemas/ExternalLinkType" }
+        },
+        "required": ["url", "label", "type"],
+        "additionalProperties": false
       },
       "Task": {
         "type": "object",
@@ -5083,6 +5094,11 @@
           "prMergeStatus": { "$ref": "#/components/schemas/PrMergeStatus" },
           "prCheckedAt": { "type": ["string", "null"] },
           "prError": { "type": ["string", "null"] },
+          "externalLinks": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/ExternalLink" },
+            "maxItems": 5
+          },
           "tagIds": { "type": "array", "items": { "type": "string" } },
           "createdAt": { "type": "string" },
           "updatedAt": { "type": "string" }
@@ -5099,6 +5115,7 @@
           "prMergeStatus",
           "prCheckedAt",
           "prError",
+          "externalLinks",
           "tagIds",
           "createdAt",
           "updatedAt"
@@ -5119,6 +5136,11 @@
           "prMergeStatus": { "$ref": "#/components/schemas/PrMergeStatus" },
           "prCheckedAt": { "type": ["string", "null"] },
           "prError": { "type": ["string", "null"] },
+          "externalLinks": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/ExternalLink" },
+            "maxItems": 5
+          },
           "tagIds": { "type": "array", "items": { "type": "string" } },
           "createdAt": { "type": "string" },
           "updatedAt": { "type": "string" },
@@ -5131,6 +5153,7 @@
           "childrenIds",
           "createdAt",
           "description",
+          "externalLinks",
           "id",
           "kind",
           "manualDone",
@@ -5235,7 +5258,16 @@
           "kind": { "$ref": "#/components/schemas/TaskKind" },
           "parentId": { "type": ["string", "null"] },
           "prUrl": { "type": "string" },
-          "tagIds": { "type": "array", "items": { "type": "string" } }
+          "externalLinks": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/ExternalLink" },
+            "maxItems": 5
+          },
+          "tagIds": { "type": "array", "items": { "type": "string" } },
+          "favorite": {
+            "type": "boolean",
+            "description": "Absolute Favorites membership; omitted leaves create-time tagIds behavior unchanged."
+          }
         },
         "required": ["title", "kind"],
         "additionalProperties": false,
@@ -5268,7 +5300,16 @@
           "title": { "type": "string", "pattern": "\\S" },
           "description": { "type": "string" },
           "prUrl": { "type": ["string", "null"] },
-          "tagIds": { "type": "array", "items": { "type": "string" } }
+          "externalLinks": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/ExternalLink" },
+            "maxItems": 5
+          },
+          "tagIds": { "type": "array", "items": { "type": "string" } },
+          "favorite": {
+            "type": "boolean",
+            "description": "Absolute Favorites membership; omitted preserves the current membership."
+          }
         },
         "additionalProperties": false,
         "minProperties": 1
@@ -5375,6 +5416,11 @@
           "parentId": { "type": ["string", "null"] },
           "manualDone": { "type": "boolean" },
           "prUrl": { "type": ["string", "null"] },
+          "externalLinks": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/ExternalLink" },
+            "maxItems": 5
+          },
           "tagIds": { "type": "array", "items": { "type": "string" } }
         },
         "required": [
@@ -5385,6 +5431,7 @@
           "parentId",
           "manualDone",
           "prUrl",
+          "externalLinks",
           "tagIds"
         ],
         "additionalProperties": false
@@ -5392,7 +5439,7 @@
       "PortableState": {
         "type": "object",
         "properties": {
-          "version": { "type": "number", "const": 2 },
+          "version": { "type": "number", "const": 3 },
           "tasks": { "type": "array", "items": { "$ref": "#/components/schemas/PortableTask" } },
           "dependencies": {
             "type": "array",

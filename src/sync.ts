@@ -19,6 +19,7 @@ import type {
 const MAX_CONTENT = 1024 * 1024;
 const collections = ['tasks', 'dependencies', 'references', 'tags'] as const;
 const equal = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+const serializePortableState = (state: PortableState) => `${JSON.stringify(state, null, 2)}\n`;
 
 class RejectedSyncWrite extends DomainError {}
 
@@ -485,7 +486,7 @@ export class StateSync {
       } catch (error) {
         validationError ??= error instanceof DomainError ? error.message : 'Invalid merged graph';
       }
-      if (Buffer.byteLength(JSON.stringify(merged)) > MAX_CONTENT)
+      if (Buffer.byteLength(serializePortableState(merged)) > MAX_CONTENT)
         validationError = 'Merged state exceeds 1 MB';
       const preview: SyncPreview = {
         mode,
@@ -540,7 +541,7 @@ export class StateSync {
             body: JSON.stringify({
               message: 'Sync FoggyBrain state',
               branch: this.target!.branch,
-              content: Buffer.from(JSON.stringify(saved.merged)).toString('base64'),
+              content: Buffer.from(serializePortableState(saved.merged)).toString('base64'),
               ...(saved.sha ? { sha: saved.sha } : {}),
             }),
           });

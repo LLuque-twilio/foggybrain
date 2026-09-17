@@ -263,7 +263,16 @@ function domainRoutes(
     res.json(store.snapshot());
   });
   app.post('/tasks', (req, res) => {
-    const body = object(req.body, ['title', 'description', 'kind', 'parentId', 'prUrl', 'tagIds']);
+    const body = object(req.body, [
+      'title',
+      'description',
+      'kind',
+      'parentId',
+      'prUrl',
+      'externalLinks',
+      'tagIds',
+      'favorite',
+    ]);
     stringField(body, 'title');
     stringField(body, 'description', true);
     stringField(body, 'prUrl', true);
@@ -271,13 +280,24 @@ function domainRoutes(
       throw new HttpError(400, 'kind must be container, manual, or pr.');
     if ('parentId' in body && body.parentId !== null) stringField(body, 'parentId');
     stringArrayField(body, 'tagIds', true);
+    if ('favorite' in body && typeof body.favorite !== 'boolean')
+      throw new HttpError(400, 'favorite must be a boolean.');
     res.status(201).json(store.createTask(body as unknown as CreateTaskInput));
   });
   app.patch('/tasks/:id', (req, res) => {
-    const body = object(req.body, ['title', 'description', 'prUrl', 'tagIds']);
+    const body = object(req.body, [
+      'title',
+      'description',
+      'prUrl',
+      'externalLinks',
+      'tagIds',
+      'favorite',
+    ]);
     for (const field of ['title', 'description']) stringField(body, field, true);
     if (body.prUrl !== null) stringField(body, 'prUrl', true);
     stringArrayField(body, 'tagIds', true);
+    if ('favorite' in body && typeof body.favorite !== 'boolean')
+      throw new HttpError(400, 'favorite must be a boolean.');
     res.json(store.updateTask(id(req), body as UpdateTaskInput));
   });
   app.post('/tasks/:id/connections', (req, res) => {

@@ -8,6 +8,7 @@ import type {
   CreateTaskInput,
   DeletionPreview,
   Dependency,
+  ExternalLink,
   Layout,
   PrMergeStatus,
   PrState,
@@ -36,11 +37,43 @@ export class DomainError extends Error {
 
 interface StoredSnapshot {
   tasks: Task[];
+  prVerifications: Record<string, PrVerification>;
   dependencies: Dependency[];
   references: TaskReference[];
   tags: Tag[];
   layouts: Layout[];
   preferences: WorkspacePreferences;
+}
+
+export interface PrVerification {
+  prState: PrState;
+  prMergeStatus: PrMergeStatus;
+  prCheckedAt: string | null;
+  prError: string | null;
+}
+
+export interface PrVerificationUpdate {
+  state?: PrState;
+  mergeStatus?: PrMergeStatus;
+  checkedAt: string;
+  error: string | null;
+}
+
+export interface PrPollUpdate {
+  url: string;
+  expected: PrVerification;
+  update: PrVerificationUpdate;
+}
+
+const EMPTY_PR_VERIFICATION: PrVerification = {
+  prState: 'unknown',
+  prMergeStatus: 'unknown',
+  prCheckedAt: null,
+  prError: null,
+};
+
+function verificationFor(state: StoredSnapshot, prUrl: string | null): PrVerification {
+  return prUrl ? (state.prVerifications[prUrl] ?? EMPTY_PR_VERIFICATION) : EMPTY_PR_VERIFICATION;
 }
 
 export const FAVORITES_TAG: Tag = {
@@ -131,8 +164,48 @@ function normalizePrUrl(value: unknown): string {
   return `https://github.com/${match[1].toLowerCase()}/${match[2].toLowerCase()}/pull/${Number(match[3])}`;
 }
 
+function validateExternalLinks(value: unknown): ExternalLink[] {
+  if (!Array.isArray(value)) throw new DomainError('externalLinks must be an array');
+  if (value.length > 5) throw new DomainError('A task can have at most 5 external links');
+  const links = value.map((link) => {
+    objectInput(link, ['url', 'label', 'type']);
+    const rawUrl = text(link.url, 'External link URL', true);
+    if (rawUrl.length > 2048)
+      throw new DomainError('External link URL must be at most 2048 characters');
+    let parsed: URL;
+    try {
+      parsed = new URL(rawUrl);
+    } catch {
+      throw new DomainError('External link URL must be a valid HTTPS URL');
+    }
+    if (parsed.protocol !== 'https:' || parsed.username || parsed.password)
+      throw new DomainError('External link URL must be a valid HTTPS URL without credentials');
+    const url = parsed.href;
+    if (url.length > 2048)
+      throw new DomainError('External link URL must be at most 2048 characters');
+    const label = text(link.label, 'External link label').trim();
+    if (label.length > 100)
+      throw new DomainError('External link label must be at most 100 characters');
+    if (!['github', 'jira', 'google-doc', 'generic'].includes(link.type as string))
+      throw new DomainError('External link type must be github, jira, google-doc, or generic');
+    return { url, label, type: link.type } as ExternalLink;
+  });
+  if (new Set(links.map((link) => link.url)).size !== links.length)
+    throw new DomainError('Duplicate external link URL');
+  return links;
+}
+
 function insertTask(state: StoredSnapshot, input: CreateTaskInput): Task {
-  objectInput(input, ['title', 'description', 'kind', 'parentId', 'prUrl', 'tagIds']);
+  objectInput(input, [
+    'title',
+    'description',
+    'kind',
+    'parentId',
+    'prUrl',
+    'externalLinks',
+    'tagIds',
+    'favorite',
+  ]);
   const title = text(input.title, 'Title', true);
   const description = input.description === undefined ? '' : text(input.description, 'Description');
   if (!['container', 'manual', 'pr'].includes(input.kind))
@@ -146,6 +219,13 @@ function insertTask(state: StoredSnapshot, input: CreateTaskInput): Task {
       ? null
       : containerById(state, input.parentId).id;
   const now = new Date().toISOString();
+  if (input.favorite !== undefined && typeof input.favorite !== 'boolean')
+    throw new DomainError('favorite must be a boolean');
+  let tagIds = validateTagIds(state, input.tagIds ?? []);
+  if (input.favorite !== undefined) {
+    tagIds = tagIds.filter((id) => id !== FAVORITES_TAG.id);
+    if (input.favorite) tagIds.push(FAVORITES_TAG.id);
+  }
   const task: Task = {
     id: randomUUID(),
     title,
@@ -158,7 +238,9 @@ function insertTask(state: StoredSnapshot, input: CreateTaskInput): Task {
     prMergeStatus: 'unknown',
     prCheckedAt: null,
     prError: null,
-    tagIds: validateTagIds(state, input.tagIds ?? []),
+    externalLinks:
+      input.externalLinks === undefined ? [] : validateExternalLinks(input.externalLinks),
+    tagIds,
     createdAt: now,
     updatedAt: now,
   };
@@ -198,13 +280,14 @@ function derive(state: StoredSnapshot): Snapshot {
   for (let i = 0; i < queue.length; i++) {
     const id = queue[i];
     const task = tasks.get(id)!;
+    const verification = verificationFor(state, task.prUrl);
     const childrenIds = children.get(id)!;
     const complete = (required: string) => views.get(required)!.status === 'completed';
     const ownSatisfied =
       task.kind === 'manual'
-        ? task.manualDone && (!task.prUrl || task.prState === 'merged')
+        ? task.manualDone && (!task.prUrl || verification.prState === 'merged')
         : task.kind === 'pr'
-          ? task.prState === 'merged'
+          ? verification.prState === 'merged'
           : childrenIds.length > 0 && childrenIds.every(complete);
     const waitingOn = prerequisites.get(id)!.filter((required) => !complete(required));
     const status = ownSatisfied
@@ -214,7 +297,7 @@ function derive(state: StoredSnapshot): Snapshot {
       : waitingOn.length
         ? 'blocked'
         : 'available';
-    views.set(id, { ...task, ownSatisfied, status, waitingOn, childrenIds });
+    views.set(id, { ...task, ...verification, ownSatisfied, status, waitingOn, childrenIds });
     for (const consumer of consumers.get(id)!) {
       const count = remaining.get(consumer)! - 1;
       remaining.set(consumer, count);
@@ -227,7 +310,14 @@ function derive(state: StoredSnapshot): Snapshot {
       409,
     );
   }
-  return { ...state, tasks: state.tasks.map((task) => views.get(task.id)!) };
+  return {
+    tasks: state.tasks.map((task) => views.get(task.id)!),
+    dependencies: state.dependencies,
+    references: state.references,
+    tags: state.tags,
+    layouts: state.layouts,
+    preferences: state.preferences,
+  };
 }
 
 function ownedIds(state: StoredSnapshot, id: string): Set<string> {
@@ -248,7 +338,7 @@ function ownedIds(state: StoredSnapshot, id: string): Set<string> {
 }
 
 export const emptyPortableState = (): PortableState => ({
-  version: 2,
+  version: 3,
   tasks: [],
   dependencies: [],
   references: [],
@@ -257,18 +347,21 @@ export const emptyPortableState = (): PortableState => ({
 
 function portable(state: StoredSnapshot): PortableState {
   return {
-    version: 2,
+    version: 3,
     tasks: state.tasks
-      .map(({ id, title, description, kind, parentId, manualDone, prUrl, tagIds }) => ({
-        id,
-        title,
-        description,
-        kind,
-        parentId,
-        manualDone,
-        prUrl,
-        tagIds: [...tagIds],
-      }))
+      .map(
+        ({ id, title, description, kind, parentId, manualDone, prUrl, externalLinks, tagIds }) => ({
+          id,
+          title,
+          description,
+          kind,
+          parentId,
+          manualDone,
+          prUrl,
+          externalLinks: externalLinks.map((link) => ({ ...link })),
+          tagIds: [...tagIds],
+        }),
+      )
       .sort(byId),
     dependencies: state.dependencies
       .map(({ id, prerequisiteId, dependentId }) => ({ id, prerequisiteId, dependentId }))
@@ -289,16 +382,28 @@ function byId(a: { id: string }, b: { id: string }): number {
 
 export function validatePortableState(value: unknown): PortableState {
   objectInput(value, ['version', 'tasks', 'dependencies', 'references', 'tags']);
-  if (value.version !== 1 && value.version !== 2)
+  if (value.version !== 1 && value.version !== 2 && value.version !== 3)
     throw new DomainError('Unsupported state version');
   const version = value.version;
   if (version === 1 && 'tags' in value) throw new DomainError('Unexpected input field');
-  if (version === 2 && !('tags' in value)) throw new DomainError('Missing state field');
+  if (version >= 2 && !('tags' in value)) throw new DomainError('Missing state field');
   const fields = {
     tasks:
       version === 1
         ? ['id', 'title', 'description', 'kind', 'parentId', 'manualDone', 'prUrl']
-        : ['id', 'title', 'description', 'kind', 'parentId', 'manualDone', 'prUrl', 'tagIds'],
+        : version === 2
+          ? ['id', 'title', 'description', 'kind', 'parentId', 'manualDone', 'prUrl', 'tagIds']
+          : [
+              'id',
+              'title',
+              'description',
+              'kind',
+              'parentId',
+              'manualDone',
+              'prUrl',
+              'externalLinks',
+              'tagIds',
+            ],
     dependencies: ['id', 'prerequisiteId', 'dependentId'],
     references: ['id', 'containerId', 'taskId'],
     tags: ['id', 'name', 'color', 'system'],
@@ -331,13 +436,25 @@ export function validatePortableState(value: unknown): PortableState {
           if (normalizePrUrl(item.prUrl) !== item.prUrl)
             throw new DomainError('PR URL must be normalized');
         } else if (item.prUrl !== null) throw new DomainError('Containers cannot have a PR URL');
-        if (version === 2) {
+        if (version >= 2) {
           if (!Array.isArray(item.tagIds) || item.tagIds.some((tagId) => typeof tagId !== 'string'))
             throw new DomainError('tagIds must be an array of tag IDs');
           if (new Set(item.tagIds).size !== item.tagIds.length)
             throw new DomainError('Duplicate tag ID');
           if (item.tagIds.filter((tagId) => tagId !== FAVORITES_TAG.id).length > 3)
             throw new DomainError('A task can have at most 3 custom tags');
+        }
+        if (version === 3) {
+          const links = validateExternalLinks(item.externalLinks);
+          if (
+            links.some((link, index) => {
+              const input = (item.externalLinks as unknown[])[index] as Record<string, unknown>;
+              return (
+                input.url !== link.url || input.label !== link.label || input.type !== link.type
+              );
+            })
+          )
+            throw new DomainError('External links must be normalized');
         }
       } else if (collection === 'tags') {
         if (item.id === FAVORITES_TAG.id || item.system !== false)
@@ -349,7 +466,7 @@ export function validatePortableState(value: unknown): PortableState {
       }
     }
   }
-  const tags = (version === 2 ? value.tags : []) as Tag[];
+  const tags = (version >= 2 ? value.tags : []) as Tag[];
   const names = new Set<string>([FAVORITES_TAG.name.toLowerCase()]);
   for (const tag of tags) {
     const key = tag.name.toLowerCase();
@@ -359,6 +476,7 @@ export function validatePortableState(value: unknown): PortableState {
   const portableTasks = (value.tasks as unknown as PortableState['tasks']).map((task) => ({
     ...task,
     tagIds: version === 1 ? [] : [...task.tagIds],
+    externalLinks: version === 3 ? task.externalLinks.map((link) => ({ ...link })) : [],
   }));
   const knownTags = new Set([FAVORITES_TAG.id, ...tags.map((tag) => tag.id)]);
   for (const task of portableTasks)
@@ -374,6 +492,7 @@ export function validatePortableState(value: unknown): PortableState {
       createdAt: '',
       updatedAt: '',
     })),
+    prVerifications: {},
     dependencies: value.dependencies as unknown as Dependency[],
     references: value.references as unknown as TaskReference[],
     tags,
@@ -444,6 +563,7 @@ export class Store {
       this.db.prepare('INSERT OR IGNORE INTO foggybrain_snapshot (id, payload) VALUES (1, ?)').run(
         JSON.stringify({
           tasks: [],
+          prVerifications: {},
           dependencies: [],
           references: [],
           tags: [],
@@ -460,13 +580,44 @@ export class Store {
   private read(): StoredSnapshot {
     const row = this.db.prepare('SELECT payload FROM foggybrain_snapshot WHERE id = 1').get()!;
     const state = JSON.parse(row.payload as string) as StoredSnapshot;
+    const migrateLegacyPrVerifications = state.prVerifications === undefined;
+    state.prVerifications ??= {};
     state.tags ??= [];
     state.preferences ??= { hideCompleted: true };
     if (!state.tags.some((tag) => tag.id === FAVORITES_TAG.id))
       state.tags.push({ ...FAVORITES_TAG });
     for (const task of state.tasks) {
       task.prMergeStatus ??= 'unknown';
+      task.externalLinks ??= [];
       task.tagIds ??= [];
+      if (migrateLegacyPrVerifications && task.prUrl) {
+        const candidate: PrVerification = {
+          prState: task.prState ?? 'unknown',
+          prMergeStatus: task.prMergeStatus,
+          prCheckedAt: task.prCheckedAt ?? null,
+          prError: task.prError ?? null,
+        };
+        const current = state.prVerifications[task.prUrl];
+        const checkedAt = (verification: PrVerification) =>
+          verification.prCheckedAt ? Date.parse(verification.prCheckedAt) : -Infinity;
+        if (!current || checkedAt(candidate) > checkedAt(current)) {
+          state.prVerifications[task.prUrl] = candidate;
+        } else if (
+          checkedAt(candidate) === checkedAt(current) &&
+          JSON.stringify(candidate) !== JSON.stringify(current)
+        ) {
+          state.prVerifications[task.prUrl] = {
+            prState: candidate.prState === current.prState ? current.prState : 'unknown',
+            prMergeStatus:
+              candidate.prMergeStatus === current.prMergeStatus ? current.prMergeStatus : 'unknown',
+            prCheckedAt: current.prCheckedAt,
+            prError:
+              current.prError ??
+              candidate.prError ??
+              'Legacy task records had conflicting PR verification.',
+          };
+        }
+      }
     }
     return state;
   }
@@ -577,26 +728,22 @@ export class Store {
       const now = new Date().toISOString();
       state.tasks = merged.tasks.map((task) => {
         const old = previous.get(task.id);
-        const samePr =
-          old && old.kind === task.kind && task.prUrl !== null && old.prUrl === task.prUrl;
         const unchanged =
           old &&
           Object.entries(task).every(([key, value]) => {
             const previous = old[key as keyof Task];
             return Array.isArray(value)
-              ? Array.isArray(previous) &&
-                  value.length === previous.length &&
-                  value.every((item, index) => item === previous[index])
+              ? Array.isArray(previous) && JSON.stringify(value) === JSON.stringify(previous)
               : previous === value;
           });
         return {
           ...task,
           createdAt: old?.createdAt ?? now,
           updatedAt: unchanged ? old.updatedAt : now,
-          prState: samePr ? old.prState : 'unknown',
-          prMergeStatus: samePr ? old.prMergeStatus : 'unknown',
-          prCheckedAt: samePr ? old.prCheckedAt : null,
-          prError: samePr ? old.prError : null,
+          prState: 'unknown',
+          prMergeStatus: 'unknown',
+          prCheckedAt: null,
+          prError: null,
         };
       });
       state.dependencies = merged.dependencies;
@@ -682,23 +829,32 @@ export class Store {
   }
 
   updateTask(id: string, input: UpdateTaskInput): TaskView {
-    objectInput(input, ['title', 'description', 'prUrl', 'tagIds']);
+    objectInput(input, ['title', 'description', 'prUrl', 'externalLinks', 'tagIds', 'favorite']);
     if (!Object.keys(input).length) throw new DomainError('At least one field is required');
     return this.mutate((state) => {
       const task = taskById(state, id);
       if ('title' in input) task.title = text(input.title, 'Title', true);
       if ('description' in input) task.description = text(input.description, 'Description');
-      if ('tagIds' in input) task.tagIds = validateTagIds(state, input.tagIds);
+      if ('tagIds' in input) {
+        const custom = validateTagIds(state, input.tagIds, false);
+        task.tagIds = [
+          ...(task.tagIds.includes(FAVORITES_TAG.id) ? [FAVORITES_TAG.id] : []),
+          ...custom,
+        ];
+      }
+      if ('favorite' in input) {
+        if (typeof input.favorite !== 'boolean')
+          throw new DomainError('favorite must be a boolean');
+        task.tagIds = task.tagIds.filter((tagId) => tagId !== FAVORITES_TAG.id);
+        if (input.favorite) task.tagIds.unshift(FAVORITES_TAG.id);
+      }
+      if ('externalLinks' in input) task.externalLinks = validateExternalLinks(input.externalLinks);
       if ('prUrl' in input) {
         if (task.kind === 'container') throw new DomainError('Containers cannot have a PR URL');
         const prUrl =
           task.kind === 'manual' && input.prUrl === null ? null : normalizePrUrl(input.prUrl);
         if (prUrl !== task.prUrl) {
           task.prUrl = prUrl;
-          task.prState = 'unknown';
-          task.prMergeStatus = 'unknown';
-          task.prCheckedAt = null;
-          task.prError = null;
         }
       }
       task.updatedAt = new Date().toISOString();
@@ -958,26 +1114,61 @@ export class Store {
     }).preferences;
   }
 
-  updatePr(
-    id: string,
-    input: {
-      state?: PrState;
-      mergeStatus?: PrMergeStatus;
-      checkedAt: string;
-      error: string | null;
-    },
-  ): TaskView {
+  updatePr(id: string, input: PrVerificationUpdate): TaskView {
+    this.validatePrUpdate(input);
+    return this.mutate((state) => {
+      const task = taskById(state, id);
+      if (task.kind === 'container' || !task.prUrl)
+        throw new DomainError('Only tasks with a PR URL can receive PR updates');
+      const current = verificationFor(state, task.prUrl);
+      state.prVerifications[task.prUrl] = {
+        prState: input.state ?? current.prState,
+        prMergeStatus: input.mergeStatus ?? current.prMergeStatus,
+        prCheckedAt: input.checkedAt,
+        prError: input.error,
+      };
+    }).tasks.find((task) => task.id === id)!;
+  }
+
+  commitPrPoll(updates: PrPollUpdate[]): string[] {
+    if (!Array.isArray(updates)) throw new DomainError('PR poll updates must be an array');
+    const seen = new Set<string>();
+    for (const item of updates) {
+      objectInput(item, ['url', 'expected', 'update']);
+      const url = normalizePrUrl(item.url);
+      if (url !== item.url) throw new DomainError('PR poll URL must be normalized');
+      if (seen.has(url)) throw new DomainError('Duplicate PR poll URL');
+      seen.add(url);
+      objectInput(item.expected, ['prState', 'prMergeStatus', 'prCheckedAt', 'prError']);
+      this.validatePrUpdate(item.update);
+    }
+    const committed: string[] = [];
+    this.mutate((state) => {
+      const tracked = new Set(state.tasks.flatMap((task) => (task.prUrl ? [task.prUrl] : [])));
+      for (const item of updates) {
+        if (!tracked.has(item.url)) continue;
+        const current = verificationFor(state, item.url);
+        if (JSON.stringify(current) !== JSON.stringify(item.expected)) continue;
+        state.prVerifications[item.url] = {
+          prState: item.update.state ?? current.prState,
+          prMergeStatus: item.update.mergeStatus ?? current.prMergeStatus,
+          prCheckedAt: item.update.checkedAt,
+          prError: item.update.error,
+        };
+        committed.push(item.url);
+      }
+    });
+    return committed;
+  }
+
+  private validatePrUpdate(input: PrVerificationUpdate): void {
     objectInput(input, ['state', 'mergeStatus', 'checkedAt', 'error']);
     const checkedAt = text(input.checkedAt, 'PR check time', true);
     if (!Number.isFinite(Date.parse(checkedAt))) throw new DomainError('Invalid PR check time');
     if (input.error !== null && typeof input.error !== 'string')
       throw new DomainError('PR error must be a string or null');
-    if (
-      input.state !== undefined &&
-      !['unknown', 'open', 'closed', 'merged'].includes(input.state)
-    ) {
+    if (input.state !== undefined && !['unknown', 'open', 'closed', 'merged'].includes(input.state))
       throw new DomainError('Invalid PR state');
-    }
     if (
       input.mergeStatus !== undefined &&
       ![
@@ -991,20 +1182,8 @@ export class Store {
         'blocked',
         'ready',
       ].includes(input.mergeStatus)
-    ) {
+    )
       throw new DomainError('Invalid PR merge status');
-    }
-    return this.mutate((state) => {
-      const task = taskById(state, id);
-      if (task.kind === 'container' || !task.prUrl)
-        throw new DomainError('Only tasks with a PR URL can receive PR updates');
-      // Partial polling failures must not discard independently verified fields.
-      if (input.state !== undefined) task.prState = input.state;
-      if (input.mergeStatus !== undefined) task.prMergeStatus = input.mergeStatus;
-      task.prCheckedAt = checkedAt;
-      task.prError = input.error;
-      task.updatedAt = new Date().toISOString();
-    }).tasks.find((task) => task.id === id)!;
   }
 
   close(): void {

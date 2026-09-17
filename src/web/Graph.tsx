@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   ReactFlow,
   Background,
@@ -118,7 +118,14 @@ function Step({ data, selected }: NodeProps<StepNode>) {
         </div>
       )}
       {task.kind === 'container' && (
-        <div className="node-progress">
+        <div
+          className="node-progress"
+          role="progressbar"
+          aria-label={`${data.completedChildren} of ${task.childrenIds.length} child tasks completed`}
+          aria-valuemin={0}
+          aria-valuemax={task.childrenIds.length}
+          aria-valuenow={data.completedChildren}
+        >
           <span
             style={{
               width: `${task.childrenIds.length ? (data.completedChildren / task.childrenIds.length) * 100 : 0}%`,
@@ -137,6 +144,7 @@ interface Props {
   snapshot: Snapshot;
   viewId: string;
   selectedId: string | null;
+  selectedEdgeId: string | null;
   onSelect: (id: string | null) => void;
   onOpen: (id: string) => void;
   onConnect: (connection: Connection) => void;
@@ -148,6 +156,7 @@ function Canvas({
   snapshot,
   viewId,
   selectedId,
+  selectedEdgeId,
   onSelect,
   onOpen,
   onConnect,
@@ -156,35 +165,62 @@ function Canvas({
 }: Props) {
   const [nodes, setNodes] = useState<StepNode[]>([]);
   const { fitView } = useReactFlow();
-  const parent = snapshot.tasks.find((task) => task.id === viewId);
-  const tasks = snapshot.tasks.filter((task) =>
-    viewId === 'root' ? task.parentId === null : parent?.childrenIds.includes(task.id),
+  const taskById = useMemo(
+    () => new Map(snapshot.tasks.map((task) => [task.id, task])),
+    [snapshot.tasks],
   );
-  const ids = new Set(tasks.map((task) => task.id));
-  const layout = snapshot.layouts.find((layout) => layout.viewId === viewId);
+  const tasks = useMemo(() => {
+    const childIds = new Set(taskById.get(viewId)?.childrenIds ?? []);
+    return snapshot.tasks.filter((task) =>
+      viewId === 'root' ? task.parentId === null : childIds.has(task.id),
+    );
+  }, [snapshot.tasks, taskById, viewId]);
+  const ids = useMemo(() => new Set(tasks.map((task) => task.id)), [tasks]);
+  const layout = useMemo(
+    () => snapshot.layouts.find((candidate) => candidate.viewId === viewId),
+    [snapshot.layouts, viewId],
+  );
   const manual = layout?.mode === 'manual';
-  const dependencies = snapshot.dependencies.filter(
-    (edge) => ids.has(edge.prerequisiteId) && ids.has(edge.dependentId),
+  const dependencies = useMemo(
+    () =>
+      snapshot.dependencies.filter(
+        (edge) => ids.has(edge.prerequisiteId) && ids.has(edge.dependentId),
+      ),
+    [snapshot.dependencies, ids],
   );
-  const edges: Edge[] = dependencies.map((edge) => {
-    const complete =
-      snapshot.tasks.find((task) => task.id === edge.prerequisiteId)?.status === 'completed';
-    return {
-      id: edge.id,
-      source: edge.prerequisiteId,
-      target: edge.dependentId,
-      type: 'smoothstep',
-      markerEnd: {
-        type: MarkerType.ArrowClosed,
-        color: complete ? '#658c61' : '#a0aaa3',
-        width: 17,
-        height: 17,
-      },
-      style: { stroke: complete ? '#658c61' : '#a0aaa3', strokeWidth: 1.6 },
-      ariaLabel: 'Dependency, select to inspect or remove',
-      interactionWidth: 24,
-    };
-  });
+  const edges = useMemo<Edge[]>(
+    () =>
+      dependencies.map((edge) => {
+        const prerequisite = taskById.get(edge.prerequisiteId)!;
+        const dependent = taskById.get(edge.dependentId)!;
+        const state =
+          prerequisite.status !== 'completed'
+            ? 'waiting'
+            : dependent.status === 'completed'
+              ? 'settled'
+              : 'released';
+        const color = state === 'waiting' ? '#707a72' : '#658c61';
+        return {
+          id: edge.id,
+          source: edge.prerequisiteId,
+          target: edge.dependentId,
+          type: 'smoothstep',
+          className: `dependency-edge dependency-edge--${state}`,
+          animated: state === 'released',
+          selected: edge.id === selectedEdgeId,
+          markerEnd: {
+            type: MarkerType.ArrowClosed,
+            color,
+            width: 17,
+            height: 17,
+          },
+          style: { stroke: color, strokeWidth: edge.id === selectedEdgeId ? 2.6 : 1.8 },
+          ariaLabel: `${prerequisite.title} is a prerequisite for ${dependent.title}; prerequisite ${prerequisite.status === 'completed' ? 'complete' : 'incomplete'}`,
+          interactionWidth: 24,
+        };
+      }),
+    [dependencies, selectedEdgeId, taskById],
+  );
 
   useEffect(() => {
     const graph = new dagre.graphlib.Graph();
@@ -197,9 +233,12 @@ function Canvas({
       });
     for (const edge of dependencies) graph.setEdge(edge.prerequisiteId, edge.dependentId);
     dagre.layout(graph);
+    const storedPositions = new Map(
+      layout?.positions.map((position) => [position.nodeId, position]),
+    );
     setNodes(
       tasks.map((task) => {
-        const stored = manual && layout.positions.find((position) => position.nodeId === task.id);
+        const stored = manual ? storedPositions.get(task.id) : undefined;
         const position = stored || {
           x: graph.node(task.id).x - 127,
           y: graph.node(task.id).y - graph.node(task.id).height / 2,
@@ -209,21 +248,28 @@ function Canvas({
           type: 'step',
           position: { x: position.x, y: position.y },
           selected: task.id === selectedId,
+          ariaLabel: `${task.title}, ${task.status} ${task.kind}`,
+          ariaRole: 'button',
           data: {
             task,
             reference: task.parentId !== (viewId === 'root' ? null : viewId),
             open: onOpen,
-            completedChildren: snapshot.tasks.filter(
-              (child) => task.childrenIds.includes(child.id) && child.status === 'completed',
-            ).length,
+            completedChildren: task.childrenIds.reduce(
+              (count, childId) => count + (taskById.get(childId)?.status === 'completed' ? 1 : 0),
+              0,
+            ),
           },
         };
       }),
     );
-    // Callbacks belong to this render; rebuilding is driven by server state or selection, not callback identity.
-  }, [snapshot, viewId, selectedId]);
+    // Callbacks and selection belong to this render; layout rebuilding follows server state, not their identity.
+  }, [snapshot, viewId]);
 
-  const topology = `${viewId}:${tasks.map((task) => task.id).join(',')}:${dependencies.map((edge) => edge.id).join(',')}:${manual}`;
+  useEffect(() => {
+    setNodes((current) => current.map((node) => ({ ...node, selected: node.id === selectedId })));
+  }, [selectedId]);
+
+  const topology = `${viewId}:${tasks.map((task) => `${task.id}:${task.kind}:${task.prUrl !== null}`).join(',')}:${dependencies.map((edge) => `${edge.id}:${edge.prerequisiteId}:${edge.dependentId}`).join(',')}:${manual}`;
   useEffect(() => {
     const timer = setTimeout(() => {
       void fitView({ padding: 0.22, maxZoom: 1, duration: 250 });

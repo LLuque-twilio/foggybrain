@@ -14,7 +14,8 @@
   },
   "scripts": {
     "dev": "concurrently -k -n server,web \"tsx watch src/server.ts\" \"vite --host 127.0.0.1\"",
-    "build": "tsc -p tsconfig.server.json && tsc -p tsconfig.json && vite build",
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
+    "build": "pnpm run clean && tsc -p tsconfig.server.json && tsc -p tsconfig.json && vite build",
     "start": "node dist/server/server.js",
     "foggy": "tsx src/cli.ts",
     "test": "tsx --test src/*.test.ts",

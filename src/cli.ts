@@ -8,6 +8,7 @@ import type {
   ConnectTaskInput,
   CreateWorkspaceInput,
   DeletionPreview,
+  ExternalLink,
   Snapshot,
   SyncPreview,
   SyncStatus,
@@ -41,6 +42,17 @@ import {
   uninstall,
   upgrade,
 } from './install.js';
+
+function parseExternalLinks(value: string): ExternalLink[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new Error('--external-links must be valid JSON.');
+  }
+  if (!Array.isArray(parsed)) throw new Error('--external-links must be a JSON array.');
+  return parsed as ExternalLink[];
+}
 
 export async function main(argv = process.argv): Promise<void> {
   // `-v`/`--version` is recognized only as the first argument, handled before Commander
@@ -193,12 +205,6 @@ export async function main(argv = process.argv): Promise<void> {
     if (options.tag.length > 3) throw new Error('A task can have at most 3 custom tags.');
     return options.tag;
   };
-  const updateStar = (id: string, options: { star?: boolean; unstar?: boolean }) =>
-    options.star
-      ? request<TaskView>(`/tasks/${encodeURIComponent(id)}/tags/favorites`, 'PUT', {})
-      : options.unstar
-        ? request<TaskView>(`/tasks/${encodeURIComponent(id)}/tags/favorites`, 'DELETE')
-        : undefined;
   const missingCommand = (command: string) => () => {
     throw new Error(`Specify a ${command}command. Run foggy ${command}--help for usage.`);
   };
@@ -297,16 +303,24 @@ export async function main(argv = process.argv): Promise<void> {
     .option('--parent <id>', 'owning container ID (omit for root)')
     .option('--pr <url>', 'GitHub pull request URL (optional manual gate; required for PR tasks)')
     .option('--description <text>', 'task description')
+    .option(
+      '--external-links <json>',
+      'JSON array of up to five external links',
+      parseExternalLinks,
+    )
     .action(async (title, options) => {
-      const created = await request<TaskView>('/tasks', 'POST', {
-        title,
-        kind: options.kind,
-        parentId: options.parent,
-        prUrl: options.pr,
-        description: options.description,
-        tagIds: customTagIds(options),
-      });
-      output((await updateStar(created.id, options)) ?? created);
+      output(
+        await request<TaskView>('/tasks', 'POST', {
+          title,
+          kind: options.kind,
+          parentId: options.parent,
+          prUrl: options.pr,
+          description: options.description,
+          externalLinks: options.externalLinks,
+          tagIds: customTagIds(options),
+          favorite: options.star ? true : options.unstar ? false : undefined,
+        }),
+      );
     });
   task
     .command('connect <id>')
@@ -328,17 +342,24 @@ export async function main(argv = process.argv): Promise<void> {
     .option('--parent <id>', 'new task owning container ID (omit for root)')
     .option('--pr <url>', 'new task GitHub PR URL (optional manual gate; required for PR tasks)')
     .option('--description <text>', 'new task description')
+    .option(
+      '--external-links <json>',
+      'new task external links as a JSON array',
+      parseExternalLinks,
+    )
     .option('--dependency <id>', 'dependency relationship ID to split instead of adding a leaf')
     .action(async (id, options) => {
       if ((options.task === undefined) === (options.title === undefined))
         throw new Error('Provide exactly one of --task or --title.');
       if (
         options.task !== undefined &&
-        [options.kind, options.parent, options.pr, options.description].some(
+        [options.kind, options.parent, options.pr, options.description, options.externalLinks].some(
           (value) => value !== undefined,
         )
       )
-        throw new Error('--kind, --parent, --pr, and --description require --title, not --task.');
+        throw new Error(
+          '--kind, --parent, --pr, --description, and --external-links require --title, not --task.',
+        );
       const body: ConnectTaskInput = {
         direction: options.direction,
         dependencyId: options.dependency,
@@ -351,6 +372,7 @@ export async function main(argv = process.argv): Promise<void> {
                 parentId: options.parent,
                 prUrl: options.pr,
                 description: options.description,
+                externalLinks: options.externalLinks,
               },
             }),
       };
@@ -425,33 +447,29 @@ export async function main(argv = process.argv): Promise<void> {
     .description('Update editable fields; use --description "" to clear a description')
     .option('--title <title>', 'new title')
     .option('--description <text>', 'new description')
-    .option('--pr <url>', 'new GitHub PR URL (resets verified PR state)')
+    .option('--pr <url>', "new GitHub PR URL (reuses that URL's cached verification)")
+    .option(
+      '--external-links <json>',
+      'replace external links with a JSON array',
+      parseExternalLinks,
+    )
     .addOption(new Option('--remove-pr', 'remove an optional manual PR gate').conflicts('pr'))
     .action(async (id, options) => {
       const body: UpdateTaskInput = {
         title: options.title,
         description: options.description,
         prUrl: options.removePr ? null : options.pr,
+        externalLinks: options.externalLinks,
+        tagIds: customTagIds(options),
+        favorite: options.star ? true : options.unstar ? false : undefined,
       };
-      const tagIds = customTagIds(options);
       if (
         Object.values(body).every((value) => value === undefined) &&
-        tagIds === undefined &&
         !options.star &&
         !options.unstar
       )
-        throw new Error(
-          'Provide at least one of --title, --description, --pr, --remove-pr, --tag, --star, or --unstar.',
-        );
-      let updated: TaskView | undefined;
-      if (Object.values(body).some((value) => value !== undefined))
-        updated = await request<TaskView>(`/tasks/${encodeURIComponent(id)}`, 'PATCH', body);
-      if (tagIds !== undefined)
-        updated = await request<TaskView>(`/tasks/${encodeURIComponent(id)}/tags`, 'PUT', {
-          tagIds,
-        });
-      updated = (await updateStar(id, options)) ?? updated;
-      output(updated);
+        throw new Error('Provide at least one editable field, tag change, --star, or --unstar.');
+      output(await request<TaskView>(`/tasks/${encodeURIComponent(id)}`, 'PATCH', body));
     });
   for (const [name, done] of [
     ['done', true],

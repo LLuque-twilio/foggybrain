@@ -20,6 +20,7 @@ function task(id: string, prUrl = `https://github.com/other/private/pull/${id}`)
     prMergeStatus: 'unknown',
     prCheckedAt: null,
     prError: null,
+    externalLinks: [],
     tagIds: [],
     createdAt: new Date(NOW).toISOString(),
     updatedAt: new Date(NOW).toISOString(),
@@ -40,20 +41,35 @@ function fakeStore(tasks: TaskView[] = []) {
     preferences: { hideCompleted: true },
   };
   const updates: ({ id: string } & Parameters<Store['updatePr']>[1])[] = [];
+  const batches: Parameters<Store['commitPrPoll']>[0][] = [];
   const store = {
     snapshot: () => structuredClone(snapshot),
-    updatePr(id: string, update: Parameters<Store['updatePr']>[1]) {
-      const task = snapshot.tasks.find((task) => task.id === id);
-      assert.ok(task, 'poller must not update deleted tasks');
-      updates.push({ id, ...update });
-      if (update.state !== undefined) task.prState = update.state;
-      if (update.mergeStatus !== undefined) task.prMergeStatus = update.mergeStatus;
-      task.prCheckedAt = update.checkedAt;
-      task.prError = update.error;
-      return task;
+    commitPrPoll(batch: Parameters<Store['commitPrPoll']>[0]) {
+      batches.push(structuredClone(batch));
+      const committed: string[] = [];
+      for (const { url, expected, update } of batch) {
+        const tasks = snapshot.tasks.filter((task) => task.prUrl === url);
+        if (!tasks.length) continue;
+        const current = {
+          prState: tasks[0].prState,
+          prMergeStatus: tasks[0].prMergeStatus,
+          prCheckedAt: tasks[0].prCheckedAt,
+          prError: tasks[0].prError,
+        };
+        if (JSON.stringify(current) !== JSON.stringify(expected)) continue;
+        for (const task of tasks) {
+          updates.push({ id: task.id, ...update });
+          if (update.state !== undefined) task.prState = update.state;
+          if (update.mergeStatus !== undefined) task.prMergeStatus = update.mergeStatus;
+          task.prCheckedAt = update.checkedAt;
+          task.prError = update.error;
+        }
+        committed.push(url);
+      }
+      return committed;
     },
   } as ConstructorParameters<typeof GithubPoller>[0];
-  return { store, snapshot, updates };
+  return { store, snapshot, updates, batches };
 }
 
 function json(body: unknown, status = 200, headers?: HeadersInit) {
@@ -218,6 +234,12 @@ test('authored OPEN cache is independent of tracked accessible PRs and distingui
     ['merged', 'closed', 'open', 'merged'],
   );
   assert.equal(mock.calls.filter((url) => url.pathname.endsWith('/pulls/1')).length, 1);
+  assert.equal(fake.batches.length, 1);
+  assert.deepEqual(fake.batches[0].map((update) => update.url).sort(), [
+    'https://github.com/other/private/pull/1',
+    'https://github.com/other/private/pull/2',
+    'https://github.com/other/private/pull/3',
+  ]);
   assert.deepEqual(poller.getPrs(), [
     {
       url: 'https://github.com/me/project/pull/9',
@@ -233,6 +255,44 @@ test('authored OPEN cache is independent of tracked accessible PRs and distingui
   copy[0].title = 'mutated';
   assert.equal(poller.getPrs()[0].title, 'Authored 9');
   assert.equal(JSON.stringify(status).includes(TOKEN), false);
+});
+
+test('tracked PR polling caps concurrency at four and commits after all requests finish', async () => {
+  const fake = fakeStore(Array.from({ length: 6 }, (_, index) => task(String(index + 1))));
+  const responses: (() => void)[] = [];
+  let active = 0;
+  let maximum = 0;
+  let requested = 0;
+  const fourRequested = deferred<void>();
+  const sixRequested = deferred<void>();
+  const mock = mockFetch((url) => {
+    if (url.pathname === '/user') return json({ login: 'me' });
+    if (url.pathname === '/search/issues') return search();
+    active++;
+    requested++;
+    maximum = Math.max(maximum, active);
+    if (requested === 4) fourRequested.resolve();
+    if (requested === 6) sixRequested.resolve();
+    return new Promise<Response>((resolve) => {
+      responses.push(() => {
+        active--;
+        resolve(json({ state: 'closed', merged: true }));
+      });
+    });
+  });
+  const poller = new GithubPoller(fake.store, { token: TOKEN, fetch: mock.fetcher });
+  const sync = poller.sync();
+  await fourRequested.promise;
+  assert.equal(maximum, 4);
+  assert.equal(fake.batches.length, 0);
+  responses.splice(0, 2).forEach((resolve) => resolve());
+  await sixRequested.promise;
+  assert.equal(maximum, 4);
+  assert.equal(fake.batches.length, 0);
+  responses.splice(0).forEach((resolve) => resolve());
+  await sync;
+  assert.equal(fake.batches.length, 1);
+  assert.equal(fake.batches[0].length, 6);
 });
 
 test('list and tracked errors retain caches/verified state and clear independently after recovery', async () => {

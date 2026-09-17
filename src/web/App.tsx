@@ -77,6 +77,16 @@ const empty: Snapshot = {
 };
 const route = () => window.location.hash.slice(1) || '/';
 
+function normalizeSnapshot(state: Snapshot): Snapshot {
+  if (state.tasks.every((task) => task.externalLinks !== undefined)) return state;
+  return {
+    ...state,
+    tasks: state.tasks.map((task) =>
+      task.externalLinks === undefined ? { ...task, externalLinks: [] } : task,
+    ),
+  };
+}
+
 export function WorkspaceApp({
   workspace,
   controls,
@@ -135,18 +145,31 @@ export function WorkspaceApp({
   async function refresh() {
     const id = ++refreshId.current;
     try {
-      const [state, status, pulls] = await Promise.all([
-        api<Snapshot>('/state'),
-        api<GithubStatus>('/github/status'),
-        api<GithubPr[]>('/github/prs'),
+      const [state, [statusResult, pullsResult]] = await Promise.all([
+        api<Snapshot>('/state').then(normalizeSnapshot),
+        Promise.allSettled([api<GithubStatus>('/github/status'), api<GithubPr[]>('/github/prs')]),
       ]);
       if (id !== refreshId.current) return;
       startTransition(() => {
         setSnapshot((previous) =>
           JSON.stringify(previous) === JSON.stringify(state) ? previous : state,
         );
-        setGithub(status);
-        setPrs(pulls);
+        const status: GithubStatus =
+          statusResult.status === 'fulfilled'
+            ? statusResult.value
+            : {
+                configured: false,
+                login: null,
+                lastSync: null,
+                error: 'Could not load GitHub status.',
+                syncing: false,
+              };
+        setGithub(
+          pullsResult.status === 'rejected' && !status.error
+            ? { ...status, error: 'Could not load authored pull requests.' }
+            : status,
+        );
+        if (pullsResult.status === 'fulfilled') setPrs(pullsResult.value);
         setConnectionError('');
         setLoading(false);
       });
@@ -696,6 +719,7 @@ export function WorkspaceApp({
                       snapshot={snapshot}
                       viewId={viewId}
                       selectedId={selectedId}
+                      selectedEdgeId={edgeId}
                       onSelect={(id) => {
                         setSelectedId(id);
                         setEdgeId(null);
@@ -831,6 +855,10 @@ export function WorkspaceApp({
                   {layout?.mode === 'manual'
                     ? 'Drag nodes to arrange. Changes are saved.'
                     : 'Automatically arranged'}
+                </span>
+                <span className="legend-dependency">
+                  <i aria-hidden="true" /> Prerequisite to dependent
+                  <small>Green motion means the next step is released</small>
                 </span>
               </div>
             </section>

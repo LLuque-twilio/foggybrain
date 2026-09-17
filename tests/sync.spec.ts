@@ -95,6 +95,7 @@ for (const mode of ['merge', 'revert'] as const) {
                 prMergeStatus: 'unknown',
                 prCheckedAt: null,
                 prError: null,
+                externalLinks: [],
                 tagIds: [],
                 createdAt: '2026-09-08T00:00:00Z',
                 updatedAt: '2026-09-08T00:00:00Z',

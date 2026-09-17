@@ -69,15 +69,16 @@ Migration preserves the existing database as workspace `default`; new entries re
 ### Create
 
 ```text
-foggy task create <title> [--kind <kind>] [--parent <id>] [--pr <url>] [--description <text>] [--tag <id>...] [--star | --unstar]
+foggy task create <title> [--kind <kind>] [--parent <id>] [--pr <url>] [--description <text>] [--external-links <json>] [--tag <id>...] [--star | --unstar]
 ```
 
 - `--kind` is `manual` (default), `container`, or `pr`.
 - `--parent` makes the task an **owned** child of an existing container. Omit for a root task; do not pass the word `root` to create.
 - `--pr` supplies a required URL for a `pr` task or an optional merge gate for a `manual` task. It does not change the task kind; containers reject it.
 - `--description` supplies optional text.
+- `--external-links` supplies a JSON array of up to five `{url,label,type}` objects. Type is `github`, `jira`, `google-doc`, or `generic`; labels may be empty.
 - Repeat `--tag TAG_ID` to set the initial custom tags (up to three). IDs, not names, are accepted. Favorites does not use this flag.
-- `--star` adds the built-in Favorites tag after creation. `--unstar` explicitly leaves it absent.
+- `--star` adds the built-in Favorites tag. `--unstar` explicitly leaves it absent. Task fields, custom tags, and Favorites commit in the same create transaction.
 
 ```sh
 foggy --json task create "Launch" --kind container
@@ -90,10 +91,10 @@ Returns a `TaskView`. Server validation enforces kinds, ownership, PR URL validi
 ### Connect Or Insert
 
 ```text
-foggy task connect <id> --direction prerequisite|dependent (--task <id> | --title <title>) [--dependency <id>] [--kind <kind>] [--parent <id>] [--pr <url>] [--description <text>]
+foggy task connect <id> --direction prerequisite|dependent (--task <id> | --title <title>) [--dependency <id>] [--kind <kind>] [--parent <id>] [--pr <url>] [--description <text>] [--external-links <json>]
 ```
 
-Connect an existing task (`--task`) or create and connect a new task (`--title`) relative to the anchor task positional ID. Exactly one is required. Creation flags (`--kind`, `--parent`, `--pr`, `--description`) cannot be used with `--task`. New tasks use the same defaults as `task create`: manual kind and root ownership unless `--parent` is supplied; the anchor's parent is not inherited. Existing tasks retain their ownership.
+Connect an existing task (`--task`) or create and connect a new task (`--title`) relative to the anchor task positional ID. Exactly one is required. Creation flags (`--kind`, `--parent`, `--pr`, `--description`, `--external-links`) cannot be used with `--task`. New tasks use the same defaults as `task create`: manual kind and root ownership unless `--parent` is supplied; the anchor's parent is not inherited. Existing tasks retain their ownership.
 
 - `--direction prerequisite`: connected task -> anchor.
 - `--direction dependent`: anchor -> connected task.
@@ -149,23 +150,24 @@ The original `waitingOn` is only the IDs of incomplete direct prerequisites. `ch
 ### Update
 
 ```text
-foggy task update <id> [--title <title>] [--description <text>] [--pr <url> | --remove-pr] [--tag <id>...] [--star | --unstar]
+foggy task update <id> [--title <title>] [--description <text>] [--pr <url> | --remove-pr] [--external-links <json>] [--tag <id>...] [--star | --unstar]
 ```
 
-At least one flag is required. Omitted fields are unchanged. An empty description clears it. Kind, parent, ID, computed status, and PR merge state are not editable here. Updating a PR URL resets verified PR state so a previous merge cannot satisfy a new PR.
+At least one flag is required. Omitted fields are unchanged. An empty description clears it. Kind, parent, ID, computed status, and PR merge state are not editable here. Updating a PR URL switches to that URL's workspace-local cached verification; unseen URLs start unverified.
 
-Repeated `--tag TAG_ID` replaces the task's **entire custom tag set** with exactly those IDs, up to three; it does not add to the existing set. Omitting `--tag` leaves custom tags unchanged. Use `--star` or `--unstar` for Favorites. Custom replacement and Favorites changes use atomic membership routes so they do not overwrite each other; when combined, custom tags are replaced first and the star operation follows.
+Repeated `--tag TAG_ID` replaces the task's **entire custom tag set** with exactly those IDs, up to three; it does not add to the existing set. Omitting `--tag` leaves custom tags unchanged. Use `--star` or `--unstar` for Favorites. All supplied fields, custom tags, and Favorites commit in one task update transaction.
 
 ```sh
 foggy --json task update TASK_ID --title "Verify deployment" --description "Include the canary"
 foggy --json task update TASK_ID --description ""
 foggy --json task update PR_TASK_ID --pr https://github.com/OWNER/REPO/pull/124
+foggy --json task update TASK_ID --external-links '[{"url":"https://team.atlassian.net/browse/MEMORY-1","label":"Ticket","type":"jira"}]'
 foggy --json task update TASK_ID --tag TAG_ID --tag OTHER_TAG_ID --star
 ```
 
 Returns the updated `TaskView`.
 
-Use `--pr URL` to attach or replace a manual task's PR gate, or `--remove-pr` to remove it. Removing a gate preserves manual work status and resets PR verification. Standalone PR tasks cannot remove their required gate.
+Use `--pr URL` to attach or replace a manual task's PR gate, or `--remove-pr` to remove it. Removing a gate preserves manual work status; the detached URL's workspace-local verification remains cached. Standalone PR tasks cannot remove their required gate.
 
 ### Done And Reopen
 
@@ -305,7 +307,7 @@ foggy github sync
 
 A large or slow sync can outlast the CLI's request timeout while the server continues working. Check `github status` afterward rather than repeatedly issuing sync requests.
 
-Supported PR URLs are HTTPS `github.com/OWNER/REPO/pull/NUMBER`, normalized by the server. Closed-but-unmerged PRs do not satisfy a PR task. Only a verified merge does. Changing `--pr` resets prior verification.
+Supported PR URLs are HTTPS `github.com/OWNER/REPO/pull/NUMBER`, normalized by the server. Closed-but-unmerged PRs do not satisfy a PR task. Only a verified merge does. Changing `--pr` switches to the new URL's cached verification; an unseen URL starts unverified.
 
 Use least-privilege token access to relevant repositories: fine-grained Metadata and Pull requests read permissions, with Contents read if required for repository access. Private repositories may additionally need organization approval or SSO authorization. See the [README security and GitHub notes](../README.md); localhost is not an authentication boundary.
 
@@ -360,7 +362,7 @@ Preview IDs are process-local, single-use tokens, not durable approvals. A newer
 
 On first sync, an empty local graph can pull existing remote state, or a missing remote file can receive local state. If both sides are nonempty without a shared baseline, apply is blocked even with `--resolve`. Preserve existing data: use a separate new local data directory to inspect/pull remote state or a distinct unused remote path to publish an independent graph. Do not wipe either side to bypass the guard.
 
-The versioned JSON (`version: 2`) contains editable task fields, custom tag definitions, tag memberships, and dependency/reference records, not PR verification, derived completion, layouts, timestamps, or the canonical Favorites definition. PR state is reverified locally by server polling; remote JSON cannot assert a verified merge. The server persists its baseline in SQLite and makes automatic full local backups in `foggybrain_sync_backups`. There is no restore API or automatic backup pruning. Keep independent database backups too. GitHub Contents API writes create Git history without a local git CLI or clone; deleting sensitive text from current state does not remove it from history or backups.
+The versioned JSON (`version: 3`) contains editable task fields including external links, custom tag definitions, tag memberships, and dependency/reference records, not PR verification, derived completion, layouts, timestamps, or the canonical Favorites definition. Version 1 and 2 inputs upgrade with empty external-link lists. PR state is reverified locally by server polling; remote JSON cannot assert a verified merge. GitHub writes use two-space indentation and a trailing newline for readable repository diffs. The server persists its baseline in SQLite and makes automatic full local backups in `foggybrain_sync_backups`. There is no restore API or automatic backup pruning. Keep independent database backups too. GitHub Contents API writes create Git history without a local git CLI or clone; deleting sensitive text from current state does not remove it from history or backups.
 
 ### Diagnosing Failures
 
