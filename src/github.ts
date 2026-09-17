@@ -1,11 +1,11 @@
-import { DomainError, type Store } from './core.js';
-import type {
-  GithubPr,
-  GithubStatus,
-  PrMergeStatus,
-  TaskView,
-  WorkspaceRepositories,
-} from './shared.js';
+import {
+  DomainError,
+  type PrPollUpdate,
+  type PrVerification,
+  type PrVerificationUpdate,
+  type Store,
+} from './core.js';
+import type { GithubPr, GithubStatus, PrMergeStatus, WorkspaceRepositories } from './shared.js';
 import { safeSyncRef, type WorkspaceBranches, type WorkspaceFiles } from './shared.js';
 
 const API_ROOT = 'https://api.github.com';
@@ -257,7 +257,7 @@ export class GithubPoller {
   private readonly timeoutMs: number;
   private readonly fetcher: typeof fetch;
   private readonly now: () => number;
-  private readonly store: Pick<Store, 'snapshot' | 'updatePr'>;
+  private readonly store: Pick<Store, 'snapshot' | 'commitPrPoll'>;
   private state: GithubStatus;
   private prs: GithubPr[] = [];
   private pending: Promise<GithubStatus> | null = null;
@@ -266,7 +266,7 @@ export class GithubPoller {
   private stopped = false;
   private retryAt = 0;
 
-  constructor(store: Pick<Store, 'snapshot' | 'updatePr'>, options: GithubPollerOptions = {}) {
+  constructor(store: Pick<Store, 'snapshot' | 'commitPrPoll'>, options: GithubPollerOptions = {}) {
     this.store = store;
     this.token = options.token?.trim() ?? '';
     this.intervalMs = parsePollInterval(String(options.intervalMs ?? 60_000));
@@ -477,26 +477,6 @@ export class GithubPoller {
     );
   }
 
-  private current(task: TaskView): boolean {
-    return (
-      !this.stopped &&
-      this.store
-        .snapshot()
-        .tasks.some(
-          (current) =>
-            current.id === task.id &&
-            current.kind === task.kind &&
-            current.prUrl === task.prUrl &&
-            current.createdAt === task.createdAt,
-        )
-    );
-  }
-
-  private apply(task: TaskView, update: Parameters<Store['updatePr']>[1]): void {
-    // There is no await between the guard and write, so URL edits/deletions cannot race the update.
-    if (this.current(task)) this.store.updatePr(task.id, update);
-  }
-
   private async mergeStatus(parsed: ReturnType<typeof parseGithubPrUrl>): Promise<PrMergeStatus> {
     const result = record(
       await this.request('/graphql', {
@@ -560,9 +540,26 @@ export class GithubPoller {
       .snapshot()
       .tasks.filter((task) => (task.kind === 'pr' || task.kind === 'manual') && task.prUrl);
     const errors: string[] = [];
+    const byUrl = new Map<string, PrVerification>();
+    for (const task of tasks) {
+      if (!byUrl.has(task.prUrl!)) {
+        byUrl.set(task.prUrl!, {
+          prState: task.prState,
+          prMergeStatus: task.prMergeStatus,
+          prCheckedAt: task.prCheckedAt,
+          prError: task.prError,
+        });
+      }
+    }
     if (!this.token) {
-      for (const task of tasks)
-        this.apply(task, { checkedAt: new Date(this.now()).toISOString(), error: NOT_CONFIGURED });
+      const checkedAt = new Date(this.now()).toISOString();
+      this.store.commitPrPoll(
+        [...byUrl].map(([url, expected]) => ({
+          url,
+          expected,
+          update: { checkedAt, error: NOT_CONFIGURED },
+        })),
+      );
       this.state.error = NOT_CONFIGURED;
       return;
     }
@@ -572,51 +569,58 @@ export class GithubPoller {
     } catch (error) {
       errors.push(`Authored PRs: ${errorMessage(error)}`);
     }
-    const byUrl = new Map<string, TaskView[]>();
-    for (const task of tasks) byUrl.set(task.prUrl!, [...(byUrl.get(task.prUrl!) ?? []), task]);
-    for (const [url, group] of byUrl) {
-      if (this.stopped) return;
-      if (!group.some((task) => this.current(task))) continue;
-      try {
-        let parsed: ReturnType<typeof parseGithubPrUrl>;
+    const entries = [...byUrl];
+    const staged = new Array<PrPollUpdate>(entries.length);
+    const trackedErrors = new Map<string, string>();
+    let next = 0;
+    const worker = async () => {
+      for (;;) {
+        const index = next++;
+        if (index >= entries.length || this.stopped) return;
+        const [url, expected] = entries[index];
+        let update: PrVerificationUpdate;
         try {
-          parsed = parseGithubPrUrl(url);
-        } catch {
-          throw new GithubError('Tracked PR URL is not a valid GitHub pull request URL.');
-        }
-        const pr = record(
-          await this.request(
-            `/repos/${encodeURIComponent(parsed.owner)}/${encodeURIComponent(parsed.repo)}/pulls/${parsed.number}`,
-          ),
-        );
-        if ((pr.state !== 'open' && pr.state !== 'closed') || typeof pr.merged !== 'boolean') {
-          throw new GithubError('GitHub returned an invalid pull request state.');
-        }
-        const update: Parameters<Store['updatePr']>[1] = {
-          state: pr.merged ? 'merged' : pr.state,
-          checkedAt: new Date(this.now()).toISOString(),
-          error: null,
-        };
-        if (update.state === 'open') {
+          let parsed: ReturnType<typeof parseGithubPrUrl>;
           try {
-            update.mergeStatus = await this.mergeStatus(parsed);
-          } catch (error) {
-            update.error = `PR readiness metadata unavailable; last readiness retained and may be stale. ${errorMessage(error)}`;
-            if (group.some((task) => this.current(task)))
-              errors.push(`Tracked PRs: ${update.error}`);
+            parsed = parseGithubPrUrl(url);
+          } catch {
+            throw new GithubError('Tracked PR URL is not a valid GitHub pull request URL.');
           }
-        } else {
-          update.mergeStatus = 'unknown';
+          const pr = record(
+            await this.request(
+              `/repos/${encodeURIComponent(parsed.owner)}/${encodeURIComponent(parsed.repo)}/pulls/${parsed.number}`,
+            ),
+          );
+          if ((pr.state !== 'open' && pr.state !== 'closed') || typeof pr.merged !== 'boolean')
+            throw new GithubError('GitHub returned an invalid pull request state.');
+          update = {
+            state: pr.merged ? 'merged' : pr.state,
+            checkedAt: new Date(this.now()).toISOString(),
+            error: null,
+          };
+          if (update.state === 'open') {
+            try {
+              update.mergeStatus = await this.mergeStatus(parsed);
+            } catch (error) {
+              update.error = `PR readiness metadata unavailable; last readiness retained and may be stale. ${errorMessage(error)}`;
+              trackedErrors.set(url, update.error);
+            }
+          } else {
+            update.mergeStatus = 'unknown';
+          }
+        } catch (error) {
+          const message = errorMessage(error);
+          trackedErrors.set(url, message);
+          update = { checkedAt: new Date(this.now()).toISOString(), error: message };
         }
-        update.checkedAt = new Date(this.now()).toISOString();
-        for (const task of group) this.apply(task, update);
-      } catch (error) {
-        const message = errorMessage(error);
-        if (group.some((task) => this.current(task))) errors.push(`Tracked PRs: ${message}`);
-        for (const task of group)
-          this.apply(task, { checkedAt: new Date(this.now()).toISOString(), error: message });
+        staged[index] = { url, expected, update };
       }
-    }
+    };
+    await Promise.all(Array.from({ length: Math.min(4, entries.length) }, worker));
+    if (this.stopped) return;
+    const committed = new Set(this.store.commitPrPoll(staged));
+    for (const [url, message] of trackedErrors)
+      if (committed.has(url)) errors.push(`Tracked PRs: ${message}`);
     if (!this.stopped) {
       this.state.lastSync = new Date(this.now()).toISOString();
       this.state.error = errors.length ? [...new Set(errors)].join(' ') : null;

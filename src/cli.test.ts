@@ -22,6 +22,7 @@ const task = (id: string, extra: Partial<TaskView> = {}): TaskView => ({
   prMergeStatus: 'unknown',
   prCheckedAt: null,
   prError: null,
+  externalLinks: [],
   tagIds: [],
   createdAt: '2026-09-08T00:00:00.000Z',
   updatedAt: '2026-09-08T00:00:00.000Z',
@@ -353,7 +354,39 @@ test('CLI supports attaching and removing manual PR gates without deriving compl
   assert.equal(requests.length, 3);
 });
 
-test('CLI task tag flags use whole-set replacement followed by atomic Favorites updates', async (t) => {
+test('CLI accepts explicit external-link arrays for task creation and replacement', async (t) => {
+  const { run, requests } = await fixture(t);
+  const links = [
+    { url: 'https://team.atlassian.net/browse/MEMORY-1', label: 'Ticket', type: 'jira' },
+  ];
+  for (const args of [
+    ['task', 'create', 'Work', '--external-links', JSON.stringify(links)],
+    ['task', 'update', 'task-id', '--external-links', '[]'],
+  ]) {
+    const result = await run(['--json', ...args]);
+    assert.equal(result.code, 0);
+  }
+  assert.deepEqual(requests, [
+    {
+      method: 'POST',
+      path: '/api/tasks',
+      body: { title: 'Work', kind: 'manual', externalLinks: links },
+    },
+    { method: 'PATCH', path: '/api/tasks/task-id', body: { externalLinks: [] } },
+  ]);
+  const invalid = await run([
+    '--json',
+    'task',
+    'update',
+    'task-id',
+    '--external-links',
+    'not-json',
+  ]);
+  assert.equal(invalid.code, 1);
+  assert.match(JSON.parse(invalid.stderr).error, /valid JSON/);
+});
+
+test('CLI task tag flags and Favorites use one atomic task mutation', async (t) => {
   const { run, requests } = await fixture(t);
   const created = await run([
     '--json',
@@ -371,9 +404,13 @@ test('CLI task tag flags use whole-set replacement followed by atomic Favorites 
     {
       method: 'POST',
       path: '/api/tasks',
-      body: { title: 'Tagged', kind: 'manual', tagIds: ['tag-one', 'tag-two'] },
+      body: {
+        title: 'Tagged',
+        kind: 'manual',
+        tagIds: ['tag-one', 'tag-two'],
+        favorite: true,
+      },
     },
-    { method: 'PUT', path: '/api/tasks/server-id/tags/favorites', body: {} },
   ]);
 
   const updated = await run([
@@ -394,14 +431,8 @@ test('CLI task tag flags use whole-set replacement followed by atomic Favorites 
     {
       method: 'PATCH',
       path: '/api/workspaces/selected/tasks/a%2Fb',
-      body: { description: 'Changed' },
+      body: { description: 'Changed', tagIds: ['tag-two'], favorite: false },
     },
-    {
-      method: 'PUT',
-      path: '/api/workspaces/selected/tasks/a%2Fb/tags',
-      body: { tagIds: ['tag-two'] },
-    },
-    { method: 'DELETE', path: '/api/workspaces/selected/tasks/a%2Fb/tags/favorites' },
   ]);
 });
 

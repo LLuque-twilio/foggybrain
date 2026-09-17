@@ -181,16 +181,18 @@ const domain: Route[] = [
     response: 'TaskView',
     status: 201,
     errors: [409],
+    description:
+      'Creates task fields, custom tags, and optional absolute Favorites membership in one transaction.',
   },
   {
     method: 'patch',
     path: '/tasks/{id}',
     id: 'updateTask',
-    summary: 'Update task text or PR gate',
+    summary: 'Update task text, PR gate, or custom tags',
     body: 'UpdateTaskInput',
     response: 'TaskView',
     description:
-      'At least one field is required. PR URL validity and permitted gate changes depend on task kind; null removes only a manual gate.',
+      'At least one field is required. Task fields, custom tags, and optional absolute Favorites membership update in one transaction. Custom tagIds cannot contain favorites. PR URL validity and permitted gate changes depend on task kind; null removes only a manual gate.',
   },
   {
     method: 'post',

@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test, type TestContext } from 'node:test';
 import { DomainError, Store, validatePortableState } from './core.js';
+import { inferExternalLinkType } from './external-links.js';
 import type { ConnectTaskInput, CreateTaskInput, TaskView } from './shared.js';
 
 function memory(t: TestContext): Store {
@@ -51,6 +52,7 @@ test('empty store and task defaults; returned values do not mutate storage', (t)
   assert.equal(task.prMergeStatus, 'unknown');
   assert.equal(task.prCheckedAt, null);
   assert.equal(task.prError, null);
+  assert.deepEqual(task.externalLinks, []);
   assert.equal(task.status, 'available');
   assert.equal(task.ownSatisfied, false);
   assert.deepEqual(task.waitingOn, []);
@@ -86,6 +88,57 @@ test('early done propagates through a chain immediately when its prerequisite co
   assert.deepEqual(view(store, c).waitingOn, [b.id]);
   store.setDone(c.id, false);
   assert.equal(view(store, c).status, 'blocked');
+});
+
+test('external links are validated, normalized, limited, and user-classified', (t) => {
+  assert.equal(inferExternalLinkType('https://github.com/acme/app/issues/1'), 'github');
+  assert.equal(inferExternalLinkType('https://team.atlassian.net/browse/MEMORY-1'), 'jira');
+  assert.equal(inferExternalLinkType('https://docs.google.com/document/d/abc'), 'google-doc');
+  assert.equal(inferExternalLinkType('https://docs.google.com/spreadsheets/d/abc'), 'generic');
+  const store = memory(t);
+  const task = store.createTask({
+    title: 'Research',
+    kind: 'container',
+    externalLinks: [
+      {
+        url: 'https://github.com/acme/app/issues/1',
+        label: '  Tracked as Jira by choice  ',
+        type: 'jira',
+      },
+      { url: 'https://docs.google.com/document/d/abc', label: '', type: 'google-doc' },
+    ],
+  });
+  assert.deepEqual(task.externalLinks, [
+    {
+      url: 'https://github.com/acme/app/issues/1',
+      label: 'Tracked as Jira by choice',
+      type: 'jira',
+    },
+    { url: 'https://docs.google.com/document/d/abc', label: '', type: 'google-doc' },
+  ]);
+  assert.deepEqual(
+    store.updateTask(task.id, {
+      externalLinks: [{ url: 'https://example.com', label: 'Reference', type: 'generic' }],
+    }).externalLinks,
+    [{ url: 'https://example.com/', label: 'Reference', type: 'generic' }],
+  );
+  for (const externalLinks of [
+    Array.from({ length: 6 }, (_, index) => ({
+      url: `https://example.com/${index}`,
+      label: '',
+      type: 'generic' as const,
+    })),
+    [
+      { url: 'https://example.com', label: 'One', type: 'generic' as const },
+      { url: 'https://example.com/', label: 'Two', type: 'generic' as const },
+    ],
+    [{ url: 'http://example.com', label: '', type: 'generic' as const }],
+    [{ url: 'https://user:secret@example.com', label: '', type: 'generic' as const }],
+    [{ url: 'https://example.com', label: 'x'.repeat(101), type: 'generic' as const }],
+    [{ url: 'https://example.com', label: '', type: 'other' as 'generic' }],
+  ]) {
+    rejectsUnchanged(store, () => store.updateTask(task.id, { externalLinks }));
+  }
 });
 
 test('diamond graph waits for both branches and accepts shared prerequisites', (t) => {
@@ -781,7 +834,7 @@ test('deleting the last child reopens its owner and all consumers', (t) => {
   assert.equal(view(store, next).status, 'ready');
 });
 
-test('PR URLs normalize identity and URL changes reset verification and reopen consumers', (t) => {
+test('PR URLs normalize identity and URL changes switch verification and reopen consumers', (t) => {
   const store = memory(t);
   const owner = container(store);
   const pr = store.createTask({
@@ -813,6 +866,78 @@ test('PR URLs normalize identity and URL changes reset verification and reopen c
   assert.equal(view(store, pr).status, 'available');
   assert.equal(view(store, owner).status, 'available');
   assert.equal(view(store, next).status, 'ready');
+});
+
+test('PR verification is shared by URL and reused by later references', (t) => {
+  const store = memory(t);
+  const url = 'https://github.com/o/r/pull/1';
+  const first = store.createTask({ title: 'First gate', kind: 'pr', prUrl: url });
+  const second = store.createTask({ title: 'Second gate', kind: 'manual', prUrl: url });
+  store.setDone(second.id, true);
+  const checkedAt = '2026-09-08T12:00:00Z';
+  store.updatePr(first.id, { state: 'merged', mergeStatus: 'ready', checkedAt, error: null });
+  for (const task of [first, second]) {
+    const current = view(store, task);
+    assert.equal(current.prState, 'merged');
+    assert.equal(current.prMergeStatus, 'ready');
+    assert.equal(current.status, 'completed');
+  }
+  store.updateTask(second.id, { prUrl: 'https://github.com/o/r/pull/2' });
+  assert.equal(view(store, second).prState, 'unknown');
+  store.updateTask(second.id, { prUrl: url });
+  assert.equal(view(store, second).prState, 'merged');
+  store.deleteTask(first.id);
+  store.deleteTask(second.id);
+  const later = store.createTask({ title: 'Later gate', kind: 'pr', prUrl: url });
+  assert.equal(view(store, later).prState, 'merged');
+});
+
+test('PR poll results commit as one canonical batch and reject stale cache expectations', (t) => {
+  const store = memory(t);
+  const first = store.createTask({
+    title: 'First',
+    kind: 'pr',
+    prUrl: 'https://github.com/o/r/pull/1',
+  });
+  const second = store.createTask({
+    title: 'Second',
+    kind: 'pr',
+    prUrl: 'https://github.com/o/r/pull/2',
+  });
+  const expected = {
+    prState: 'unknown' as const,
+    prMergeStatus: 'unknown' as const,
+    prCheckedAt: null,
+    prError: null,
+  };
+  assert.deepEqual(
+    store.commitPrPoll([
+      {
+        url: first.prUrl!,
+        expected,
+        update: { state: 'open', checkedAt: '2026-09-08T12:00:00Z', error: null },
+      },
+      {
+        url: second.prUrl!,
+        expected,
+        update: { state: 'merged', checkedAt: '2026-09-08T12:00:00Z', error: null },
+      },
+    ]),
+    [first.prUrl, second.prUrl],
+  );
+  assert.equal(view(store, first).prState, 'open');
+  assert.equal(view(store, second).prState, 'merged');
+  assert.deepEqual(
+    store.commitPrPoll([
+      {
+        url: first.prUrl!,
+        expected,
+        update: { state: 'merged', checkedAt: '2026-09-08T13:00:00Z', error: null },
+      },
+    ]),
+    [],
+  );
+  assert.equal(view(store, first).prState, 'open');
 });
 
 test('PR poll errors retain last verified state, successes clear error, and only merged satisfies', (t) => {
@@ -965,7 +1090,7 @@ test('manual PR gates propagate attach, merge, change, removal and reopening thr
     rejectsUnchanged(store, () => store.updateTask(owner.id, { prUrl }));
 });
 
-test('manual gate imports retain verification only for the same ID, kind and URL', (t) => {
+test('manual gate imports reuse verification by URL across identity and kind changes', (t) => {
   for (const change of ['same', 'id', 'kind', 'url', 'detach'] as const) {
     const store = memory(t);
     const task = store.createTask({
@@ -998,14 +1123,12 @@ test('manual gate imports retain verification only for the same ID, kind and URL
       store.prepareSync(target, store.syncRecord(target), local, remote, null),
     );
     const current = view(store, imported);
-    assert.equal(current.prState, change === 'same' ? 'merged' : 'unknown');
-    assert.equal(current.prMergeStatus, change === 'same' ? 'ready' : 'unknown');
-    assert.equal(current.prError, change === 'same' ? 'Stale' : null);
-    assert.equal(current.prCheckedAt, change === 'same' ? '2026-09-08T12:00:00Z' : null);
-    assert.equal(
-      current.status,
-      change === 'same' || change === 'detach' ? 'completed' : 'available',
-    );
+    const reusesCache = change === 'same' || change === 'id' || change === 'kind';
+    assert.equal(current.prState, reusesCache ? 'merged' : 'unknown');
+    assert.equal(current.prMergeStatus, reusesCache ? 'ready' : 'unknown');
+    assert.equal(current.prError, reusesCache ? 'Stale' : null);
+    assert.equal(current.prCheckedAt, reusesCache ? '2026-09-08T12:00:00Z' : null);
+    assert.equal(current.status, reusesCache || change === 'detach' ? 'completed' : 'available');
   }
 });
 
@@ -1308,6 +1431,34 @@ test('legacy persisted snapshots default missing readiness without losing verifi
   assert.ok(persisted.tasks.every((task: TaskView) => task.prMergeStatus === 'unknown'));
 });
 
+test('canonical PR cache is not overwritten by stale task-local verification', (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'foggybrain-pr-cache-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const path = join(directory, 'brain.sqlite');
+  const store = new Store(path);
+  const pr = store.createTask({ kind: 'pr', title: 'PR', prUrl: 'https://github.com/o/r/pull/1' });
+  store.updatePr(pr.id, {
+    state: 'open',
+    checkedAt: '2026-09-08T12:00:00Z',
+    error: null,
+  });
+  store.close();
+  const db = new DatabaseSync(path);
+  t.after(() => db.close());
+  const persisted = JSON.parse(
+    db.prepare('SELECT payload FROM foggybrain_snapshot WHERE id = 1').get()!.payload as string,
+  );
+  persisted.tasks[0].prState = 'merged';
+  persisted.tasks[0].prCheckedAt = '2099-01-01T00:00:00Z';
+  db.prepare('UPDATE foggybrain_snapshot SET payload = ? WHERE id = 1').run(
+    JSON.stringify(persisted),
+  );
+  const restarted = new Store(path);
+  t.after(() => restarted.close());
+  assert.equal(view(restarted, pr).prState, 'open');
+  assert.equal(view(restarted, pr).prCheckedAt, '2026-09-08T12:00:00Z');
+});
+
 test('a SQLite write failure rolls back all changes and leaves the store usable', (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'foggybrain-core-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
@@ -1339,7 +1490,7 @@ test('portable state validates exact shapes, IDs, memberships and graph before i
     null,
     [],
     {},
-    { ...state, version: 3 },
+    { ...state, version: 4 },
     { ...state, layouts: [] },
     { ...state, references: null },
   ];
@@ -1401,6 +1552,20 @@ test('portable state validates exact shapes, IDs, memberships and graph before i
   assert.deepEqual(store.exportState(), state);
 });
 
+test('portable external link validation ignores JSON object property order', (t) => {
+  const store = memory(t);
+  store.createTask({
+    title: 'Linked task',
+    kind: 'manual',
+    externalLinks: [{ url: 'https://example.com/doc', label: 'Doc', type: 'generic' }],
+  });
+  const state = store.exportState();
+  state.tasks[0].externalLinks = [
+    { type: 'generic', label: 'Doc', url: 'https://example.com/doc' },
+  ];
+  assert.deepEqual(validatePortableState(state), state);
+});
+
 test('tags validate memberships, protect Favorites, and cascade deletion', (t) => {
   const store = memory(t);
   const task = manual(store);
@@ -1408,9 +1573,12 @@ test('tags validate memberships, protect Favorites, and cascade deletion', (t) =
     store.createTag({ name, color: `#00000${index}` }),
   );
   assert.equal(store.snapshot().tags[0].id, 'favorites');
-  assert.deepEqual(
-    store.updateTask(task.id, { tagIds: [...tags.map((tag) => tag.id), 'favorites'] }).tagIds,
-    [...tags.map((tag) => tag.id), 'favorites'],
+  assert.deepEqual(store.updateTask(task.id, { tagIds: tags.map((tag) => tag.id) }).tagIds, [
+    ...tags.map((tag) => tag.id),
+  ]);
+  assert.throws(
+    () => store.updateTask(task.id, { tagIds: [...tags.map((tag) => tag.id), 'favorites'] }),
+    /membership route/,
   );
   assert.throws(() => store.createTag({ name: ' favorites', color: '#123456' }), DomainError);
   assert.throws(() => store.createTag({ name: 'one', color: '#123456' }), DomainError);
@@ -1420,6 +1588,11 @@ test('tags validate memberships, protect Favorites, and cascade deletion', (t) =
   assert.throws(() => store.updateTag('favorites', { name: 'Starred' }), DomainError);
   assert.throws(() => store.deleteTag('favorites'), DomainError);
   assert.throws(() => store.replaceTaskTags(task.id, ['favorites']), DomainError);
+  store.attachTaskTag(task.id, 'favorites');
+  assert.deepEqual(store.updateTask(task.id, { tagIds: [tags[1].id] }).tagIds, [
+    'favorites',
+    tags[1].id,
+  ]);
   assert.deepEqual(store.replaceTaskTags(task.id, [tags[0].id]).tagIds, ['favorites', tags[0].id]);
   const preview = store.previewTagDeletion(tags[0].id);
   assert.equal(preview.tag.id, tags[0].id);
@@ -1431,21 +1604,33 @@ test('tags validate memberships, protect Favorites, and cascade deletion', (t) =
   assert.deepEqual(view(store, task).tagIds, ['favorites']);
 });
 
-test('portable v1 upgrades to v2 and v2 omits and rejects the Favorites definition', (t) => {
+test('portable v1 upgrades to v3 and v3 omits and rejects the Favorites definition', (t) => {
   const store = memory(t);
   const task = manual(store);
   const legacy = {
     version: 1,
-    tasks: store.exportState().tasks.map(({ tagIds: _tagIds, ...entry }) => entry),
+    tasks: store
+      .exportState()
+      .tasks.map(({ tagIds: _tagIds, externalLinks: _externalLinks, ...entry }) => entry),
     dependencies: [],
     references: [],
   };
   assert.deepEqual(validatePortableState(legacy), {
-    version: 2,
-    tasks: [{ ...legacy.tasks[0], tagIds: [] }],
+    version: 3,
+    tasks: [{ ...legacy.tasks[0], tagIds: [], externalLinks: [] }],
     dependencies: [],
     references: [],
     tags: [],
+  });
+  const v2 = {
+    ...store.exportState(),
+    version: 2 as const,
+    tasks: store.exportState().tasks.map(({ externalLinks: _externalLinks, ...entry }) => entry),
+  };
+  assert.deepEqual(validatePortableState(v2), {
+    ...v2,
+    version: 3,
+    tasks: v2.tasks.map((entry) => ({ ...entry, externalLinks: [] })),
   });
   store.attachTaskTag(task.id, 'favorites');
   assert.deepEqual(store.exportState().tags, []);
@@ -1515,8 +1700,22 @@ for (const mode of ['merge', 'revert'] as const)
           waitingOn: _waiting,
           childrenIds: _children,
           ...task
-        }) => task,
+        }) => ({
+          ...task,
+          prState: 'unknown',
+          prMergeStatus: 'unknown',
+          prCheckedAt: null,
+          prError: null,
+        }),
       ),
+      prVerifications: {
+        [pr.prUrl!]: {
+          prState: 'merged',
+          prMergeStatus: 'ready',
+          prCheckedAt: '2026-09-08T12:00:00Z',
+          prError: 'Stale metadata',
+        },
+      },
     };
     db.exec(
       "CREATE TRIGGER fail_sync BEFORE UPDATE ON foggybrain_snapshot BEGIN SELECT RAISE(ABORT, 'disk failure'); END",
@@ -1540,8 +1739,8 @@ for (const mode of ['merge', 'revert'] as const)
     assert.equal(store.snapshot().tasks.find((task) => task.id === pr.id)!.prState, 'merged');
     assert.equal(view(store, pr).prMergeStatus, 'ready');
     assert.equal(view(store, pr).prError, 'Stale metadata');
-    assert.equal(store.snapshot().tasks.find((task) => task.id === 'new-pr')!.prState, 'unknown');
-    assert.equal(view(store, { id: 'new-pr' }).prMergeStatus, 'unknown');
+    assert.equal(store.snapshot().tasks.find((task) => task.id === 'new-pr')!.prState, 'merged');
+    assert.equal(view(store, { id: 'new-pr' }).prMergeStatus, 'ready');
     assert.deepEqual(store.snapshot().layouts, before.layouts);
     store.close();
     const restarted = new Store(path);
@@ -1553,7 +1752,7 @@ for (const mode of ['merge', 'revert'] as const)
     restarted.close();
   });
 
-test('sync imports reset readiness and errors for a changed PR URL on the same task ID', (t) => {
+test('sync imports use uncached readiness for a changed PR URL on the same task ID', (t) => {
   const store = memory(t);
   const target = { repo: 'o/r', branch: 'main', path: 'state.json' };
   const pr = store.createTask({ title: 'PR', kind: 'pr', prUrl: 'https://github.com/o/r/pull/1' });
@@ -1577,11 +1776,14 @@ test('sync imports reset readiness and errors for a changed PR URL on the same t
   assert.equal(imported.prCheckedAt, null);
 });
 
-test('sync preserves updatedAt when reconstructed tag memberships are unchanged', (t) => {
+test('sync preserves updatedAt when reconstructed arrays are unchanged', (t) => {
   const store = memory(t);
   const task = manual(store);
   const tag = store.createTag({ name: 'Release', color: '#7c5cff' });
-  const tagged = store.attachTaskTag(task.id, tag.id);
+  store.attachTaskTag(task.id, tag.id);
+  const tagged = store.updateTask(task.id, {
+    externalLinks: [{ url: 'https://example.com/doc', label: 'Doc', type: 'generic' }],
+  });
   const target = { repo: 'o/r', branch: 'main', path: 'state.json' };
   const local = store.exportState();
   store.finishSync(

@@ -4,11 +4,14 @@ import {
   ArrowUpRight,
   Check,
   Copy,
+  FileText,
+  GitBranch,
   GitPullRequest,
   Link2,
   Pencil,
   Plus,
   RotateCcw,
+  Ticket,
   Trash2,
   X,
 } from 'lucide-react';
@@ -61,6 +64,7 @@ export function Detail({
     (ref) => ref.containerId === viewId && ref.taskId === task.id,
   );
   const memberships = snapshot.references.filter((ref) => ref.taskId === task.id);
+  const externalLinks = task.externalLinks ?? [];
   return (
     <aside className="detail-panel" aria-label="Task details">
       <div className="detail-top">
@@ -116,6 +120,43 @@ export function Detail({
       <p className="description">
         {task.description || 'No description. Add a little context with Edit task.'}
       </p>
+      {externalLinks.length > 0 && (
+        <section className="detail-section external-links">
+          <h3>
+            External resources <span>{externalLinks.length}</span>
+          </h3>
+          {externalLinks.map((link) => {
+            const Icon =
+              link.type === 'github'
+                ? GitBranch
+                : link.type === 'jira'
+                  ? Ticket
+                  : link.type === 'google-doc'
+                    ? FileText
+                    : Link2;
+            const typeLabel =
+              link.type === 'google-doc'
+                ? 'Google Doc'
+                : link.type.charAt(0).toUpperCase() + link.type.slice(1);
+            return (
+              <a
+                className="external-link"
+                href={link.url}
+                target="_blank"
+                rel="noreferrer"
+                key={link.url}
+              >
+                <Icon size={15} />
+                <span>
+                  <strong>{link.label || new URL(link.url).hostname}</strong>
+                  <small>{typeLabel}</small>
+                </span>
+                <ArrowUpRight size={13} />
+              </a>
+            );
+          })}
+        </section>
+      )}
       <section className="detail-section detail-tags">
         <h3>Tags</h3>
         <TagPicker

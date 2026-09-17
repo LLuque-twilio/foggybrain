@@ -117,6 +117,89 @@ test('breadcrumbs retain the map and back follows navigation across reload and b
   await expect(page.getByRole('heading', { name: 'A little room to think.' })).toBeVisible();
 });
 
+test('external resources infer editable types and appear in task details', async ({
+  request,
+  page,
+}) => {
+  const task = await create(request, 'Research the change', 'manual');
+  await page.goto('/#/map');
+  await node(page, task.id).click();
+  const detail = page.getByRole('complementary', { name: 'Task details' });
+  await detail.getByRole('button', { name: 'Edit task', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Edit task' });
+  await dialog.getByRole('button', { name: 'Add external resource' }).click();
+  await dialog.getByLabel('Resource 1 URL').fill('https://github.com/acme/app/issues/42');
+  await dialog.getByLabel('Resource 1 label').fill('Tracking ticket');
+  await expect(dialog.getByRole('combobox', { name: 'Resource 1 type' })).toHaveValue('GitHub');
+  await dialog.getByRole('combobox', { name: 'Resource 1 type' }).fill('Jira');
+  await dialog.getByRole('combobox', { name: 'Resource 1 type' }).press('ArrowDown');
+  await dialog.getByRole('combobox', { name: 'Resource 1 type' }).press('Enter');
+  await dialog.getByRole('button', { name: 'Add external resource' }).click();
+  await dialog.getByLabel('Resource 2 URL').fill('https://docs.google.com/document/d/design');
+  await expect(dialog.getByRole('combobox', { name: 'Resource 2 type' })).toHaveValue('Google Doc');
+  const saved = page.waitForResponse(
+    (response) =>
+      response.url().endsWith(`/tasks/${task.id}`) && response.request().method() === 'PATCH',
+  );
+  await dialog.getByRole('button', { name: 'Save changes' }).click();
+  expect((await saved).request().postDataJSON().externalLinks).toEqual([
+    {
+      url: 'https://github.com/acme/app/issues/42',
+      label: 'Tracking ticket',
+      type: 'jira',
+    },
+    {
+      url: 'https://docs.google.com/document/d/design',
+      label: '',
+      type: 'google-doc',
+    },
+  ]);
+  await expect(detail.getByRole('link', { name: /Tracking ticket Jira/ })).toBeVisible();
+  await expect(detail.getByRole('link', { name: /docs.google.com Google Doc/ })).toBeVisible();
+  await detail.getByRole('button', { name: 'Edit task', exact: true }).click();
+  const reopened = page.getByRole('dialog', { name: 'Edit task' });
+  await reopened.getByLabel('Resource 1 URL').fill('https://github.com/acme/app/issues/43');
+  await expect(reopened.getByRole('combobox', { name: 'Resource 1 type' })).toHaveValue('Jira');
+});
+
+test('legacy task payloads without externalLinks remain selectable and editable', async ({
+  request,
+  page,
+}) => {
+  const task = await create(request, 'Legacy task', 'manual');
+  await page.route('**/api/workspaces/default/state', async (route) => {
+    const response = await route.fetch();
+    const snapshot = (await response.json()) as Snapshot;
+    for (const entry of snapshot.tasks) delete (entry as Partial<TaskView>).externalLinks;
+    await route.fulfill({ response, json: snapshot });
+  });
+  await page.goto('/#/map');
+  await node(page, task.id).click();
+  const detail = page.getByRole('complementary', { name: 'Task details' });
+  await expect(detail.getByRole('heading', { name: task.title })).toBeVisible();
+  await detail.getByRole('button', { name: 'Edit task', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'Edit task' })).toBeVisible();
+});
+
+test('root render failures show recovery UI instead of blanking the app', async ({
+  request,
+  page,
+}) => {
+  await create(request, 'Broken container', 'container');
+  await page.route('**/api/workspaces/default/state', async (route) => {
+    const response = await route.fetch();
+    const snapshot = (await response.json()) as Snapshot;
+    delete (snapshot.tasks[0] as Partial<TaskView>).childrenIds;
+    await route.fulfill({ response, json: snapshot });
+  });
+  await page.goto('/');
+  await expect(
+    page.getByRole('heading', { name: 'Something went wrong while drawing this view.' }),
+  ).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Reload app' })).toBeVisible();
+  await expect(page.getByText(/Cannot read properties of undefined/)).toBeAttached();
+});
+
 test('direct container links have an in-app back fallback', async ({ request, page }) => {
   const parent = await create(request, 'Release', 'container');
   const child = await create(request, 'Deploy', 'container', parent.id);
@@ -1154,7 +1237,14 @@ test('node handles connect and disconnect steps through the canvas', async ({ re
   await node(page, a.id).locator('.react-flow__handle.source').click();
   await node(page, b.id).locator('.react-flow__handle.target').click();
   await expect(node(page, b.id).locator('.status')).toHaveText('Blocked');
-  await expect(page.locator('.react-flow__edge')).toHaveCount(1);
+  const edge = page.locator('.react-flow__edge');
+  await expect(edge).toHaveCount(1);
+  await expect(edge).toHaveClass(/dependency-edge--waiting/);
+  await expect(edge).not.toHaveClass(/animated/);
+  await expect(edge).toHaveAttribute(
+    'aria-label',
+    'Prerequisite is a prerequisite for Dependent; prerequisite incomplete',
+  );
   await expect(node(page, b.id)).toBeInViewport({ ratio: 1 });
   await node(page, b.id).hover();
   const midpoint = await page.locator('.react-flow__edge-interaction').evaluate((element) => {
@@ -1164,9 +1254,32 @@ test('node handles connect and disconnect steps through the canvas', async ({ re
     return { x: screen.x, y: screen.y };
   });
   await page.mouse.click(midpoint.x, midpoint.y);
+  await expect(edge).toHaveClass(/selected/);
   await page.getByRole('button', { name: 'Disconnect', exact: true }).click();
   await expect(node(page, b.id).locator('.status')).toHaveText('Available');
   await expect(page.locator('.react-flow__edge')).toHaveCount(0);
+});
+
+test('dependency edges animate only while completed work releases its dependent', async ({
+  request,
+  page,
+}) => {
+  const parent = await create(request, 'Edge states', 'container');
+  const prerequisite = await create(request, 'First', 'manual', parent.id);
+  const dependent = await create(request, 'Next', 'manual', parent.id);
+  await request.post('/api/dependencies', {
+    data: { prerequisiteId: prerequisite.id, dependentId: dependent.id },
+  });
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.goto(`/#/tasks/${parent.id}`);
+  const edge = page.locator('.react-flow__edge');
+  await request.post(`/api/tasks/${prerequisite.id}/done`, { data: { done: true } });
+  await expect(edge).toHaveClass(/dependency-edge--released/, { timeout: 8000 });
+  await expect(edge).toHaveClass(/animated/);
+  await expect(edge.locator('.react-flow__edge-path')).toHaveCSS('animation-name', 'none');
+  await request.post(`/api/tasks/${dependent.id}/done`, { data: { done: true } });
+  await expect(edge).toHaveClass(/dependency-edge--settled/, { timeout: 8000 });
+  await expect(edge).not.toHaveClass(/animated/);
 });
 
 test('deletion rechecks changed impact and requires a fresh confirmation', async ({

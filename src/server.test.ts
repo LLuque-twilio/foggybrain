@@ -717,6 +717,34 @@ test('tag routes validate registry changes and atomic task memberships', async (
     assert.equal(response.status, 201);
     tags.push(response.body);
   }
+  const atomic = await request('/api/tasks', 'POST', {
+    title: 'Atomic tags',
+    kind: 'manual',
+    tagIds: [tags[0].id],
+    favorite: true,
+  });
+  assert.equal(atomic.status, 201);
+  assert.deepEqual(atomic.body.tagIds, [tags[0].id, 'favorites']);
+  const beforeInvalid = (await request('/api/state')).body;
+  assert.equal(
+    (
+      await request(`/api/tasks/${atomic.body.id}`, 'PATCH', {
+        title: 'Must not commit',
+        favorite: 'yes',
+      })
+    ).status,
+    400,
+  );
+  assert.deepEqual((await request('/api/state')).body, beforeInvalid);
+  const atomicallyUpdated = await request(`/api/tasks/${atomic.body.id}`, 'PATCH', {
+    description: 'Changed together',
+    tagIds: [tags[1].id],
+    favorite: false,
+  });
+  assert.equal(atomicallyUpdated.status, 200);
+  assert.equal(atomicallyUpdated.body.description, 'Changed together');
+  assert.deepEqual(atomicallyUpdated.body.tagIds, [tags[1].id]);
+  assert.equal((await request(`/api/tasks/${atomic.body.id}?confirm=true`, 'DELETE')).status, 200);
   assert.equal((await request('/api/tags', 'POST', { name: 'one', color: '#ffffff' })).status, 400);
   assert.equal((await request('/api/tags/favorites', 'PATCH', { color: '#000000' })).status, 400);
   assert.equal((await request('/api/tags/favorites/deletion-preview')).status, 400);
@@ -734,6 +762,16 @@ test('tag routes validate registry changes and atomic task memberships', async (
       'favorites',
     ),
     true,
+  );
+  const patched = await request(`/api/tasks/${task.id}`, 'PATCH', { tagIds: [tags[1].id] });
+  assert.deepEqual(patched.body.tagIds, ['favorites', tags[1].id]);
+  assert.equal(
+    (
+      await request(`/api/tasks/${task.id}`, 'PATCH', {
+        tagIds: ['favorites', tags[1].id],
+      })
+    ).status,
+    400,
   );
   assert.equal(
     (
@@ -1029,6 +1067,43 @@ test('manual PR gates support create, attach, replace and nullable removal over 
     );
     assert.deepEqual(store.snapshot(), before);
   }
+});
+
+test('external links support user-selected types on every task kind over HTTP', async (t) => {
+  const { request } = await fixture(t);
+  for (const kind of ['manual', 'pr', 'container'] as const) {
+    const externalLinks = [
+      {
+        url: 'https://github.com/acme/app/issues/42',
+        label: 'Context',
+        type: 'jira',
+      },
+    ];
+    const created = await request('/api/tasks', 'POST', {
+      title: kind,
+      kind,
+      ...(kind === 'pr' ? { prUrl: 'https://github.com/acme/app/pull/42' } : {}),
+      externalLinks,
+    });
+    assert.equal(created.status, 201);
+    assert.deepEqual(created.body.externalLinks, externalLinks);
+    const cleared = await request(`/api/tasks/${created.body.id}`, 'PATCH', {
+      externalLinks: [],
+    });
+    assert.equal(cleared.status, 200);
+    assert.deepEqual(cleared.body.externalLinks, []);
+  }
+  for (const externalLinks of [null, {}, 'https://example.com'])
+    assert.equal(
+      (
+        await request('/api/tasks', 'POST', {
+          title: 'Invalid',
+          kind: 'manual',
+          externalLinks,
+        })
+      ).status,
+      400,
+    );
 });
 
 test('JSON validation rejects coercible booleans, unsupported fields, invalid types and nonfinite coordinates', async (t) => {

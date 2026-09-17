@@ -17,6 +17,7 @@ class Github {
   private = true;
   branchExists = true;
   puts = 0;
+  uploadedContent: string | null = null;
   requests: string[] = [];
   duringPut?: () => void;
   failPut: 'before' | 'after' | null = null;
@@ -48,7 +49,8 @@ class Github {
       if (this.state ? body.sha !== this.sha : body.sha !== undefined)
         return Response.json({}, { status: 409 });
       if (this.failPut === 'before') throw new Error(`network failure ${token}`);
-      this.state = JSON.parse(Buffer.from(body.content, 'base64').toString());
+      this.uploadedContent = Buffer.from(body.content, 'base64').toString();
+      this.state = JSON.parse(this.uploadedContent);
       this.revision++;
       this.duringPut?.();
       if (this.failPut === 'after') throw new Error(`network failure ${token}`);
@@ -127,7 +129,7 @@ test('revert requires an existing valid remote file but accepts an empty graph',
   store.createTask({ title: 'Discard', kind: 'manual' });
   const before = store.snapshot();
   await assert.rejects(sync.preview({ mode: 'revert' }), /existing remote state file/);
-  github.state = { ...emptyPortableState(), version: 3 } as unknown as PortableState;
+  github.state = { ...emptyPortableState(), version: 4 } as unknown as PortableState;
   await assert.rejects(sync.preview({ mode: 'revert' }), DomainError);
   github.state = emptyPortableState();
   github.private = false;
@@ -243,9 +245,13 @@ test('config is explicit, separate from GH_TOKEN, and rejects unsafe targets', (
   store.close();
 });
 
-test('missing file bootstraps only on apply, previews are read-only and one-use', async (t) => {
+test('missing file bootstraps as readable JSON only on apply, previews are read-only and one-use', async (t) => {
   const { store, sync, github } = setup(t);
-  const task = store.createTask({ title: 'Local', kind: 'manual' });
+  const task = store.createTask({
+    title: 'Local',
+    kind: 'manual',
+    externalLinks: [{ url: 'https://example.com', label: 'Context', type: 'generic' }],
+  });
   const before = store.snapshot();
   const preview = await sync.preview();
   assert.deepEqual(preview.localChanges, []);
@@ -260,6 +266,9 @@ test('missing file bootstraps only on apply, previews are read-only and one-use'
   assert.equal(status.syncing, false);
   assert.ok(status.lastSync);
   assert.deepEqual(github.state, store.exportState());
+  assert.equal(github.uploadedContent, `${JSON.stringify(store.exportState(), null, 2)}\n`);
+  assert.match(github.uploadedContent!, /\n  "tasks": \[\n/);
+  assert.match(github.uploadedContent!, /"externalLinks": \[/);
   await assert.rejects(sync.apply(preview.previewId), conflict);
   await apply(sync);
   assert.equal(github.puts, 1);
@@ -804,7 +813,7 @@ test('malformed content, oversized envelopes, foreign response URLs and redirect
 });
 
 for (const mode of ['merge', 'revert'] as const)
-  test(`${mode}: PR polling and layouts do not dirty state or stale previews; imports preserve only matching PR cache`, async (t) => {
+  test(`${mode}: PR polling and layouts do not dirty state or stale previews; imports reuse URL cache`, async (t) => {
     const { store, sync, github } = setup(t);
     const pr = store.createTask({
       title: 'PR',

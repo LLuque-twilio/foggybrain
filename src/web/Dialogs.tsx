@@ -1,23 +1,49 @@
 import { createContext, useContext, useState, type ReactNode } from 'react';
-import { AlertTriangle, ArrowRight, Box, GitPullRequest, Link2, ListChecks, X } from 'lucide-react';
+import {
+  AlertTriangle,
+  ArrowRight,
+  Box,
+  GitPullRequest,
+  Link2,
+  ListChecks,
+  Plus,
+  Trash2,
+  X,
+} from 'lucide-react';
 import { Dialog as DialogPrimitive, DialogContent, DialogTitle } from './components/ui/dialog';
+import { inferExternalLinkType } from '../external-links';
 import { Button } from './components/ui/button';
 import { Input } from './components/ui/input';
 import { RadioGroup, RadioGroupItem } from './components/ui/radio-group';
 import { Textarea } from './components/ui/textarea';
 import { LoadingField } from './LoadingField';
+import { SearchableSelect } from './SearchableSelect';
 import { TagPicker } from './Tags';
-import type {
-  CreateTaskInput,
-  DeletionPreview,
-  GithubPr,
-  GithubStatus,
-  Snapshot,
-  Tag,
-  TaskKind,
-  TaskView,
-  UpdateTaskInput,
+import {
+  type ExternalLink,
+  type ExternalLinkType,
+  type CreateTaskInput,
+  type DeletionPreview,
+  type GithubPr,
+  type GithubStatus,
+  type Snapshot,
+  type Tag,
+  type TaskKind,
+  type TaskView,
+  type UpdateTaskInput,
 } from '../shared';
+
+const externalLinkTypes: { value: ExternalLinkType; label: string }[] = [
+  { value: 'github', label: 'GitHub' },
+  { value: 'jira', label: 'Jira' },
+  { value: 'google-doc', label: 'Google Doc' },
+  { value: 'generic', label: 'Generic' },
+];
+
+type ExternalLinkDraft = Omit<ExternalLink, 'type'> & {
+  type: ExternalLinkType | '';
+  inferType: boolean;
+};
 
 export const DialogErrorContext = createContext('');
 
@@ -114,6 +140,9 @@ export function TaskDialog({
   );
   const [description, setDescription] = useState(task?.description ?? '');
   const [url, setUrl] = useState(task?.prUrl ?? prUrl ?? '');
+  const [externalLinks, setExternalLinks] = useState<ExternalLinkDraft[]>(
+    task?.externalLinks?.map((link) => ({ ...link, inferType: false })) ?? [],
+  );
   const [parent, setParent] = useState(parentId ?? '');
   const [tagIds, setTagIds] = useState(task?.tagIds.filter((id) => id !== 'favorites') ?? []);
   const githubLoading = !github || github.syncing;
@@ -125,9 +154,15 @@ export function TaskDialog({
       <form
         onSubmit={async (event) => {
           event.preventDefault();
+          const submittedExternalLinks = externalLinks.map(({ inferType: _, ...link }) => link);
           const input = {
             title,
             description,
+            ...(externalLinks.length ||
+            (task &&
+              JSON.stringify(submittedExternalLinks) !== JSON.stringify(task.externalLinks ?? []))
+              ? { externalLinks: submittedExternalLinks as ExternalLink[] }
+              : {}),
             ...(kind === 'pr'
               ? { prUrl: url }
               : kind === 'manual'
@@ -192,6 +227,103 @@ export function TaskDialog({
             onChange={(event) => setDescription(event.target.value)}
           />
         </label>
+        <section className="external-links-editor">
+          <div className="external-links-heading">
+            <h3>External resources</h3>
+            <span>{externalLinks.length} / 5</span>
+          </div>
+          <p className="form-hint">Add supporting tickets, documents, and reference material.</p>
+          {externalLinks.map((link, index) => (
+            <div className="external-link-editor" key={index}>
+              <div className="external-link-editor-heading">
+                <strong>Resource {index + 1}</strong>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="icon-button"
+                  aria-label={`Remove resource ${index + 1}`}
+                  onClick={() =>
+                    setExternalLinks((current) => current.filter((_, item) => item !== index))
+                  }
+                >
+                  <Trash2 size={14} />
+                </Button>
+              </div>
+              <label>
+                URL
+                <Input
+                  type="url"
+                  required
+                  maxLength={2048}
+                  aria-label={`Resource ${index + 1} URL`}
+                  placeholder="https://..."
+                  value={link.url}
+                  onChange={(event) => {
+                    const nextUrl = event.target.value;
+                    setExternalLinks((current) =>
+                      current.map((item, itemIndex) =>
+                        itemIndex === index
+                          ? {
+                              ...item,
+                              url: nextUrl,
+                              type: item.inferType ? inferExternalLinkType(nextUrl) : item.type,
+                            }
+                          : item,
+                      ),
+                    );
+                  }}
+                />
+              </label>
+              <label>
+                Label <span className="optional">optional</span>
+                <Input
+                  maxLength={100}
+                  aria-label={`Resource ${index + 1} label`}
+                  placeholder="e.g. Design document"
+                  value={link.label}
+                  onChange={(event) =>
+                    setExternalLinks((current) =>
+                      current.map((item, itemIndex) =>
+                        itemIndex === index ? { ...item, label: event.target.value } : item,
+                      ),
+                    )
+                  }
+                />
+              </label>
+              <SearchableSelect
+                label={`Resource ${index + 1} type`}
+                options={externalLinkTypes}
+                value={link.type}
+                required
+                onChange={(type) =>
+                  setExternalLinks((current) =>
+                    current.map((item, itemIndex) =>
+                      itemIndex === index
+                        ? { ...item, type: type as ExternalLinkType | '', inferType: false }
+                        : item,
+                    ),
+                  )
+                }
+              />
+            </div>
+          ))}
+          {externalLinks.length < 5 && (
+            <Button
+              type="button"
+              className="button full add-external-link"
+              onClick={() =>
+                setExternalLinks((current) => [
+                  ...current,
+                  { url: '', label: '', type: 'generic', inferType: true },
+                ])
+              }
+            >
+              <Plus size={15} />
+              Add external resource
+            </Button>
+          )}
+        </section>
         {kind !== 'container' && (
           <>
             <label>

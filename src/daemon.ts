@@ -167,7 +167,11 @@ export async function startServer(
 }
 
 export async function stopServer(
-  options: { env?: NodeJS.ProcessEnv; timeoutMs?: number } = {},
+  options: {
+    env?: NodeJS.ProcessEnv;
+    timeoutMs?: number;
+    probe?: (url: string) => Promise<HealthAnswer>;
+  } = {},
 ): Promise<{ stopped: boolean; pid: number | null }> {
   const env = options.env ?? process.env;
   const pid = await readRunningPid(env);
@@ -176,6 +180,11 @@ export async function stopServer(
     await remove();
     return { stopped: false, pid: null };
   }
+  const answer = await (options.probe ?? answersHealth)(serverOrigin(env));
+  if (answer?.pid !== pid)
+    throw new Error(
+      `Refusing to stop process ${pid}: ${answer === null ? 'the Foggybrain server did not answer its health check' : 'another process is serving the configured port'}. Inspect the pidfile before retrying.`,
+    );
   process.kill(pid, 'SIGTERM');
   const deadline = Date.now() + (options.timeoutMs ?? 5000);
   while (alive(pid) && Date.now() < deadline) await delay(100);

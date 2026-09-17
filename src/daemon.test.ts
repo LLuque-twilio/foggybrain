@@ -163,6 +163,26 @@ test('a stale or malformed pidfile does not block a start and reports a clean st
   assert.equal(await readRunningPid(env), null);
 });
 
+test('stopServer does not signal a live PID that health cannot verify', async () => {
+  const dir = await scratch();
+  const env = { FOGGY_DATA_DIR: dir, FOGGY_PORT: '4326' };
+  const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], { stdio: 'ignore' });
+  const exited = exitOf(child);
+  assert.equal(typeof child.pid, 'number');
+  await writeFile(join(dir, 'foggy.pid'), `${child.pid}\n`);
+  try {
+    await assert.rejects(
+      () => stopServer({ env, probe: async () => null }),
+      /Refusing to stop process/,
+    );
+    assert.equal(child.exitCode, null);
+    assert.equal(child.signalCode, null);
+  } finally {
+    child.kill('SIGKILL');
+    await exited;
+  }
+});
+
 test('a started server answers the API and stops on request', async () => {
   const dir = await scratch();
   const env = {
