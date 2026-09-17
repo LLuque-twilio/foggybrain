@@ -96,7 +96,11 @@ function text(value: unknown, name: string, nonempty = false): string {
   if (typeof value !== 'string' || (nonempty && !value.trim())) {
     throw new DomainError(`${name} must be ${nonempty ? 'a nonempty' : 'a'} string`);
   }
-  return nonempty ? value.trim() : value;
+  const normalized = nonempty ? value.trim() : value;
+  const maxLength = name === 'Title' ? 300 : name === 'Description' ? 10000 : undefined;
+  if (maxLength !== undefined && normalized.length > maxLength)
+    throw new DomainError(`${name} must be at most ${maxLength} characters`);
+  return normalized;
 }
 
 function taskById(state: StoredSnapshot, id: unknown): Task {

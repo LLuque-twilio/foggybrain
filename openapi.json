@@ -5084,8 +5084,8 @@
         "type": "object",
         "properties": {
           "id": { "type": "string" },
-          "title": { "type": "string" },
-          "description": { "type": "string" },
+          "title": { "type": "string", "maxLength": 300 },
+          "description": { "type": "string", "maxLength": 10000 },
           "kind": { "$ref": "#/components/schemas/TaskKind" },
           "parentId": { "type": ["string", "null"] },
           "manualDone": { "type": "boolean" },
@@ -5126,8 +5126,8 @@
         "type": "object",
         "properties": {
           "id": { "type": "string" },
-          "title": { "type": "string" },
-          "description": { "type": "string" },
+          "title": { "type": "string", "maxLength": 300 },
+          "description": { "type": "string", "maxLength": 10000 },
           "kind": { "$ref": "#/components/schemas/TaskKind" },
           "parentId": { "type": ["string", "null"] },
           "manualDone": { "type": "boolean" },
@@ -5253,8 +5253,8 @@
       "CreateTaskInput": {
         "type": "object",
         "properties": {
-          "title": { "type": "string", "pattern": "\\S" },
-          "description": { "type": "string" },
+          "title": { "type": "string", "pattern": "\\S", "maxLength": 300 },
+          "description": { "type": "string", "maxLength": 10000 },
           "kind": { "$ref": "#/components/schemas/TaskKind" },
           "parentId": { "type": ["string", "null"] },
           "prUrl": { "type": "string" },
@@ -5297,8 +5297,8 @@
       "UpdateTaskInput": {
         "type": "object",
         "properties": {
-          "title": { "type": "string", "pattern": "\\S" },
-          "description": { "type": "string" },
+          "title": { "type": "string", "pattern": "\\S", "maxLength": 300 },
+          "description": { "type": "string", "maxLength": 10000 },
           "prUrl": { "type": ["string", "null"] },
           "externalLinks": {
             "type": "array",
@@ -5410,8 +5410,8 @@
         "type": "object",
         "properties": {
           "id": { "type": "string" },
-          "title": { "type": "string" },
-          "description": { "type": "string" },
+          "title": { "type": "string", "maxLength": 300 },
+          "description": { "type": "string", "maxLength": 10000 },
           "kind": { "$ref": "#/components/schemas/TaskKind" },
           "parentId": { "type": ["string", "null"] },
           "manualDone": { "type": "boolean" },

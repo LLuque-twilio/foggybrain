@@ -23,7 +23,9 @@ export interface ExternalLink {
 
 export interface Task {
   id: string;
+  /** @maxLength 300 */
   title: string;
+  /** @maxLength 10000 */
   description: string;
   kind: TaskKind;
   parentId: string | null;
@@ -87,8 +89,9 @@ export interface Snapshot {
 }
 
 export interface CreateTaskInput {
-  /** @pattern \S */
+  /** @pattern \S @maxLength 300 */
   title: string;
+  /** @maxLength 10000 */
   description?: string;
   kind: TaskKind;
   parentId?: string | null;
@@ -110,8 +113,9 @@ export interface ConnectTaskInput {
 
 /** @minProperties 1 */
 export interface UpdateTaskInput {
-  /** @pattern \S */
+  /** @pattern \S @maxLength 300 */
   title?: string;
+  /** @maxLength 10000 */
   description?: string;
   prUrl?: string | null;
   /** @maxItems 5 */

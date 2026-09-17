@@ -927,16 +927,26 @@ test('one 10-second deadline covers the entire operation, including response rea
 
 test('portable JSON is capped at 1 MB, with bounded base64 decoding near the limit', async (t) => {
   const { store, sync, github } = setup(t);
-  const task = store.createTask({ title: 'Large', kind: 'manual' });
-  store.updateTask(task.id, { description: 'x'.repeat(1024 * 1024) });
+  const tasks = Array.from({ length: 120 }, (_, index) =>
+    store.createTask({
+      title: `Large ${index}`,
+      description: 'x'.repeat(9_000),
+      kind: 'manual',
+    }),
+  );
   const blocked = await sync.preview();
   assert.equal(blocked.canApply, false);
   assert.match(blocked.validationError!, /1 MB/);
-  store.updateTask(task.id, { description: 'x'.repeat(1024 * 1024 - 1024) });
+  for (const task of tasks) store.updateTask(task.id, { description: 'x'.repeat(8_200) });
   await apply(sync);
   assert.equal((await sync.preview()).canApply, true);
   github.edit((state) => {
-    state.tasks[0].description += 'x'.repeat(2048);
+    state.tasks.push(
+      ...Array.from({ length: 10 }, (_, index) => ({
+        ...state.tasks[index],
+        id: `remote-${index}`,
+      })),
+    );
   });
   await assert.rejects(sync.preview(), /Invalid GitHub state file/);
 });

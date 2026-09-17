@@ -1158,6 +1158,30 @@ test('JSON validation rejects coercible booleans, unsupported fields, invalid ty
   }
 });
 
+test('task title and description limits are enforced at the API boundary', async (t) => {
+  const { request } = await fixture(t);
+  const title = 't'.repeat(300);
+  const description = 'd'.repeat(10_000);
+  const created = await request('/api/tasks', 'POST', {
+    title,
+    description,
+    kind: 'manual',
+  });
+  assert.equal(created.status, 201);
+  assert.equal(created.body.title, title);
+  assert.equal(created.body.description, description);
+
+  for (const body of [
+    { title: `${title}t`, kind: 'manual' },
+    { title: 'Valid', description: `${description}d`, kind: 'manual' },
+  ]) {
+    assert.equal((await request('/api/tasks', 'POST', body)).status, 400);
+  }
+  for (const body of [{ title: `${title}t` }, { description: `${description}d` }]) {
+    assert.equal((await request(`/api/tasks/${created.body.id}`, 'PATCH', body)).status, 400);
+  }
+});
+
 test('Host and Origin checks reject DNS rebinding, foreign browsers and disallowed local ports without CORS', async (t) => {
   const { request } = await fixture(t, { port: 5000 });
   for (const Host of [
