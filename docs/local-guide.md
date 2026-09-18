@@ -42,14 +42,14 @@ foggy dashboard
 
 The installer needs Node.js 22.13.0+ and nothing else. Layout:
 
-| Path                                | Purpose                                                              |
-| ----------------------------------- | -------------------------------------------------------------------- |
-| `~/.foggybrain/versions/<version>/` | One extracted release; old versions are kept                         |
-| `~/.foggybrain/current`             | Symlink to the active version                                        |
-| `~/.local/bin/foggy`                | Symlink to `current/bin/foggy.mjs`                                   |
-| `/etc/paths.d/foggy` (macOS)        | Puts `~/.local/bin` on `PATH` for every shell, machine-wide          |
-| `~/.profile` (Linux)                | Same, for your account only, via one marked `export PATH` line       |
-| `~/.local/share/foggybrain/`        | SQLite data, `foggy.pid`, and `foggy.log`, shared with a dev install |
+| Path                                | Purpose                                                           |
+| ----------------------------------- | ----------------------------------------------------------------- |
+| `~/.foggybrain/versions/<version>/` | One extracted release; old versions are kept                      |
+| `~/.foggybrain/current`             | Symlink to the active version                                     |
+| `~/.local/bin/foggy`                | Symlink to `current/bin/foggy.mjs`                                |
+| `/etc/paths.d/foggy` (macOS)        | Puts `~/.local/bin` on `PATH` for every shell, machine-wide       |
+| `~/.profile` (Linux)                | Same, for your account only, via one marked `export PATH` line    |
+| `~/.local/share/foggybrain/`        | SQLite data, task Markdown sidecars, `foggy.pid`, and `foggy.log` |
 
 The two `PATH` mechanisms differ in reach and in precedence, deliberately: `/etc/paths.d/foggy` is the only way to reach the non-interactive shells AI agents spawn on macOS without writing a shell rc file, and it has no per-user form.
 
@@ -100,13 +100,14 @@ pnpm --silent run foggy --json workspace create "Personal"
 pnpm --silent run foggy --json workspace create "Shared" --type cloud --repo OWNER/PRIVATE_STATE_REPO
 pnpm --silent run foggy --json workspace rename WORKSPACE_ID "Release planning"
 pnpm --silent run foggy --json workspace connect LOCAL_WORKSPACE_ID --repo OWNER/PRIVATE_STATE_REPO
+pnpm --silent run foggy --json workspace retarget CLOUD_WORKSPACE_ID --repo OWNER/PRIVATE_STATE_REPO --branch main --path foggybrain/state.json --credential dedicated --yes
 pnpm --silent run foggy --json --workspace WORKSPACE_ID graph
 pnpm foggy --workspace WORKSPACE_ID dashboard
 ```
 
 Use the IDs returned by the server. `--workspace ID` overrides process `FOGGY_WORKSPACE`; without either, CLI calls retain legacy default-workspace paths. Explicit selection never falls back if the workspace is missing. Workspace management commands always address the unscoped registry. Browser tabs select independently using `?workspace=ID`; switching one does not change another tab or the CLI default.
 
-Existing installations keep their database as workspace `default`, preserving old unscoped API calls and CLI workflows; additional entries receive generated IDs. Keep the data directory across upgrades. Rename is supported for both types; connect converts local to cloud without replacing local tasks. Cloud retargeting and demotion to local are not supported.
+Existing installations keep their database as workspace `default`, preserving old unscoped API calls and CLI workflows; additional entries receive generated IDs. Keep the data directory across upgrades. Rename is supported for both types; connect converts local to cloud without replacing local tasks. A confirmed retarget changes a cloud workspace's repository, branch, path, or credential while preserving local data; cloud demotion to local is not supported. Retargeting requires the selected credential, makes no remote request, invalidates old previews, and is blocked by active sync or an uncertain upload. The CLI resets omitted retarget options to their defaults, so pass unchanged branch, path, and credential values explicitly.
 
 Use **Settings > Remove workspace** to review and confirm permanent removal from this device. This deletes local tasks, relationships, layouts, sync history, backups, and unsynced changes, with no undo. The cloud repository and its state file are untouched. You can remove the final workspace. Removing the default makes the oldest remaining workspace the new default, or leaves no default if none remain. Active state sync blocks removal, and changes after preview require a fresh review. Only run one server against a data directory. No CLI removal command is provided.
 
@@ -118,9 +119,9 @@ In the UI, **Add workspace > Cloud** and **Connect to cloud** use progressive, s
 
 State paths list safe JSON file candidates from the selected branch, without reading their contents. Filter existing paths or enter a new safe path and select **Use new path** to publish local state. Candidates are not verified FoggyBrain state until sync preview; saving never imports or publishes automatically. Missing credentials, discovery errors, and empty results include retry/guidance. Repository and branch discovery each allow at most 10 pages of 100 entries; incomplete results fail. File discovery rejects truncated trees, trees over 100,000 entries, or over 2,000 JSON candidates. Only sync-supported branch/path names are offered. Discovery does not prove Contents write access or sync readiness.
 
-Open **Settings** to view the selected workspace's name, storage type, repository, branch, state path, and credential mode, or to rename, connect, and add workspaces. Cloud targets remain read-only after connection.
+Open **Settings** to view the selected workspace's name, storage type, repository, branch, state path, and credential mode, or to rename, connect, retarget, and add workspaces. **Change cloud target** prepopulates the current values and requires confirmation before saving.
 
-Create/connect API mutations only store configuration, with **no remote reads or writes**; the UI's separate repository discovery performs read-only GitHub requests before saving. After cloud creation or connection, the UI automatically opens and fetches a sync preview. Review the changes and explicitly confirm **Apply sync** to load existing cloud tasks or publish local changes; the graph refreshes after apply. Failed previews leave the connection saved and display an error. For an already-connected workspace, open **Workspace sync** and choose **Preview sync**. Reloading alone does not import remote tasks.
+Create/connect/retarget API mutations only store configuration, with **no remote reads or writes**; the UI's separate repository discovery performs read-only GitHub requests before saving. After cloud creation, connection, or retargeting, the UI opens and fetches a new sync preview. Review the graph and README changes and explicitly confirm **Apply sync** to load existing cloud state or publish local changes; the graph refreshes after apply. Failed previews leave the configuration saved and display an error. For an already-connected workspace, open **Workspace sync** and choose **Preview sync**. Reloading alone does not import remote tasks.
 
 From the CLI, create an empty cloud workspace, then run `--workspace ID sync preview` and apply only after review to fetch existing remote state. To publish local state, connect a local workspace to an unused remote file path, then review/apply. Use the same workspace ID throughout. See [workspace CLI details](cli.md#workspaces) and the safeguards below.
 
@@ -135,14 +136,17 @@ From the CLI, create an empty cloud workspace, then run `--workspace ID sync pre
 
 Ownership and references are different. A task has at most one owning parent. A reference makes the **same task**, not a copy, a child of another container without moving it. Both kinds of membership count toward container completion. Duplicate membership and effective cycles involving containment, references, and prerequisites are rejected by the server.
 
+Each task can also keep optional Markdown **Context**, separate from its short description and completion fields. Open task details, choose **Add context** or **Edit**, then switch between **Write** and **Preview**. Saving empty content removes the context. The server stores it as a task README sidecar outside SQLite; it is not embedded in `TaskView` or the portable graph manifest, and it never affects completion.
+
 ## Using The UI
 
 1. Create a **Container** from the overview, then add manual steps, PR merge gates, or nested containers inside it.
 2. Connect a prerequisite's right handle to a dependent's left handle. You can also select a step and use **Add a prerequisite** in its details. Multiple chains and unconnected steps can share a container.
 3. Use **Link task** to bring an existing task into a graph without copying it. A referenced container's **Open graph** button navigates to its original graph. The workspace map connects top-level tasks.
 4. Select a manual step and choose **Mark own work done**. It becomes Ready if prerequisites are unfinished, otherwise Completed. **Reopen own work** preserves downstream work while recalculating its completion.
-5. Layout defaults to automatic. Click **Auto layout** to switch to manual positioning, then drag nodes. Click **Manual layout** to return to automatic arrangement. Manual positions persist per graph.
-6. Select a connection to disconnect it. Use **Unlink from this graph** for a shared reference, or delete the original task everywhere after reviewing affected containers and tasks. The UI rechecks deletion impact before confirming.
+5. Add longer notes, acceptance criteria, or handoff details through the task's Markdown **Context** editor.
+6. Layout defaults to automatic. Click **Auto layout** to switch to manual positioning, then drag nodes. Click **Manual layout** to return to automatic arrangement. Manual positions persist per graph.
+7. Select a connection to disconnect it. Use **Unlink from this graph** for a shared reference, or delete the original task everywhere after reviewing affected containers and tasks. The UI rechecks deletion impact before confirming; owned task deletion also removes its context.
 
 The UI refreshes server state every four seconds, including changes made by the CLI or other browser tabs. All UI assets, including fonts, are served locally. Pan and zoom the canvas on desktop or touch devices; the node detail panel provides readable task information even when a large graph is zoomed out.
 
@@ -221,11 +225,11 @@ One token can cover multiple workspace files in the same repository. Permissions
 
 ## Manual State Sync
 
-Optional manual state sync shares a versioned task graph through a **private GitHub state repository**, separate from `github sync` PR polling. The server uses GitHub's Contents API, not a git CLI or local clone; writes create commits in the repository's history.
+Optional manual state sync shares a versioned task graph and task Markdown context through a **private GitHub state repository**, separate from `github sync` PR polling. The server uses GitHub's Contents API for reads and Git Database API for atomic manifest/README commits, not a git CLI or local clone.
 
 1. Create or choose a dedicated private state repository and an **existing branch** (default `main`). Initialize the repository first if it has no branch.
 2. Prefer a dedicated fine-grained token restricted to **only that selected private state repository**, with **Contents: read and write** (and Metadata read). Obtain organization approval if required. Dedicated mode uses `FOGGY_SYNC_TOKEN` without fallback. Alternatively, workspace create/connect with explicit `--credential github` opts into server GitHub credential reuse (`GH_TOKEN`, `GITHUB_TOKEN`, or `gh auth token`); that credential must have Contents read/write on the state repository. Reuse is never automatic.
-3. Configure credentials in the server environment or ignored `.env`. The legacy target variables below initialize the default workspace or convert an existing local default on restart, preserving its name and data. Once it is cloud, the persisted target and credential take precedence: changing or removing legacy variables does not retarget or demote it. Use workspace create/connect for additional entries. A missing dedicated token does not block startup or local data access; sync preview/apply report a credential error. Malformed supplied tokens and invalid legacy targets remain configuration errors. Never put actual credentials in commands, task text, source, logs, or URLs. Restart after environment changes; the CLI does not load these settings or access the token.
+3. Configure credentials in the server environment or ignored `.env`. The legacy target variables below initialize the default workspace or convert an existing local default on restart, preserving its name and data. Once it is cloud, the persisted target and credential take precedence: changing or removing legacy variables does not alter it; use an explicitly confirmed workspace retarget instead. Use workspace create/connect for additional entries. A missing dedicated token does not block startup or local data access; sync preview/apply report a credential error. Malformed supplied tokens and invalid legacy targets remain configuration errors. Never put actual credentials in commands, task text, source, logs, or URLs. Restart after environment changes; the CLI does not load these settings or access the token.
 
 ```dotenv
 FOGGY_SYNC_REPO=OWNER/PRIVATE_STATE_REPO
@@ -241,7 +245,7 @@ pnpm --silent run foggy --json sync status
 pnpm --silent run foggy --json sync preview
 ```
 
-5. Review `localChanges`, `remoteChanges`, `conflicts`, `validationError`, and `canApply`. A conflicted or blocked preview still exits `0`. If appropriate, request a new preview with `sync preview --resolve local` or `--resolve remote` and review it again. Resolution chooses conflicting values, not a force overwrite, and cannot bypass graph validation or a missing baseline.
+5. Review `localChanges`, `remoteChanges`, `conflicts`, `validationError`, and `canApply`. Change lists may include `collection: "readmes"`; resolve each task ID before reporting the impact. README conflicts use `readmes/TASK_ID` and contain the complete base, local, and remote Markdown values. A conflicted or blocked preview still exits `0`. If appropriate, request a new preview with `sync preview --resolve local` or `--resolve remote` and review it again. Resolution chooses that side for every conflict, including README content; it is not a force overwrite and cannot bypass graph validation or a missing baseline.
 6. Only after authorization, apply the exact returned `previewId` from the reviewed preview with `canApply: true`:
 
 ```sh
@@ -256,7 +260,7 @@ The UI offers the same review-and-confirm workflow under **Workspace sync** in t
 
 For first sync, an empty local graph can pull remote state, or a missing remote file can receive local state. Two nonempty sides without a shared baseline are blocked. Preserve both: use a separate new local data directory for a pull or a distinct unused remote path for an independent publication, rather than wiping existing data.
 
-Portable `version: 3` JSON includes editable task fields and external links, custom tags, tag memberships, dependencies, and references. It excludes the canonical Favorites definition, PR verification, derived completion, layouts, and timestamps. Version 1 and 2 inputs upgrade in memory with empty external-link lists. PR state is reverified locally by server polling. SQLite holds the sync baseline and automatic full local backups in `foggybrain_sync_backups`; there is no restore API or automatic pruning. Keep independent backups. **Git history and local backups retain deleted sensitive information**; deleting a task is not secure erasure. See [manual sync CLI details](cli.md#manual-state-sync) for response fields and recovery safeguards.
+Portable `version: 3` JSON includes editable task fields and external links, custom tags, tag memberships, dependencies, and references. It excludes task README content, the canonical Favorites definition, PR verification, derived completion, layouts, and timestamps. For target `work/work.json`, task context syncs separately at `work/tasks/{task-id}.md`; apply publishes the manifest and managed sidecars in one commit without touching unrelated files. Version 1 and 2 inputs upgrade in memory with empty external-link lists. PR state is reverified locally by server polling. SQLite holds the sync baseline and automatic full graph backups in `foggybrain_sync_backups`; README sidecars are not included in those backup rows. There is no restore API or automatic pruning. Keep independent backups of the whole data directory. **Git history and local backups retain deleted sensitive information**; deleting a task is not secure erasure. See [manual sync CLI details](cli.md#manual-state-sync) for response fields and recovery safeguards.
 
 ## Configuration And Data
 
@@ -286,7 +290,7 @@ For an explicit data location, start the server with, for example:
 FOGGY_DATA_DIR="$HOME/.local/share/foggybrain" pnpm start
 ```
 
-Keep this directory across upgrades. Stop the server before making a filesystem backup of the data directory so the SQLite database and any WAL files are consistent. Removing local data is not an uninstall step and loses your graph. Build output in `dist/` is not your task database. If you change `FOGGY_PORT`, also set the CLI URL; the development Vite proxy is configured for port `4173` and does not automatically follow a changed server port.
+Keep this directory across upgrades. Each workspace database has a sibling task-context directory such as `foggybrain-tasks/` or `workspace-ID-tasks/`; back up the entire data directory, not only `.sqlite` files. Stop the server first so SQLite and any WAL files are consistent. Removing local data is not an uninstall step and loses your graph and context. Build output in `dist/` is not your task database. If you change `FOGGY_PORT`, also set the CLI URL; the development Vite proxy is configured for port `4173` and does not automatically follow a changed server port.
 
 ## Security Limits
 

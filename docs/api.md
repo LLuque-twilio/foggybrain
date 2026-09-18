@@ -9,6 +9,7 @@
 - [openapi.json](../openapi.json) is the generated, authoritative HTTP reference. Regenerate it; never hand edit it.
 - [CONTRACT.md](../CONTRACT.md) owns semantic guarantees, including completion, graph integrity, workspace isolation, destructive operations, and sync reconciliation. [PR verification](pr-verification.md) records detailed readiness precedence and partial-failure behavior.
 - Runtime server/domain code still owns validation of requests, stored state, identities, transitions, and whole-graph invariants. The spec is not a runtime validator, and schema conformance does not imply that a state-dependent operation will succeed.
+- Task Markdown context uses the `TaskReadme` DTO on scoped and unscoped `/tasks/{id}/readme` routes. It is server-managed sidecar state rather than a `TaskView` or portable-manifest field; the API's global 256kb JSON body limit remains the effective HTTP write boundary.
 
 Read the spec, semantic contract, and shared types before changing API consumers or domain behavior. Keep stateful rules in runtime validation rather than encoding a second graph/state validator in the generator or clients.
 

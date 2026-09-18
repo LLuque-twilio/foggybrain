@@ -1,6 +1,6 @@
 # FoggyBrain
 
-A local task graph for untangling work. Organize tasks into containers, connect prerequisites, and track GitHub merge gates. The web UI and CLI share the same running server and local data.
+A local task graph for untangling work. Organize tasks into containers, connect prerequisites, keep Markdown context with each task, and track GitHub merge gates. The web UI and CLI share the same running server and local data.
 
 ## Install
 
@@ -50,12 +50,13 @@ foggy dashboard
 
 Use IDs returned by the server. If no workspace exists, create one with `foggy --json workspace create "Personal"`. For a specific workspace, pass `--workspace ID`; your current repository does not select it.
 
-In the UI, create a container, add tasks, and connect prerequisites. A task completes only when its own work and all prerequisites are satisfied. PR tasks require a verified merge; empty containers stay open.
+In the UI, create a container, add tasks, and connect prerequisites. Task details can also hold optional Markdown context with write and preview modes. A task completes only when its own work and all prerequisites are satisfied. PR tasks require a verified merge; empty containers stay open.
 
 ### Agents And CLI
 
 - Use `--json` for machine-readable output and `foggy --help` to discover commands.
 - The server defaults to `http://127.0.0.1:4173`; override with `--url` or `FOGGY_URL`.
+- The CLI has no task-context command; use the task details UI or the documented task README API.
 - Before deletion, run `foggy --json task delete TASK_ID --dry-run`, review the impact, and obtain approval before repeating with `--yes` instead of `--dry-run`.
 - Preview and obtain approval before applying state sync. Never blindly retry timed-out writes.
 
@@ -80,8 +81,8 @@ Run `pnpm test` and `pnpm typecheck` before committing. See [Contributing](CONTR
 ## GitHub And Data
 
 - **PR tracking:** configure a read-only server token in ignored `.env.local`. See [GitHub setup](docs/local-guide.md#github).
-- **Cloud workspaces:** optional manual sync to a private GitHub repository, not hosted state. See [sync token setup](docs/local-guide.md#create-a-dedicated-sync-token) and [workspace setup](docs/local-guide.md#workspaces).
-- **Local storage:** defaults to `~/.local/share/foggybrain`; preserve it across updates. Stop the server before backing it up. See [configuration](docs/local-guide.md#configuration-and-data).
+- **Cloud workspaces:** optional manual sync to a private GitHub repository, not hosted state. Sync publishes the graph manifest and task Markdown sidecars together. See [sync token setup](docs/local-guide.md#create-a-dedicated-sync-token) and [workspace setup](docs/local-guide.md#workspaces).
+- **Local storage:** defaults to `~/.local/share/foggybrain`; preserve the whole directory, including SQLite databases and task Markdown sidecars, across updates. Stop the server before backing it up. See [configuration](docs/local-guide.md#configuration-and-data).
 - **Local use only:** the API is not an authenticated multi-user service. Do not expose it publicly.
 
 ## Reference

@@ -174,8 +174,11 @@ test('revert replaces unrelated local state without a baseline or any remote wri
 });
 
 test('revert requires an existing valid remote file but accepts an empty graph', async (t) => {
-  const { store, sync, github } = setup(t);
-  store.createTask({ title: 'Discard', kind: 'manual' });
+  const directory = mkdtempSync(join(tmpdir(), 'foggybrain-revert-readme-'));
+  const { store, sync, github } = setup(t, join(directory, 'state.sqlite'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const task = store.createTask({ title: 'Discard', kind: 'manual' });
+  store.saveReadme(task.id, '# Discarded\n');
   const before = store.snapshot();
   await assert.rejects(sync.preview({ mode: 'revert' }), /existing remote state file/);
   github.state = { ...emptyPortableState(), version: 4 } as unknown as PortableState;
@@ -189,8 +192,12 @@ test('revert requires an existing valid remote file but accepts an empty graph',
   github.branchExists = true;
   assert.deepEqual(store.snapshot(), before);
   const preview = await sync.preview({ mode: 'revert' });
+  assert.ok(
+    preview.localChanges.some((change) => change.collection === 'readmes' && change.id === task.id),
+  );
   await sync.apply(preview.previewId);
   assert.deepEqual(store.exportState(), emptyPortableState());
+  assert.equal(store.readme(task.id, false), '');
   assert.equal(github.puts, 0);
 });
 
@@ -269,6 +276,8 @@ test('README sidecars merge, conflict, and publish with the manifest atomically'
   store.saveReadme(task.id, 'local');
   github.sidecars[task.id] = 'remote';
   github.revision++;
+  const revert = await sync.preview({ mode: 'revert' });
+  assert.deepEqual(revert.localChanges, [{ collection: 'readmes', id: task.id, kind: 'updated' }]);
   const blocked = await sync.preview();
   assert.deepEqual(blocked.conflicts, [
     { path: `readmes/${task.id}`, base: 'base', local: 'local', remote: 'remote' },

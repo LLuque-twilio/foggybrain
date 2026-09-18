@@ -23,7 +23,7 @@ export interface ExternalLink {
 
 export interface Task {
   id: string;
-  /** @maxLength 300 */
+  /** @maxLength 512 */
   title: string;
   /** @maxLength 10000 */
   description: string;

@@ -40,9 +40,9 @@ foggy workspace retarget <id> --repo owner/repo --yes [--branch branch] [--path 
 
 The server supports at most **three entries**, each with its own local SQLite graph. Local workspaces have no state-sync target. Cloud workspaces are **local-first**, not hosted databases: edits persist locally and move to/from GitHub only through manual sync. Browser tabs select independently; changing a tab does not change the CLI default or another tab. Keep the same `--workspace ID` (or `FOGGY_WORKSPACE`) across edits, deletion preview/confirmation, and sync preview/apply.
 
-`list` returns `{workspaces, defaultWorkspaceId, limit}`. `defaultWorkspaceId` is a string when a default exists; an empty registry returns `workspaces: []` and `defaultWorkspaceId: null`. Create, rename, and connect return a `Workspace`: `{id, name, type, target, credential}`. Local `target` and `credential` are null; cloud `target` is `{repo, branch, path}`. All management commands print JSON even without `--json` and always use unscoped `/api/workspaces` routes, ignoring global workspace selection. Use server-returned IDs, never names or indexes.
+`list` returns `{workspaces, defaultWorkspaceId, limit}`. `defaultWorkspaceId` is a string when a default exists; an empty registry returns `workspaces: []` and `defaultWorkspaceId: null`. Create, rename, connect, and retarget return a `Workspace`: `{id, name, type, target, credential}`. Local `target` and `credential` are null; cloud `target` is `{repo, branch, path}`. All management commands print JSON even without `--json` and always use unscoped `/api/workspaces` routes, ignoring global workspace selection. Use server-returned IDs, never names or indexes.
 
-Create defaults to `--type local`; local creation rejects cloud-only flags. Cloud creation and connect require `--repo`, default `--branch main`, `--path foggybrain/state.json`, and **`--credential dedicated`**. Connect converts an existing local workspace to cloud without replacing its graph. `retarget` changes a cloud workspace's repository, branch, path, or credential only with `--yes`; it preserves local data, makes no remote request, and invalidates prior sync previews. It rejects an active sync or uncertain prior upload. Review and explicitly apply a new sync preview before either target changes. Cloud-to-local demotion is not supported. Local workspace removal is available in UI Settings with preview and confirmation, not through a CLI command. The final workspace can be removed. Removing the default assigns the oldest surviving workspace as the default for unscoped CLI calls, or leaves no default if none remain; explicit removed IDs fail without fallback.
+Create defaults to `--type local`; local creation rejects cloud-only flags. Cloud creation and connect require `--repo`, default `--branch main`, `--path foggybrain/state.json`, and **`--credential dedicated`**. Connect converts an existing local workspace to cloud without replacing its graph. `retarget` changes a cloud workspace's repository, branch, path, or credential only with `--yes`; it preserves local data, makes no remote request, and invalidates prior sync previews. It requires the selected server credential and rejects an active sync or uncertain prior upload. Omitted retarget options reset to `main`, `foggybrain/state.json`, and `dedicated`; pass unchanged values explicitly rather than assuming they are preserved. Review and explicitly apply a new sync preview after the target changes. Cloud-to-local demotion is not supported. Local workspace removal is available in UI Settings with preview and confirmation, not through a CLI command. The final workspace can be removed. Removing the default assigns the oldest surviving workspace as the default for unscoped CLI calls, or leaves no default if none remain; explicit removed IDs fail without fallback.
 
 An empty registry remains empty on startup; no workspace is recreated. Unscoped domain requests (task, graph, relationship, GitHub, and sync) return HTTP 404 with the usual CLI error output and exit 1, while workspace management and health remain accessible. Run `workspace create` to create a local or cloud workspace; the first workspace created in the empty registry becomes the default. The empty UI offers **Add/connect workspace**. Clear or replace any explicit removed workspace selection before domain calls; creation does not override `--workspace` or `FOGGY_WORKSPACE`.
 
@@ -56,11 +56,12 @@ foggy --json workspace create "Personal"
 foggy --json workspace create "Shared" --type cloud --repo OWNER/PRIVATE_STATE_REPO
 foggy --json workspace rename WORKSPACE_ID "Release planning"
 foggy --json workspace connect LOCAL_WORKSPACE_ID --repo OWNER/PRIVATE_STATE_REPO --credential dedicated
+foggy --json workspace retarget CLOUD_WORKSPACE_ID --repo OWNER/PRIVATE_STATE_REPO --branch main --path foggybrain/state.json --credential dedicated --yes
 foggy --json --workspace WORKSPACE_ID sync status
 foggy --json --workspace WORKSPACE_ID sync preview
 # After reviewing and obtaining authorization:
 foggy --json --workspace WORKSPACE_ID sync apply REVIEWED_PREVIEW_ID --yes
-foggy --workspace WORKSPACE_ID ui
+foggy --workspace WORKSPACE_ID dashboard
 ```
 
 Migration preserves the existing database as workspace `default`; new entries receive generated IDs. Existing CLI invocations without selection use the current persisted default through unscoped endpoints, or fail with 404 when none exists. Explicit selection uses `/api/workspaces/:id/{existing path}` for every task, graph, relationship, GitHub, and sync request; a missing workspace fails without fallback. UI opening uses URL-encoded `?workspace=ID`. Selection flags work before or after subcommands.
@@ -169,6 +170,18 @@ foggy --json task update TASK_ID --tag TAG_ID --tag OTHER_TAG_ID --star
 Returns the updated `TaskView`.
 
 Use `--pr URL` to attach or replace a manual task's PR gate, or `--remove-pr` to remove it. Removing a gate preserves manual work status; the detached URL's workspace-local verification remains cached. Standalone PR tasks cannot remove their required gate.
+
+### Markdown Context
+
+Each task can have one optional Markdown README/context document, separate from its description and `TaskView`. The CLI has no README command. Use the task details **Context** editor, or the documented API when automation explicitly needs to read or update it:
+
+```text
+GET    /api/tasks/:id/readme
+PUT    /api/tasks/:id/readme       {"content":"..."}
+DELETE /api/tasks/:id/readme
+```
+
+With an explicit workspace, use `/api/workspaces/:workspaceId/tasks/:id/readme` and keep the same workspace selection used for the task. `GET` returns `{"content":""}` when no context exists; `PUT` replaces the complete document and empty content removes it; `DELETE` returns `{"ok":true}`. Read before replacing, use server-returned IDs, and never edit sidecar files directly. Task deletion removes context for every task in its owned deletion set. The API's 256kb JSON request limit applies even though stored and synced README content supports up to 1 MB.
 
 ### Done And Reopen
 
@@ -328,13 +341,13 @@ foggy --json sync apply <preview-id> --yes
 | `sync preview`        | `POST /api/sync/preview` with `{}` or `{resolution:"local"}` / `{resolution:"remote"}` | `SyncPreview`                                                  |
 | `sync apply ID --yes` | `POST /api/sync/apply` with `{previewId:ID, confirm:true}`                             | `SyncStatus`                                                   |
 
-`target` contains `{repo, branch, path}` (or is null in unconfigured status). Status is local inspection, not proof of current remote access or equality. `dirty` compares local portable state with the saved baseline and includes pending reconciliation; `syncing` indicates an active server operation.
+`target` contains `{repo, branch, path}` (or is null in unconfigured status). Status is local inspection, not proof of current remote access or equality. `dirty` compares local portable state and task README sidecars with the saved baseline and includes pending reconciliation; `syncing` indicates an active server operation.
 
-A preview returns `previewId`, `mode` (`merge` or `revert`), `target`, `localChanges`, `remoteChanges`, `conflicts`, `validationError`, `canApply`, and `resolution`. Changes describe what would change on each side, with `collection`, `id`, optional `title`, and `kind` (`added`, `updated`, `deleted`). Conflicts include `path`, `base`, `local`, and `remote`. **A preview with conflicts or validation errors is successful inspection: exit `0` is not permission to apply.** Review both change lists, all conflicts, `canApply`, and `validationError` before authorization.
+A preview returns `previewId`, `mode` (`merge` or `revert`), `target`, `localChanges`, `remoteChanges`, `conflicts`, `validationError`, `canApply`, and `resolution`. Changes describe what would change on each side, with `collection`, `id`, optional `title`, and `kind` (`added`, `updated`, `deleted`). `collection` can be `tasks`, `dependencies`, `references`, `tags`, or `readmes`; README entries use the task ID and may omit `title`, so resolve that ID before reporting impact. Conflicts include `path`, `base`, `local`, and `remote`; README conflicts use `readmes/TASK_ID` and contain complete Markdown values. **A preview with conflicts or validation errors is successful inspection: exit `0` is not permission to apply.** Review both change lists, all conflicts, `canApply`, and `validationError` before authorization.
 
 ### Revert To Origin
 
-`sync preview --revert` sends `{mode:"revert"}` and freshly fetches the configured repository, branch, and path. Unlike `--resolve remote`, it proposes discarding all local differences and replacing tasks and relationships exactly with remote state. It never writes to GitHub. The file must exist and contain valid portable state; a valid empty graph can remove all local tasks. Missing files and uncertain pending uploads block revert. `--revert` and `--resolve` are mutually exclusive.
+`sync preview --revert` sends `{mode:"revert"}` and freshly fetches the configured repository, branch, manifest, and task README sidecars. Unlike `--resolve remote`, it proposes discarding all local differences and replacing the graph and task context exactly with remote state. It never writes to GitHub. The manifest must exist and contain valid portable state; valid empty remote state can remove all local tasks and context. Missing manifests and uncertain pending uploads block revert. `--revert` and `--resolve` are mutually exclusive.
 
 ```sh
 foggy --json --workspace WORKSPACE_ID sync preview --revert
@@ -342,9 +355,9 @@ foggy --json --workspace WORKSPACE_ID sync preview --revert
 foggy --json --workspace WORKSPACE_ID sync apply REVIEWED_PREVIEW_ID --yes
 ```
 
-Apply refetches and checks the reviewed revision, rejects concurrent local changes, and atomically backs up the full local snapshot before replacement and baseline update. Layouts and matching PR verification are preserved using normal import rules. A new preview replaces the old one; apply consumes it. After failures/timeouts, inspect state and re-preview, because local replacement may already have committed. The UI exposes the same flow through **Workspace sync > Revert to origin**. This restores from GitHub, not from a local backup.
+Apply refetches and checks the reviewed revision and README sidecars, rejects concurrent local changes, and backs up the full SQLite graph snapshot before graph/context replacement and baseline update. README sidecars are not included in that SQLite backup row. Layouts and matching PR verification are preserved using normal import rules. A new preview replaces the old one; apply consumes it. After failures/timeouts, inspect state and re-preview, because local replacement may already have committed. The UI exposes the same flow through **Workspace sync > Revert to origin**. This restores from GitHub, not from a local backup.
 
-`--resolve local` or `--resolve remote` chooses that side for conflicting values while retaining nonconflicting changes from both sides. It creates a new preview, not a whole-state replacement or force override. Conflicts remain visible even when resolved. Invalid merged graphs and missing common baselines still block apply.
+`--resolve local` or `--resolve remote` chooses that side for every conflicting value, including complete README documents, while retaining nonconflicting changes from both sides. It creates a new preview, not a whole-state replacement or force override. Conflicts remain visible even when resolved. Invalid merged graphs and missing common baselines still block apply.
 
 ```sh
 foggy --json sync status
@@ -363,7 +376,7 @@ Preview IDs are process-local, single-use tokens, not durable approvals. A newer
 
 On first sync, an empty local graph can pull existing remote state, or a missing remote file can receive local state. If both sides are nonempty without a shared baseline, apply is blocked even with `--resolve`. Preserve existing data: use a separate new local data directory to inspect/pull remote state or a distinct unused remote path to publish an independent graph. Do not wipe either side to bypass the guard.
 
-The versioned JSON (`version: 3`) contains editable task fields including external links, custom tag definitions, tag memberships, and dependency/reference records, not PR verification, derived completion, layouts, timestamps, or the canonical Favorites definition. Version 1 and 2 inputs upgrade with empty external-link lists. PR state is reverified locally by server polling; remote JSON cannot assert a verified merge. GitHub writes use two-space indentation and a trailing newline for readable repository diffs. The server persists its baseline in SQLite and makes automatic full local backups in `foggybrain_sync_backups`. There is no restore API or automatic backup pruning. Keep independent database backups too. GitHub Contents API writes create Git history without a local git CLI or clone; deleting sensitive text from current state does not remove it from history or backups.
+The versioned JSON (`version: 3`) contains editable task fields including external links, custom tag definitions, tag memberships, and dependency/reference records, not task README content, PR verification, derived completion, layouts, timestamps, or the canonical Favorites definition. For a target `work/work.json`, README sidecars sync separately at `work/tasks/{task-id}.md`; paths are derived and never stored in the manifest. Version 1 and 2 inputs upgrade with empty external-link lists. PR state is reverified locally by server polling; remote JSON cannot assert a verified merge. Manifest JSON uses two-space indentation and a trailing newline. The server persists its baseline in SQLite and makes automatic full graph backups in `foggybrain_sync_backups`; README sidecars are not included in those rows. There is no restore API or automatic backup pruning. Keep independent backups of the full data directory. Sync reads with GitHub's Contents API and publishes the manifest plus managed README sidecars atomically with the Git Database API, without a local git CLI or clone. Deleting sensitive text from current state does not remove it from history or backups.
 
 ### Diagnosing Failures
 
@@ -377,11 +390,11 @@ foggy --json --workspace WORKSPACE_ID sync preview
 
 Status reads local configuration and baseline bookkeeping only; it does not contact GitHub or retain the last error. Preview reads GitHub without changing either graph or writing a remote file, but replaces the previous process-local preview. Inspect both change lists, `conflicts`, `validationError`, and `canApply`. A successful preview cannot verify write permission or prove that an earlier upload succeeded. Do not use apply as a diagnostic probe.
 
-Request failures name the phase (`reading repository`, `reading branch`, `reading state file`, or `writing state file`) and upstream HTTP status when available. HTTP 401 suggests checking credential validity/expiry; 403 suggests permissions, organization/SSO approval, rate limits, or branch rules; 404 suggests checking the target and private-resource access. A missing state-file GET 404 remains normal bootstrap behavior, not an error. HTTP 409 requires a fresh reviewed preview; 422 also calls for checking the target and branch rules. For 429 or 5xx, wait and check rate limits or GitHub service health before re-previewing. These are static diagnostic suggestions, not a definitive explanation from GitHub.
+Request failures name the phase, including repository/branch/manifest/README reads and Git reference, commit, blob, or tree writes, with the upstream HTTP status when available. HTTP 401 suggests checking credential validity/expiry; 403 suggests permissions, organization/SSO approval, rate limits, or branch rules; 404 suggests checking the target and private-resource access. A missing state-file GET 404 remains normal bootstrap behavior, not an error. HTTP 409 requires a fresh reviewed preview; 422 also calls for checking the target and branch rules. For 429 or 5xx, wait and check rate limits or GitHub service health before re-previewing. These are static diagnostic suggestions, not a definitive explanation from GitHub.
 
 Timeouts identify the server's overall 10-second sync deadline; transport failures suggest checking the server's network, DNS, TLS, and proxy connectivity. Messages intentionally omit upstream bodies, status text, URLs, tokens, and raw exceptions. After a write failure, never blindly retry: the upload may have committed, and retained upload intent may require reconciliation. Obtain authorization before applying a newly reviewed preview.
 
-Credentials are server-only: dedicated mode uses only `FOGGY_SYNC_TOKEN` (without fallback); explicit `github` mode uses server `GH_TOKEN`, `GITHUB_TOKEN`, or `gh auth token`. Both require access to the selected private repository, Contents read/write for publishing, and any organization/SSO approval. Prefer dedicated sync credentials to keep PR access read-only. Never put tokens in CLI arguments, task text, diagnostic reports, or logs. This sync uses the GitHub Contents API, so local git remotes and git CLI tracing do not diagnose its requests.
+Credentials are server-only: dedicated mode uses only `FOGGY_SYNC_TOKEN` (without fallback); explicit `github` mode uses server `GH_TOKEN`, `GITHUB_TOKEN`, or `gh auth token`. Both require access to the selected private repository, Contents read/write for publishing, and any organization/SSO approval. Prefer dedicated sync credentials to keep PR access read-only. Never put tokens in CLI arguments, task text, diagnostic reports, or logs. Sync uses GitHub's Contents and Git Database APIs, so local git remotes and git CLI tracing do not diagnose its requests.
 
 ## Installation And Upgrades
 
@@ -514,6 +527,6 @@ For ordinary work: inspect `graph`/`task show`, choose `available` work, perform
 
 ## Data Shapes
 
-`TaskView` includes `id`, `title`, `description`, `kind`, `parentId`, `manualDone`, `prUrl`, `prState`, `prCheckedAt`, `prError`, `tagIds`, `createdAt`, `updatedAt`, `status`, `ownSatisfied`, `waitingOn`, and `childrenIds`. `Snapshot` also includes workspace `tags`; each tag has `id`, `name`, `color`, and `system`. Nullable fields are returned as JSON `null`, not empty IDs. The CLI forwards server-created and server-computed fields rather than synthesizing completion or IDs.
+`TaskView` includes `id`, `title`, `description`, `kind`, `parentId`, `manualDone`, `prUrl`, `prState`, `prMergeStatus`, `prCheckedAt`, `prError`, `externalLinks`, `tagIds`, `createdAt`, `updatedAt`, `status`, `ownSatisfied`, `waitingOn`, and `childrenIds`. Task Markdown context is read separately through the README API and is not a `TaskView` field. `Snapshot` also includes workspace `tags`; each tag has `id`, `name`, `color`, and `system`. Nullable fields are returned as JSON `null`, not empty IDs. The CLI forwards server-created and server-computed fields rather than synthesizing completion or IDs.
 
 Authoritative TypeScript shapes are in [`src/shared.ts`](../src/shared.ts); the generated [`openapi.json`](../openapi.json) is the HTTP reference, and [`CONTRACT.md`](../CONTRACT.md) defines semantic guarantees. See the [API maintainer guide](api.md) for generation and validation boundaries. Task create/update/done/reopen return the server `TaskView`; relationship additions return the server relationship record; removal results and GitHub payloads are passed through unchanged. Consumers should use named fields and relationship IDs rather than depending on array ordering.

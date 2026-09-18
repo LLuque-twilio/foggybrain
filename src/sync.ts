@@ -553,7 +553,7 @@ export class StateSync {
           mode,
           previewId: randomUUID(),
           target: { ...this.target! },
-          localChanges: changes(local, remote),
+          localChanges: [...changes(local, remote), ...readmeChanges(localReadmes, remoteReadmes)],
           remoteChanges: [],
           conflicts: [],
           validationError: null,
@@ -665,7 +665,7 @@ export class StateSync {
         });
         this.store.replaceReadmes(
           saved.remoteReadmes,
-          saved.remote.tasks.map((task) => task.id),
+          [...saved.local.tasks, ...saved.remote.tasks].map((task) => task.id),
         );
         return { ...this.getStatus(), syncing: false };
       }
@@ -696,7 +696,7 @@ export class StateSync {
       this.store.finishSync(this.target!, record);
       this.store.replaceReadmes(
         saved.mergedReadmes,
-        saved.merged.tasks.map((task) => task.id),
+        [...saved.local.tasks, ...saved.merged.tasks].map((task) => task.id),
       );
       return { ...this.getStatus(), syncing: false };
     });

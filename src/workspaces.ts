@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdirSync, realpathSync, unlinkSync } from 'node:fs';
-import { join } from 'node:path';
+import { mkdirSync, realpathSync, rmSync, unlinkSync } from 'node:fs';
+import { basename, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { DomainError, Store } from './core.js';
 import { discoverOwnedRepositories, discoverRepositoryEntries, GithubPoller } from './github.js';
@@ -168,6 +168,10 @@ export class WorkspaceManager {
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
       }
     }
+    rmSync(join(this.directory, `${basename(path, '.sqlite')}-tasks`), {
+      recursive: true,
+      force: true,
+    });
     this.registry.prepare('DELETE FROM workspace_removals WHERE id = ?').run(id);
   }
 
@@ -191,7 +195,7 @@ export class WorkspaceManager {
       canRemove: reason === null,
       reason,
       revision: createHash('sha256')
-        .update(JSON.stringify({ id, list, graph, status }))
+        .update(JSON.stringify({ id, list, graph, readmes: store.readmes(), status }))
         .digest('hex'),
     };
   }
@@ -304,6 +308,7 @@ export class WorkspaceManager {
     const body = object(input, ['name', 'type', 'target', 'credential', 'confirm']);
     this.registry.exec('BEGIN IMMEDIATE');
     let result: Workspace;
+    let retargeted = false;
     try {
       const previous = this.workspace(id);
       if ('type' in body && body.type !== 'cloud')
@@ -332,6 +337,7 @@ export class WorkspaceManager {
             'Cannot retarget with an uncertain upload; reconcile it first',
             409,
           );
+        retargeted = true;
       } else if ('confirm' in body)
         throw new DomainError('confirm is only valid when retargeting a cloud workspace');
       else if (previous.type === 'local' && config.type === 'cloud') this.token(config);
@@ -348,7 +354,8 @@ export class WorkspaceManager {
     if (
       runtime &&
       result.type === 'cloud' &&
-      (!runtime.sync.getStatus().configured ||
+      (retargeted ||
+        !runtime.sync.getStatus().configured ||
         JSON.stringify(runtime.sync.getStatus().target) !== JSON.stringify(result.target))
     ) {
       void runtime.sync.stop();

@@ -27,6 +27,7 @@ test('removes cloud default locally, persists replacement, preserves others and 
   const store = first.get('default').store;
   const container = store.createTask({ title: 'Container', kind: 'container' });
   const task = store.createTask({ title: 'Task', kind: 'manual' });
+  store.saveReadme(task.id, '# Context\n');
   const dependent = store.createTask({ title: 'Dependent', kind: 'manual' });
   store.addReference(container.id, task.id);
   store.addDependency(task.id, dependent.id);
@@ -46,6 +47,7 @@ test('removes cloud default locally, persists replacement, preserves others and 
   assert.equal(list.defaultWorkspaceId, replacement.id);
   for (const suffix of ['', '-wal', '-shm', '-journal'])
     assert.equal(existsSync(join(dataDir, `foggybrain.sqlite${suffix}`)), false);
+  assert.equal(existsSync(join(dataDir, 'foggybrain-tasks')), false);
   assert.equal(existsSync(join(dataDir, 'foggybrain.sqlite.backup')), true);
   assert.deepEqual(first.get(replacement.id).store.snapshot(), before);
   assert.deepEqual(first.get(other.id).store.snapshot(), otherBefore);
@@ -95,8 +97,10 @@ test('removal rejects stale graph, layout, configuration and registry previews',
   assert.equal(last.canRemove, true);
   const other = workspaces.create({ name: 'Other', type: 'local' });
   const store = workspaces.get('default').store;
+  const contextTask = store.createTask({ title: 'Context', kind: 'manual' });
   for (const change of [
     () => store.createTask({ title: 'New', kind: 'manual' }),
+    () => store.saveReadme(contextTask.id, '# Updated\n'),
     () => store.saveLayout({ viewId: 'root', mode: 'manual', positions: [] }),
     () => workspaces.update('default', { name: 'Renamed' }),
     () => workspaces.update(other.id, { name: 'Other renamed' }),
@@ -410,7 +414,7 @@ test('manager starts all pollers, starts new workspaces, and stops every runtime
 
 test('conversion and confirmed retargeting preserve Store, graph and layout without remote requests', async (t) => {
   const dataDir = directory(t);
-  const workspaces = manager(t, { dataDir, githubToken: secret });
+  const workspaces = manager(t, { dataDir, githubToken: secret, dedicatedToken: secret });
   const runtime = workspaces.get('default');
   const task = runtime.store.createTask({ title: 'Existing', kind: 'manual' });
   runtime.store.saveLayout({
@@ -451,6 +455,15 @@ test('conversion and confirmed retargeting preserve Store, graph and layout with
   assert.equal(retargeted.target!.path, 'work/work.json');
   assert.notEqual(runtime.sync, sync);
   await assert.rejects(sync.preview(), /stopped/);
+  const targetSync = runtime.sync;
+  const credentialRetarget = workspaces.update('default', {
+    target: retargeted.target,
+    credential: 'dedicated',
+    confirm: true,
+  });
+  assert.equal(credentialRetarget.credential, 'dedicated');
+  assert.notEqual(runtime.sync, targetSync);
+  await assert.rejects(targetSync.preview(), /stopped/);
   await workspaces.close();
   const reopened = manager(t, { dataDir, githubToken: secret });
   assert.equal(reopened.list().workspaces[0].name, 'Renamed cloud');
