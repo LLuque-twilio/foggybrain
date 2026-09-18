@@ -58,6 +58,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from './components/ui/tooltip
 import { TaskDetailSheet } from './TaskDetailSheet';
 import { Button } from './components/ui/button';
 import { Sheet, SheetContent, SheetTitle } from './components/ui/sheet';
+import { ThemeToggle } from './ThemeToggle';
 
 type Modal =
   | { type: 'create'; parentId?: string | null; prUrl?: string }
@@ -381,14 +382,17 @@ export function WorkspaceApp({
 
   const navigation = (
     <>
-      <button className="brand" onClick={() => navigate('/')}>
-        <span className="brand-mark">
-          <CloudFog size={25} />
-        </span>
-        <span>
-          FoggyBrain<small>A LITTLE CLARITY.</small>
-        </span>
-      </button>
+      <div className="brand-row">
+        <button className="brand" onClick={() => navigate('/')}>
+          <span className="brand-mark">
+            <CloudFog size={25} />
+          </span>
+          <span>
+            FoggyBrain<small>A LITTLE CLARITY.</small>
+          </span>
+        </button>
+        <ThemeToggle />
+      </div>
       {controls}
       <div className="nav-label">YOUR SPACE</div>
       <nav aria-label="Main navigation">

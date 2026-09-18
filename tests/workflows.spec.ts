@@ -29,6 +29,46 @@ test.beforeEach(async ({ request }) => {
   ).toBeTruthy();
 });
 
+test('theme toggle is accessible by the logo and persists across reloads', async ({
+  page,
+  request,
+}, info) => {
+  expect(
+    (await request.post('/api/tasks', { data: { title: 'Theme test task', kind: 'manual' } })).ok(),
+  ).toBeTruthy();
+  await page.addInitScript(() => {
+    if (window.localStorage.getItem('foggybrain-theme') === null)
+      window.localStorage.setItem('foggybrain-theme', 'light');
+  });
+  await page.goto('/');
+
+  if (info.project.name === 'mobile')
+    await page.getByRole('button', { name: 'Open navigation' }).click();
+
+  const darkToggle = page.getByRole('switch', { name: 'Switch to dark mode' });
+  await expect(darkToggle).toBeVisible();
+  await darkToggle.click();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute('content', '#151b18');
+  const navigationCounts = page.locator('.nav-count');
+  await expect(navigationCounts).toHaveCount(3);
+  await expect(navigationCounts.first()).toHaveCSS('color', 'rgb(220, 232, 224)');
+  await expect(navigationCounts.first()).toHaveCSS('background-color', 'rgb(52, 71, 61)');
+  await page.getByRole('button', { name: 'Workspace map' }).click();
+  const graphHint = page.getByText('Drag between handles to connect. Click a step to inspect.');
+  await expect(graphHint).toHaveCSS('color', 'rgb(195, 210, 201)');
+  await expect(graphHint).toHaveCSS('background-color', 'rgb(28, 37, 33)');
+
+  await page.reload();
+  if (info.project.name === 'mobile')
+    await page.getByRole('button', { name: 'Open navigation' }).click();
+
+  const lightToggle = page.getByRole('switch', { name: 'Switch to light mode' });
+  await expect(lightToggle).toBeChecked();
+  await lightToggle.click();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+});
+
 test('create and inline edit through UI, keyboard sheet, local assets, and responsive shell', async ({
   context,
   page,
@@ -632,6 +672,13 @@ test('list filters combine tag OR selections with type and status criteria', asy
   await expect(hideCompleted).toBeChecked();
   await expect(rows).toHaveCount(3);
   await expect(rows.filter({ hasText: 'Beta task' })).toHaveCount(0);
+
+  const search = page.getByRole('textbox', { name: 'Search all tasks' });
+  await search.fill(container.id);
+  await expect(rows).toHaveCount(1);
+  await expect(rows).toContainText(container.title);
+  await search.clear();
+  await expect(rows).toHaveCount(3);
 
   await page.getByRole('button', { name: 'Tags filter' }).click();
   await page.getByRole('menuitemcheckbox', { name: 'Alpha', exact: true }).click();

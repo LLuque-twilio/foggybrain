@@ -101,6 +101,49 @@ p {
     sans-serif;
   letter-spacing: -0.8px;
 }
+.brand-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+.brand-row .brand {
+  min-width: 0;
+}
+.theme-toggle {
+  position: relative;
+  width: 38px;
+  height: 22px;
+  flex: 0 0 38px;
+  padding: 2px;
+  border: 1px solid #bbc9b0;
+  border-radius: 999px;
+  background: #e2e8d6;
+  color: #536649;
+  transition:
+    background 0.2s,
+    border-color 0.2s;
+}
+.theme-toggle-thumb {
+  width: 16px;
+  height: 16px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: #fcfdf8;
+  box-shadow: 0 1px 3px #23361720;
+  transition: transform 0.2s;
+}
+.theme-toggle[aria-checked='true'] .theme-toggle-thumb {
+  transform: translateX(16px);
+}
+.theme-toggle:hover {
+  border-color: #8ca28d;
+}
+.workspace-empty-brand {
+  width: fit-content;
+  gap: 14px;
+}
 .brand-mark {
   width: 40px;
   height: 40px;
@@ -3363,4 +3406,294 @@ details ul {
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
+}
+
+html[data-theme='dark'] {
+  color: #d8e3dc;
+  background: #151b18;
+  --green: #9acdb3;
+  --muted: #9aaba1;
+  --line: #34423b;
+}
+html[data-theme='dark'] .sidebar,
+html[data-theme='dark'] .mobile-navigation {
+  background: #1b231f;
+}
+html[data-theme='dark'] nav button,
+html[data-theme='dark'] .container-nav button,
+html[data-theme='dark'] .sidebar-bottom > button {
+  color: #afc0b5;
+}
+html[data-theme='dark'] nav button.active,
+html[data-theme='dark'] .container-nav .selected {
+  color: #e5eee8;
+  background: #2b3a32;
+}
+html[data-theme='dark'] nav button:hover:not(.active),
+html[data-theme='dark'] .container-nav button:hover {
+  color: #dce8e0;
+  background: #25322c;
+}
+html[data-theme='dark'] .nav-count {
+  color: #dce8e0;
+  border: 1px solid #496052;
+  background: #34473d;
+  opacity: 1;
+}
+html[data-theme='dark'] .topbar,
+html[data-theme='dark'] .graph-heading,
+html[data-theme='dark'] .graph-legend,
+html[data-theme='dark'] .task-list-head {
+  background: #19211d;
+}
+html[data-theme='dark'] .main,
+html[data-theme='dark'] .list-page,
+html[data-theme='dark'] .graph-canvas,
+html[data-theme='dark'] .react-flow__attribution {
+  background: #151b18;
+}
+html[data-theme='dark'] .graph-hint {
+  color: #c3d2c9;
+  border: 1px solid #3d4d44;
+  border-radius: 5px;
+  background: #1c2521;
+}
+html[data-theme='dark'] h1,
+html[data-theme='dark'] .section-heading h2,
+html[data-theme='dark'] .card-main h3,
+html[data-theme='dark'] .welcome-copy h2,
+html[data-theme='dark'] .node-title,
+html[data-theme='dark'] .detail-panel h2,
+html[data-theme='dark'] .detail-section h3,
+html[data-theme='dark'] .edge-popover strong,
+html[data-theme='dark'] .github-connection strong,
+html[data-theme='dark'] .pr-info a,
+html[data-theme='dark'] .empty-state h2,
+html[data-theme='dark'] .empty-graph h2,
+html[data-theme='dark'] .fatal-error h1,
+html[data-theme='dark'] .list-task-title strong,
+html[data-theme='dark'] .task-form-section-heading h3,
+html[data-theme='dark'] .external-links-heading h3,
+html[data-theme='dark'] label,
+html[data-theme='dark'] .connection-mode legend {
+  color: #dbe7df;
+}
+html[data-theme='dark'] .brand small,
+html[data-theme='dark'] .breadcrumbs .current,
+html[data-theme='dark'] .icon-button,
+html[data-theme='dark'] .text-button,
+html[data-theme='dark'] .search input,
+html[data-theme='dark'] .external-link,
+html[data-theme='dark'] .relationship > button:first-child,
+html[data-theme='dark'] .membership,
+html[data-theme='dark'] .reference-options > button,
+html[data-theme='dark'] .impact-list > div,
+html[data-theme='dark'] details,
+html[data-theme='dark'] .guide h3,
+html[data-theme='dark'] .tag-create-offer,
+html[data-theme='dark'] .list-filter-trigger,
+html[data-theme='dark'] .hide-completed-filter {
+  color: #a8b9ae;
+}
+html[data-theme='dark'] .button,
+html[data-theme='dark'] .overview-stats,
+html[data-theme='dark'] .task-card,
+html[data-theme='dark'] .card-tools,
+html[data-theme='dark'] .graph-toolbar,
+html[data-theme='dark'] .step-node,
+html[data-theme='dark'] .detail-panel,
+html[data-theme='dark'] .edge-popover,
+html[data-theme='dark'] .pr-list,
+html[data-theme='dark'] .fatal-error,
+html[data-theme='dark'] .workspace-empty-options > div,
+html[data-theme='dark'] .dialog,
+html[data-theme='dark'] .searchable-select-popover,
+html[data-theme='dark'] .tag-picker-popover,
+html[data-theme='dark'] .list-filters,
+html[data-theme='dark'] .task-list,
+html[data-theme='dark'] .task-list-row {
+  color: #d8e3dc;
+  border-color: #3a4a42;
+  background: #1c2521;
+}
+html[data-theme='dark'] .detail-section,
+html[data-theme='dark'] .external-link-editor,
+html[data-theme='dark'] .context-editor .markdown-body,
+html[data-theme='dark'] .task-form-section,
+html[data-theme='dark'] .welcome,
+html[data-theme='dark'] .new-task-card,
+html[data-theme='dark'] .github-connection {
+  border-color: #34443b;
+  background: #202a25;
+}
+html[data-theme='dark'] .new-task-card:hover,
+html[data-theme='dark'] .button:hover:not(:disabled),
+html[data-theme='dark'] .icon-button:hover,
+html[data-theme='dark'] .task-list-row:hover,
+html[data-theme='dark'] .task-list-row.selected,
+html[data-theme='dark'] .tag-option-row:hover,
+html[data-theme='dark'] .tag-option-row.is-selected,
+html[data-theme='dark'] .tag-option-row:has(.tag-option[data-selected='true']),
+html[data-theme='dark'] [data-slot='dropdown-menu-checkbox-item']:focus {
+  color: #e3ece6;
+  background: #29352f;
+}
+html[data-theme='dark'] input,
+html[data-theme='dark'] textarea,
+html[data-theme='dark'] select,
+html[data-theme='dark'] .tag-picker-popover [data-slot='command-input'] {
+  color: #e0e9e3;
+  border-color: #47594f;
+  background: #151d19;
+}
+html[data-theme='dark'] input:disabled,
+html[data-theme='dark'] textarea:disabled,
+html[data-theme='dark'] select:disabled {
+  color: #829288;
+  border-color: #39453f;
+  background: #222925;
+}
+html[data-theme='dark'] .markdown-body,
+html[data-theme='dark'] .markdown-body h1,
+html[data-theme='dark'] .markdown-body h2,
+html[data-theme='dark'] .markdown-body h3,
+html[data-theme='dark'] .markdown-body h4 {
+  color: #d8e3dc;
+}
+html[data-theme='dark'] .markdown-body code,
+html[data-theme='dark'] .markdown-body pre,
+html[data-theme='dark'] .guide pre,
+html[data-theme='dark'] .guide p code,
+html[data-theme='dark'] .github-connection code {
+  color: #c7d8cd;
+  border-color: #3b4a42;
+  background: #151d19;
+}
+html[data-theme='dark'] .brand-mark,
+html[data-theme='dark'] .button.primary,
+html[data-theme='dark'] .workspace-sync .button.sync-push {
+  color: #edf8f1;
+  border-color: #4c8b70;
+  background: #356b57;
+}
+html[data-theme='dark'] .button.primary:hover:not(:disabled),
+html[data-theme='dark'] .workspace-sync .button.sync-push:hover:not(:disabled) {
+  background: #417d66;
+}
+html[data-theme='dark'] .theme-toggle {
+  border-color: #527161;
+  background: #315846;
+  color: #c7dfd1;
+}
+html[data-theme='dark'] .theme-toggle-thumb {
+  background: #17201c;
+  box-shadow: 0 1px 4px #0008;
+}
+html[data-theme='dark'] .workspace-avatar,
+html[data-theme='dark'] .card-icon,
+html[data-theme='dark'] .available-symbol,
+html[data-theme='dark'] .complete-symbol,
+html[data-theme='dark'] .filter-count,
+html[data-theme='dark'] .tag-badge,
+html[data-theme='dark'] .tag-chip,
+html[data-theme='dark'] .draft,
+html[data-theme='dark'] .sync-actions .button[data-state='checked'] {
+  color: #b7cbbf;
+  border-color: #405047;
+  background: #29352f;
+}
+html[data-theme='dark'] .waiting-symbol,
+html[data-theme='dark'] .status-ready,
+html[data-theme='dark'] .ready-callout,
+html[data-theme='dark'] .warning,
+html[data-theme='dark'] .error-banner,
+html[data-theme='dark'] .modal-error,
+html[data-theme='dark'] .sync-state-dirty,
+html[data-theme='dark'] .sync-change-updated {
+  color: #e3c98a;
+  border-color: #675a36;
+  background: #3a321f;
+}
+html[data-theme='dark'] .status,
+html[data-theme='dark'] .status-completed,
+html[data-theme='dark'] .pr-status-success,
+html[data-theme='dark'] .sync-state-clean,
+html[data-theme='dark'] .sync-change-added {
+  color: #b9d8b0;
+  background: #263a29;
+}
+html[data-theme='dark'] .status-blocked,
+html[data-theme='dark'] .pr-status-neutral {
+  color: #bdc8c1;
+  background: #303833;
+}
+html[data-theme='dark'] .pr-status-review,
+html[data-theme='dark'] .sync-state-running {
+  color: #acd0ed;
+  background: #22374a;
+}
+html[data-theme='dark'] .pr-status-danger,
+html[data-theme='dark'] .delete-heading,
+html[data-theme='dark'] .sync-change-deleted {
+  color: #efb1a8;
+  background: #482a28;
+}
+html[data-theme='dark'] .pr-status-warning {
+  color: #e5c584;
+  background: #41351f;
+}
+html[data-theme='dark'] .pr-status-merged,
+html[data-theme='dark'] .sync-state-local {
+  color: #d2bced;
+  background: #382d48;
+}
+html[data-theme='dark'] .step-node.is-completed {
+  border-color: #466046;
+  background: #202e24;
+}
+html[data-theme='dark'] .card-progress,
+html[data-theme='dark'] .node-progress {
+  background: #334039;
+}
+html[data-theme='dark'] .react-flow__controls-button,
+html[data-theme='dark'] .react-flow__minimap.react-flow__panel {
+  fill: #b5c6bc;
+  border-color: #3d4b44;
+  background: #202924;
+}
+html[data-theme='dark'] .react-flow__background pattern circle {
+  fill: #3b4a42;
+}
+html[data-theme='dark'] .react-flow__minimap-mask {
+  fill: #151b18;
+  fill-opacity: 0.72;
+}
+html[data-theme='dark'] .empty-graph {
+  background-image: radial-gradient(#34443b 1px, transparent 1px);
+}
+html[data-theme='dark'] .empty-graph-illustration > span,
+html[data-theme='dark'] .sketch-node {
+  color: #9fb99f;
+  border-color: #49604e;
+  background: #253129;
+  box-shadow: 0 3px #18201c;
+}
+html[data-theme='dark'] .sketch-node.center {
+  color: #d0aa70;
+  border-color: #645439;
+  background: #332c20;
+}
+html[data-theme='dark'] [data-slot='sheet-content'],
+html[data-theme='dark'] [data-slot='dropdown-menu-content'],
+html[data-theme='dark'] [data-slot='checkbox'] {
+  color: #d8e3dc;
+  border-color: #3d4b44;
+  background: #1c2521;
+}
+html[data-theme='dark'] [data-slot='tooltip-content'] {
+  color: #17201c;
+  background: #d8e3dc;
+}
+html[data-theme='dark'] [data-slot='tooltip-content'] > svg {
+  fill: #d8e3dc;
 }

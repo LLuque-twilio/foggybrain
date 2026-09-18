@@ -107,6 +107,7 @@ export function ListView({
     const text = query.trim().toLowerCase();
     return (
       (!text ||
+        task.id.toLowerCase().includes(text) ||
         task.title.toLowerCase().includes(text) ||
         task.description.toLowerCase().includes(text)) &&
       (!selectedTags.length || selectedTags.some((id) => task.tagIds.includes(id))) &&
@@ -130,7 +131,7 @@ export function ListView({
           <div>
             <div className="eyebrow">EVERY THREAD, IN ONE PLACE</div>
             <h1>Your task list.</h1>
-            <p>Search across containers and steps, then filter by any tag.</p>
+            <p>Search by task ID, title, or description, then filter by any tag.</p>
           </div>
           <span className="list-count">
             {filtered.length} of {snapshot.tasks.length}
@@ -141,7 +142,7 @@ export function ListView({
             <Search size={15} />
             <Input
               aria-label="Search all tasks"
-              placeholder="Find a task..."
+              placeholder="Find by task or ID..."
               value={query}
               onChange={(event) => setQuery(event.target.value)}
             />

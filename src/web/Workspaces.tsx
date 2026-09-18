@@ -14,6 +14,7 @@ import { SearchableSelect } from './SearchableSelect';
 import { Button } from './components/ui/button';
 import { Checkbox } from './components/ui/checkbox';
 import { Input } from './components/ui/input';
+import { ThemeToggle } from './ThemeToggle';
 
 const selectedWorkspace = () => new URL(window.location.href).searchParams.get('workspace');
 
@@ -113,7 +114,10 @@ export function App() {
     return (
       <>
         <main className="workspace-empty">
-          <div className="brand">FoggyBrain</div>
+          <div className="brand-row workspace-empty-brand">
+            <div className="brand">FoggyBrain</div>
+            <ThemeToggle />
+          </div>
           <section aria-labelledby="workspace-empty-title">
             <div className="eyebrow">YOUR WORKSPACE, YOUR DEVICE</div>
             <h1 id="workspace-empty-title">Add or connect workspace</h1>
