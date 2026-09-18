@@ -38,8 +38,8 @@ test('generated OpenAPI matches the checked-in document and passes SwaggerParser
     JSON.parse(readFileSync(new URL('../openapi.json', import.meta.url), 'utf8')),
   );
   await validateOpenApi(document);
-  assert.equal(operations.length, 61);
-  assert.equal(new Set(operations.map(({ operation }) => operation.operationId)).size, 61);
+  assert.equal(operations.length, 67);
+  assert.equal(new Set(operations.map(({ operation }) => operation.operationId)).size, 67);
 });
 
 test('OpenAPI inventory matches independently parsed Express registrations and domain mounts', () => {
@@ -350,6 +350,12 @@ test('all operations conform over HTTP with real isolated workspace/domain store
       kind: 'manual',
       prUrl: 'https://github.com/owner/repo/pull/1',
     });
+    assert.deepEqual(await call('GET', `${prefix}/tasks/${task.id}/readme`, 200), { content: '' });
+    assert.deepEqual(
+      await call('PUT', `${prefix}/tasks/${task.id}/readme`, 200, { content: '# Context' }),
+      { content: '# Context' },
+    );
+    assert.deepEqual(await call('DELETE', `${prefix}/tasks/${task.id}/readme`, 200), { ok: true });
     const tag = await call('POST', `${prefix}/tags`, 201, {
       name: 'Release',
       color: '#123456',

@@ -13,6 +13,10 @@ const conflict = (error: unknown) => error instanceof DomainError && error.statu
 
 class Github {
   state: PortableState | null = null;
+  sidecars: Record<string, string> = {};
+  private blobs = new Map<string, string>();
+  private trees = new Map<string, { path: string; sha: string | null }[]>();
+  private commits = new Map<string, { tree: string }>();
   revision = 1;
   private = true;
   branchExists = true;
@@ -41,7 +45,49 @@ class Github {
     if (url.endsWith('/repos/owner/repo')) return Response.json({ private: this.private });
     if (url.includes('/branches/'))
       return Response.json({}, { status: this.branchExists ? 200 : 404 });
-    assert.ok(url.includes('/contents/foggybrain/state.json'));
+    if (url.includes('/git/ref/heads/')) return Response.json({ object: { sha: this.sha } });
+    if (url.includes('/git/commits/'))
+      return Response.json({ tree: { sha: `tree-${this.revision}` } });
+    if (url.endsWith('/git/blobs') && init.method === 'POST') {
+      const body = JSON.parse(init.body as string);
+      const sha = `blob-${this.blobs.size + 1}`;
+      this.blobs.set(sha, Buffer.from(body.content, 'base64').toString());
+      return Response.json({ sha });
+    }
+    if (url.endsWith('/git/trees') && init.method === 'POST') {
+      const body = JSON.parse(init.body as string);
+      const sha = `tree-${this.revision + 1}`;
+      this.trees.set(sha, body.tree);
+      return Response.json({ sha });
+    }
+    if (url.endsWith('/git/commits') && init.method === 'POST') {
+      const body = JSON.parse(init.body as string);
+      const sha = `commit-${this.revision + 1}`;
+      this.commits.set(sha, { tree: body.tree });
+      return Response.json({ sha });
+    }
+    if (url.includes('/git/refs/heads/') && init.method === 'PATCH') {
+      this.puts++;
+      if (this.failPut === 'before') throw new Error(`network failure ${token}`);
+      const body = JSON.parse(init.body as string);
+      const tree = this.trees.get(this.commits.get(body.sha)!.tree)!;
+      for (const entry of tree) {
+        const content = entry.sha ? this.blobs.get(entry.sha)! : '';
+        if (entry.path === target.path) {
+          this.uploadedContent = content;
+          this.state = JSON.parse(content);
+        } else if (entry.path.startsWith('foggybrain/tasks/')) {
+          const id = entry.path.slice('foggybrain/tasks/'.length, -3);
+          if (content) this.sidecars[id] = content;
+          else delete this.sidecars[id];
+        }
+      }
+      this.revision++;
+      this.duringPut?.();
+      if (this.failPut === 'after') throw new Error(`network failure ${token}`);
+      return Response.json({ object: { sha: this.sha } });
+    }
+    assert.ok(url.includes('/contents/'));
     if (init.method === 'PUT') {
       this.puts++;
       const body = JSON.parse(init.body as string);
@@ -57,7 +103,10 @@ class Github {
       return Response.json({ content: { sha: this.sha } });
     }
     if (!this.state) return Response.json({}, { status: 404 });
-    const bytes = Buffer.from(JSON.stringify(this.state));
+    const readme = /\/contents\/foggybrain\/tasks\/([^/]+)\.md/.exec(url);
+    const content = readme ? this.sidecars[readme[1]] : JSON.stringify(this.state);
+    if (content === undefined) return Response.json({}, { status: 404 });
+    const bytes = Buffer.from(content);
     return Response.json({
       type: 'file',
       encoding: 'base64',
@@ -207,6 +256,27 @@ test('revert rejects resolution and a newer preview invalidates the old one', as
   await sync.preview({ mode: 'revert' });
   await assert.rejects(sync.apply(first.previewId), conflict);
   assert.equal(github.puts, 0);
+});
+
+test('README sidecars merge, conflict, and publish with the manifest atomically', async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'foggybrain-readme-sync-'));
+  const { store, sync, github } = setup(t, join(directory, 'state.sqlite'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const task = store.createTask({ title: 'Documented', kind: 'manual' });
+  store.saveReadme(task.id, 'base');
+  await apply(sync);
+  assert.equal(github.sidecars[task.id], 'base');
+  store.saveReadme(task.id, 'local');
+  github.sidecars[task.id] = 'remote';
+  github.revision++;
+  const blocked = await sync.preview();
+  assert.deepEqual(blocked.conflicts, [
+    { path: `readmes/${task.id}`, base: 'base', local: 'local', remote: 'remote' },
+  ]);
+  const resolved = await sync.preview({ resolution: 'remote' });
+  await sync.apply(resolved.previewId);
+  assert.equal(store.readme(task.id), 'remote');
+  assert.equal(github.sidecars[task.id], 'remote');
 });
 
 test('config is explicit, separate from GH_TOKEN, and rejects unsafe targets', () => {
@@ -521,7 +591,7 @@ for (const phase of [
       let failures = 0;
       github.override = (url, init) => {
         const current =
-          init.method === 'PUT'
+          init.method !== undefined && init.method !== 'GET'
             ? 'writing state file'
             : url.includes('/contents/')
               ? 'reading state file'
@@ -573,7 +643,7 @@ for (const phase of [
     const preview = await sync.preview();
     github.override = (url, init) => {
       const current =
-        init.method === 'PUT'
+        init.method !== undefined && init.method !== 'GET'
           ? 'writing state file'
           : url.includes('/contents/')
             ? 'reading state file'
@@ -606,7 +676,7 @@ for (const status of [409, 422]) {
     const previous = store.syncRecord(target);
     const preview = await sync.preview();
     github.override = (_url, init) => {
-      if (init.method === 'PUT') {
+      if (init.method !== undefined && init.method !== 'GET') {
         github.edit((state) => {
           state.tasks[0].description = 'Racing remote edit';
         });
@@ -638,7 +708,9 @@ for (const status of [409, 422]) {
     github.failPut = null;
     store.updateTask(task.id, { description: 'New local work' });
     github.override = (_url, init) =>
-      init.method === 'PUT' ? Response.json({}, { status }) : undefined;
+      init.method !== undefined && init.method !== 'GET'
+        ? Response.json({}, { status })
+        : undefined;
     await assert.rejects(apply(sync), conflict);
     assert.deepEqual(store.syncRecord(target), previous);
     github.override = undefined;
@@ -652,7 +724,7 @@ test('a successful PUT status with an unreadable body keeps the upload intent', 
   const { store, sync, github } = setup(t);
   store.createTask({ title: 'Local', kind: 'manual' });
   github.override = (_url, init) =>
-    init.method === 'PUT'
+    init.method !== undefined && init.method !== 'GET'
       ? new Response(
           new ReadableStream({
             start(controller) {
@@ -677,7 +749,7 @@ test('stale local, remote SHA, and a SHA CAS race reject without overwrites', as
   await assert.rejects(sync.apply(preview.previewId), conflict);
   preview = await sync.preview();
   github.override = (_url, init) => {
-    if (init.method === 'PUT') {
+    if (init.method !== undefined && init.method !== 'GET') {
       github.revision++;
       return Response.json({}, { status: 409 });
     }

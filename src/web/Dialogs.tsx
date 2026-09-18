@@ -26,17 +26,19 @@ export function Dialog({
   close,
   children,
   danger = false,
+  className = '',
 }: {
   title: string;
   close: () => void;
   children: ReactNode;
   danger?: boolean;
+  className?: string;
 }) {
   const error = useContext(DialogErrorContext);
   return (
     <DialogPrimitive open onOpenChange={(open) => !open && close()}>
       <DialogContent
-        className={`dialog ${danger ? 'dialog-danger' : ''}`}
+        className={`dialog ${danger ? 'dialog-danger' : ''} ${className}`}
         aria-label={title}
         showCloseButton={false}
         onEscapeKeyDown={(event) => {

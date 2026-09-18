@@ -232,6 +232,34 @@ export async function main(argv = process.argv): Promise<void> {
         ),
       ),
     );
+  workspace
+    .command('retarget <id>')
+    .description('Change a cloud workspace target without reading or writing either remote')
+    .requiredOption('--repo <owner/repo>', 'existing private state repository')
+    .option('--branch <branch>', 'existing branch (default: main)')
+    .option('--path <path>', 'state JSON path (default: foggybrain/state.json)')
+    .addOption(
+      new Option('--credential <source>', 'server credential').choices(['dedicated', 'github']),
+    )
+    .requiredOption('--yes', 'confirm changing the cloud target')
+    .action(async (id, options) =>
+      output(
+        await request<Workspace>(
+          `/workspaces/${encodeURIComponent(id)}`,
+          'PATCH',
+          {
+            target: {
+              repo: options.repo,
+              branch: options.branch ?? 'main',
+              path: options.path ?? 'foggybrain/state.json',
+            },
+            credential: options.credential ?? 'dedicated',
+            confirm: true,
+          } satisfies UpdateWorkspaceInput,
+          false,
+        ),
+      ),
+    );
   for (const name of ['create', 'connect'] as const) {
     const command = workspace
       .command(name === 'create' ? 'create <name>' : 'connect <id>')

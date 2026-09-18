@@ -20,6 +20,7 @@ const MAX_CONTENT = 1024 * 1024;
 const collections = ['tasks', 'dependencies', 'references', 'tags'] as const;
 const equal = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 const serializePortableState = (state: PortableState) => `${JSON.stringify(state, null, 2)}\n`;
+const README_LIMIT = 1024 * 1024;
 
 class RejectedSyncWrite extends DomainError {}
 
@@ -75,6 +76,42 @@ function changes(before: PortableState, after: PortableState): SyncChange[] {
     }
   }
   return result;
+}
+
+function readmeChanges(
+  before: Record<string, string>,
+  after: Record<string, string>,
+): SyncChange[] {
+  return [...new Set([...Object.keys(before), ...Object.keys(after)])]
+    .sort()
+    .filter((id) => before[id] !== after[id])
+    .map((id) => ({
+      collection: 'readmes' as const,
+      id,
+      kind: !before[id] ? 'added' : !after[id] ? 'deleted' : 'updated',
+    }));
+}
+
+function mergeReadmes(
+  base: Record<string, string>,
+  local: Record<string, string>,
+  remote: Record<string, string>,
+  resolution: 'local' | 'remote' | null,
+): { readmes: Record<string, string>; conflicts: SyncConflict[] } {
+  const readmes: Record<string, string> = {};
+  const conflicts: SyncConflict[] = [];
+  for (const id of [
+    ...new Set([...Object.keys(base), ...Object.keys(local), ...Object.keys(remote)]),
+  ].sort()) {
+    const b = base[id] ?? '';
+    const l = local[id] ?? '';
+    const r = remote[id] ?? '';
+    if (l !== r && l !== b && r !== b)
+      conflicts.push({ path: `readmes/${id}`, base: b, local: l, remote: r });
+    const value = l === r ? l : l === b ? r : r === b ? l : resolution === 'remote' ? r : l;
+    if (value) readmes[id] = value;
+  }
+  return { readmes, conflicts };
 }
 
 function merge(
@@ -195,6 +232,9 @@ interface SavedPreview {
   local: PortableState;
   merged: PortableState;
   remote: PortableState;
+  localReadmes: Record<string, string>;
+  mergedReadmes: Record<string, string>;
+  remoteReadmes: Record<string, string>;
   sha: string | null;
   record: SyncRecord;
 }
@@ -242,7 +282,9 @@ export class StateSync {
       target: this.target ? { ...this.target } : null,
       lastSync: record?.lastSync ?? null,
       dirty:
-        !!record?.pending || !equal(this.store.exportState(), record?.base ?? emptyPortableState()),
+        !!record?.pending ||
+        !equal(this.store.exportState(), record?.base ?? emptyPortableState()) ||
+        !equal(this.store.readmes(), record?.baseReadmes ?? {}),
       syncing: this.active !== null,
     };
   }
@@ -279,8 +321,7 @@ export class StateSync {
   }
 
   private async request(
-    operation:
-      'reading repository' | 'reading branch' | 'reading state file' | 'writing state file',
+    operation: string,
     suffix: string,
     signal: AbortSignal,
     init: RequestInit = {},
@@ -321,8 +362,12 @@ export class StateSync {
           (response.status >= 500 && response.status <= 599
             ? 'GitHub service error; check GitHub service status and wait before requesting a new preview.'
             : 'Check the sync target and selected server credential; re-preview before applying again.')
-        }${init.method === 'PUT' ? ' Do not retry the apply blindly; the upload may need reconciliation.' : ''}`;
-        if (init.method === 'PUT' && (response.status === 409 || response.status === 422))
+        }${init.method && init.method !== 'GET' ? ' Do not retry the apply blindly; the upload may need reconciliation.' : ''}`;
+        if (
+          init.method &&
+          init.method !== 'GET' &&
+          (response.status === 409 || response.status === 422)
+        )
           throw new RejectedSyncWrite(message, 409);
         throw new DomainError(
           message,
@@ -361,7 +406,7 @@ export class StateSync {
         : 'failed during transport; check server network, DNS, TLS, and proxy connectivity';
       throw new DomainError(
         `GitHub state sync ${reason} while ${operation}. Re-preview before applying again.${
-          init.method === 'PUT'
+          init.method && init.method !== 'GET'
             ? ' The upload may have committed; do not retry the apply blindly.'
             : ''
         }`,
@@ -374,7 +419,51 @@ export class StateSync {
     return `/contents/${this.target!.path.split('/').map(encodeURIComponent).join('/')}`;
   }
 
-  private async remote(signal: AbortSignal): Promise<{ state: PortableState; sha: string | null }> {
+  private readmePath(id: string): string {
+    const parts = this.target!.path.split('/');
+    parts.pop();
+    return `/contents/${[...parts, 'tasks', `${id}.md`].map(encodeURIComponent).join('/')}`;
+  }
+
+  private async content(
+    path: string,
+    signal: AbortSignal,
+  ): Promise<{ content: string; sha: string } | null> {
+    const file = (await this.request(
+      'reading README sidecar',
+      `${path}?ref=${encodeURIComponent(this.target!.branch)}`,
+      signal,
+      {},
+      true,
+    )) as Record<string, unknown> | null;
+    if (file === null) return null;
+    if (
+      file.type !== 'file' ||
+      file.encoding !== 'base64' ||
+      typeof file.sha !== 'string' ||
+      typeof file.content !== 'string' ||
+      typeof file.size !== 'number' ||
+      !Number.isInteger(file.size) ||
+      file.size < 0 ||
+      file.size > README_LIMIT
+    )
+      throw new DomainError('Invalid GitHub README sidecar', 502);
+    const encoded = file.content.replace(/\n/g, '');
+    if (encoded.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(encoded))
+      throw new DomainError('Invalid README encoding', 502);
+    const bytes = Buffer.from(encoded, 'base64');
+    if (
+      bytes.length !== file.size ||
+      bytes.length > README_LIMIT ||
+      bytes.toString('base64') !== encoded
+    )
+      throw new DomainError('Invalid README sidecar size or encoding', 502);
+    return { content: new TextDecoder('utf-8', { fatal: true }).decode(bytes), sha: file.sha };
+  }
+
+  private async remote(
+    signal: AbortSignal,
+  ): Promise<{ state: PortableState; readmes: Record<string, string>; sha: string | null }> {
     const repo = (await this.request('reading repository', '', signal)) as {
       private?: unknown;
     } | null;
@@ -392,7 +481,7 @@ export class StateSync {
       {},
       true,
     )) as Record<string, unknown> | null;
-    if (file === null) return { state: emptyPortableState(), sha: null };
+    if (file === null) return { state: emptyPortableState(), readmes: {}, sha: null };
     if (
       file.type !== 'file' ||
       file.encoding !== 'base64' ||
@@ -421,7 +510,13 @@ export class StateSync {
     } catch {
       throw new DomainError('Remote state contains malformed JSON');
     }
-    return { state: validatePortableState(parsed), sha: file.sha };
+    const state = validatePortableState(parsed);
+    const readmes: Record<string, string> = {};
+    for (const task of state.tasks) {
+      const sidecar = await this.content(this.readmePath(task.id), signal);
+      if (sidecar?.content) readmes[task.id] = sidecar.content;
+    }
+    return { state, readmes, sha: file.sha };
   }
 
   preview(
@@ -445,8 +540,9 @@ export class StateSync {
       const resolution = options.resolution ?? null;
       if (mode === 'revert' && this.store.syncRecord(this.target!).pending)
         throw new DomainError('Cannot revert with an uncertain upload; reconcile it first', 409);
-      const { state: remote, sha } = await this.remote(signal);
+      const { state: remote, readmes: remoteReadmes, sha } = await this.remote(signal);
       const local = this.store.exportState();
+      const localReadmes = this.store.readmes();
       const record = this.store.syncRecord(this.target!);
       if (mode === 'revert') {
         if (record.pending)
@@ -464,7 +560,17 @@ export class StateSync {
           canApply: true,
           resolution: null,
         };
-        this.saved = { preview, local, merged: remote, remote, sha, record };
+        this.saved = {
+          preview,
+          local,
+          merged: remote,
+          remote,
+          localReadmes,
+          mergedReadmes: remoteReadmes,
+          remoteReadmes,
+          sha,
+          record,
+        };
         return structuredClone(preview);
       }
       let base = record.base ?? emptyPortableState();
@@ -479,6 +585,12 @@ export class StateSync {
           'No common sync baseline. Use an empty local store or a distinct remote path.';
       }
       const result = merge(base, local, remote, resolution);
+      const readmeResult = mergeReadmes(
+        record.baseReadmes ?? {},
+        localReadmes,
+        remoteReadmes,
+        resolution,
+      );
       validationError ??= result.validationError;
       let merged = result.merged;
       try {
@@ -492,14 +604,32 @@ export class StateSync {
         mode,
         previewId: randomUUID(),
         target: { ...this.target! },
-        localChanges: changes(local, merged),
-        remoteChanges: changes(remote, merged),
-        conflicts: result.conflicts,
+        localChanges: [
+          ...changes(local, merged),
+          ...readmeChanges(localReadmes, readmeResult.readmes),
+        ],
+        remoteChanges: [
+          ...changes(remote, merged),
+          ...readmeChanges(remoteReadmes, readmeResult.readmes),
+        ],
+        conflicts: [...result.conflicts, ...readmeResult.conflicts],
         validationError,
-        canApply: !validationError && (!result.conflicts.length || resolution !== null),
+        canApply:
+          !validationError &&
+          (![...result.conflicts, ...readmeResult.conflicts].length || resolution !== null),
         resolution,
       };
-      this.saved = { preview, local, merged, remote, sha, record };
+      this.saved = {
+        preview,
+        local,
+        merged,
+        remote,
+        localReadmes,
+        mergedReadmes: readmeResult.readmes,
+        remoteReadmes,
+        sha,
+        record,
+      };
       return structuredClone(preview);
     });
   }
@@ -513,17 +643,30 @@ export class StateSync {
       if (!saved.preview.canApply) throw new DomainError('Sync preview cannot be applied', 409);
       if (saved.preview.mode === 'revert' && this.store.syncRecord(this.target!).pending)
         throw new DomainError('Cannot revert with an uncertain upload; reconcile it first', 409);
-      if (!equal(this.store.exportState(), saved.local))
+      if (
+        !equal(this.store.exportState(), saved.local) ||
+        !equal(this.store.readmes(), saved.localReadmes)
+      )
         throw new DomainError('Local state changed; re-preview', 409);
       const remote = await this.remote(signal);
-      if (remote.sha !== saved.sha || !equal(remote.state, saved.remote))
+      if (
+        remote.sha !== saved.sha ||
+        !equal(remote.state, saved.remote) ||
+        !equal(remote.readmes, saved.remoteReadmes)
+      )
         throw new DomainError('Remote state changed; re-preview', 409);
       signal.throwIfAborted();
       if (saved.preview.mode === 'revert') {
         this.store.finishSync(this.target!, saved.record, {
           local: saved.local,
           remote: saved.remote,
+          localReadmes: saved.localReadmes,
+          remoteReadmes: saved.remoteReadmes,
         });
+        this.store.replaceReadmes(
+          saved.remoteReadmes,
+          saved.remote.tasks.map((task) => task.id),
+        );
         return { ...this.getStatus(), syncing: false };
       }
       const record = this.store.prepareSync(
@@ -532,19 +675,17 @@ export class StateSync {
         saved.local,
         saved.merged,
         saved.sha,
+        saved.localReadmes,
+        saved.mergedReadmes,
       );
-      if (!equal(saved.remote, saved.merged) || saved.sha === null) {
+      if (
+        !equal(saved.remote, saved.merged) ||
+        !equal(saved.remoteReadmes, saved.mergedReadmes) ||
+        saved.sha === null
+      ) {
         // Durable intent precedes the only PUT. Never retry an ambiguous upload automatically.
         try {
-          await this.request('writing state file', this.contentPath(), signal, {
-            method: 'PUT',
-            body: JSON.stringify({
-              message: 'Sync FoggyBrain state',
-              branch: this.target!.branch,
-              content: Buffer.from(serializePortableState(saved.merged)).toString('base64'),
-              ...(saved.sha ? { sha: saved.sha } : {}),
-            }),
-          });
+          await this.writeAtomically(saved, signal);
         } catch (error) {
           if (error instanceof RejectedSyncWrite)
             this.store.restoreSyncRecord(this.target!, record, saved.record);
@@ -553,8 +694,82 @@ export class StateSync {
       }
       signal.throwIfAborted();
       this.store.finishSync(this.target!, record);
+      this.store.replaceReadmes(
+        saved.mergedReadmes,
+        saved.merged.tasks.map((task) => task.id),
+      );
       return { ...this.getStatus(), syncing: false };
     });
+  }
+
+  private async writeAtomically(saved: SavedPreview, signal: AbortSignal): Promise<void> {
+    const ref = (await this.request(
+      'reading branch reference',
+      `/git/ref/heads/${encodeURIComponent(this.target!.branch)}`,
+      signal,
+    )) as { object?: { sha?: unknown } };
+    const commitSha = ref.object?.sha;
+    if (typeof commitSha !== 'string')
+      throw new DomainError('Invalid GitHub branch reference', 502);
+    const commit = (await this.request(
+      'reading branch commit',
+      `/git/commits/${encodeURIComponent(commitSha)}`,
+      signal,
+    )) as { tree?: { sha?: unknown } };
+    if (typeof commit.tree?.sha !== 'string')
+      throw new DomainError('Invalid GitHub branch commit', 502);
+    const blob = async (content: string) => {
+      const result = (await this.request('writing state file', '/git/blobs', signal, {
+        method: 'POST',
+        body: JSON.stringify({
+          content: Buffer.from(content).toString('base64'),
+          encoding: 'base64',
+        }),
+      })) as { sha?: unknown };
+      if (typeof result.sha !== 'string')
+        throw new DomainError('Invalid GitHub blob response', 502);
+      return result.sha;
+    };
+    const tree: { path: string; mode: '100644'; type: 'blob'; sha: string | null }[] = [
+      {
+        path: this.target!.path,
+        mode: '100644',
+        type: 'blob',
+        sha: await blob(serializePortableState(saved.merged)),
+      },
+    ];
+    const oldIds = new Set(saved.remote.tasks.map((task) => task.id));
+    for (const id of new Set([...oldIds, ...saved.merged.tasks.map((task) => task.id)])) {
+      if (saved.remoteReadmes[id] === saved.mergedReadmes[id]) continue;
+      tree.push({
+        path: this.readmePath(id).slice('/contents/'.length),
+        mode: '100644',
+        type: 'blob',
+        sha: saved.mergedReadmes[id] ? await blob(saved.mergedReadmes[id]) : null,
+      });
+    }
+    const createdTree = (await this.request('writing Git tree', '/git/trees', signal, {
+      method: 'POST',
+      body: JSON.stringify({ base_tree: commit.tree.sha, tree }),
+    })) as { sha?: unknown };
+    if (typeof createdTree.sha !== 'string')
+      throw new DomainError('Invalid GitHub tree response', 502);
+    const createdCommit = (await this.request('writing Git commit', '/git/commits', signal, {
+      method: 'POST',
+      body: JSON.stringify({
+        message: 'Sync FoggyBrain state',
+        tree: createdTree.sha,
+        parents: [commitSha],
+      }),
+    })) as { sha?: unknown };
+    if (typeof createdCommit.sha !== 'string')
+      throw new DomainError('Invalid GitHub commit response', 502);
+    await this.request(
+      'updating Git branch reference',
+      `/git/refs/heads/${encodeURIComponent(this.target!.branch)}`,
+      signal,
+      { method: 'PATCH', body: JSON.stringify({ sha: createdCommit.sha, force: false }) },
+    );
   }
 
   async stop(): Promise<void> {

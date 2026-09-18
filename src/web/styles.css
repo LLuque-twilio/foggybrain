@@ -172,6 +172,87 @@ p {
   font-size: 9px;
   font-weight: 400;
 }
+.readme-tabs {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.readme-tabs [role='tab'] {
+  padding: 3px 0;
+  border-bottom: 2px solid transparent;
+}
+.readme-tabs [role='tab'][aria-selected='true'] {
+  border-color: var(--green);
+  color: var(--green);
+  font-weight: 650;
+}
+.markdown-body {
+  color: #36483d;
+  font-family: var(--serif);
+  font-size: 15px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.markdown-body > :first-child {
+  margin-top: 0;
+}
+.markdown-body > :last-child {
+  margin-bottom: 0;
+}
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3,
+.markdown-body h4 {
+  color: #283c34;
+  font-family: 'Manrope Variable', sans-serif;
+  line-height: 1.25;
+  margin: 1.3em 0 0.5em;
+}
+.markdown-body h1 {
+  font-size: 1.45em;
+}
+.markdown-body h2 {
+  font-size: 1.25em;
+}
+.markdown-body h3 {
+  font-size: 1.1em;
+}
+.markdown-body p,
+.markdown-body ul,
+.markdown-body ol,
+.markdown-body blockquote,
+.markdown-body pre {
+  margin: 0 0 0.9em;
+}
+.markdown-body ul,
+.markdown-body ol {
+  padding-left: 1.4em;
+}
+.markdown-body blockquote {
+  border-left: 3px solid var(--line);
+  color: var(--muted);
+  padding-left: 12px;
+}
+.markdown-body code {
+  background: #e9ede3;
+  border-radius: 3px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.88em;
+  padding: 0.1em 0.25em;
+}
+.markdown-body pre {
+  background: #e9ede3;
+  border-radius: 6px;
+  overflow-x: auto;
+  padding: 12px;
+}
+.markdown-body pre code {
+  background: transparent;
+  padding: 0;
+}
+.markdown-body a {
+  text-decoration: underline;
+}
 .workspace-label > .local-dot {
   margin-left: auto;
 }
@@ -1724,6 +1805,35 @@ h1 {
 .dialog::backdrop {
   background: #2c3a2b50;
   backdrop-filter: blur(3px);
+}
+.dialog.context-dialog-shell {
+  width: min(1120px, calc(100vw - 48px));
+  max-height: calc(100dvh - 48px);
+  min-height: min(720px, calc(100dvh - 48px));
+}
+.context-editor {
+  display: flex;
+  flex-direction: column;
+  min-height: min(630px, calc(100dvh - 150px));
+}
+.context-editor > label,
+.context-editor .markdown-body {
+  flex: 1;
+  min-height: 0;
+}
+.context-editor textarea {
+  height: min(540px, calc(100dvh - 285px));
+  resize: vertical;
+}
+.context-editor .markdown-body {
+  overflow: auto;
+  border: 1px solid #e1e8d8;
+  border-radius: 8px;
+  background: #f9fbf4;
+  padding: 18px;
+}
+.context-editor footer {
+  margin-top: 18px;
 }
 .dialog > header {
   display: flex;

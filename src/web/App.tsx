@@ -617,6 +617,14 @@ export function WorkspaceApp({
                 createTag={createTag}
                 renameTag={renameTag}
                 deleteTag={previewTagDelete}
+                readme={() =>
+                  api<{ content: string }>(`/tasks/${task.id}/readme`).then(
+                    (result) => result.content,
+                  )
+                }
+                saveReadme={(content) =>
+                  run(() => api(`/tasks/${task.id}/readme`, 'PUT', { content }))
+                }
               />
             )}
           />
@@ -872,6 +880,14 @@ export function WorkspaceApp({
                     createTag={createTag}
                     renameTag={renameTag}
                     deleteTag={previewTagDelete}
+                    readme={() =>
+                      api<{ content: string }>(`/tasks/${selected.id}/readme`).then(
+                        (result) => result.content,
+                      )
+                    }
+                    saveReadme={(content) =>
+                      run(() => api(`/tasks/${selected.id}/readme`, 'PUT', { content }))
+                    }
                   />
                 )}
               </TaskDetailSheet>

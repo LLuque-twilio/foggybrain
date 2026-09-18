@@ -64,6 +64,26 @@ test('empty store and task defaults; returned values do not mutate storage', (t)
   assert.equal(view(store, task).title, 'Write tests');
 });
 
+test('task READMEs are per-store sidecars and deletion removes owned sidecars', (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'foggybrain-readmes-'));
+  const store = new Store(join(directory, 'workspace.sqlite'));
+  t.after(() => {
+    store.close();
+    rmSync(directory, { recursive: true, force: true });
+  });
+  const parent = container(store, 'Parent');
+  const child = manual(store, 'Child', parent.id);
+  store.saveReadme(child.id, '# Notes\n');
+  assert.equal(store.readme(child.id), '# Notes\n');
+  assert.deepEqual(store.readmes(), { [child.id]: '# Notes\n' });
+  store.deleteTask(parent.id);
+  assert.equal(store.readme(child.id, false), '');
+  assert.throws(
+    () => store.readme(child.id),
+    (error) => error instanceof DomainError && error.status === 404,
+  );
+});
+
 test('early done propagates through a chain immediately when its prerequisite completes', (t) => {
   const store = memory(t);
   const a = manual(store, 'A');

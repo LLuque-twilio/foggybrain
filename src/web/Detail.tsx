@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   ArrowRight,
   ArrowUpRight,
@@ -15,6 +15,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
+import Markdown from 'react-markdown';
 import type {
   ConnectTaskInput,
   ExternalLink,
@@ -29,6 +30,7 @@ import { Button } from './components/ui/button';
 import { Input } from './components/ui/input';
 import { Textarea } from './components/ui/textarea';
 import { Tooltip, TooltipContent, TooltipTrigger } from './components/ui/tooltip';
+import { Dialog } from './Dialogs';
 import { Status } from './Status';
 import { PrStatus } from './PrStatus';
 import { StarToggle, TagBadges, TagPicker } from './Tags';
@@ -53,6 +55,8 @@ export function Detail({
   createTag,
   renameTag,
   deleteTag,
+  readme,
+  saveReadme,
 }: {
   task: TaskView;
   snapshot: Snapshot;
@@ -72,6 +76,8 @@ export function Detail({
   createTag: (name: string, color: string) => Promise<Tag | undefined>;
   renameTag: (id: string, name: string, color: string) => Promise<boolean>;
   deleteTag: (tag: Tag) => void;
+  readme: () => Promise<string>;
+  saveReadme: (content: string) => Promise<boolean>;
 }) {
   const [copied, setCopied] = useState(false);
   const [editing, setEditing] = useState<'title' | 'description' | 'links' | 'pr' | null>(null);
@@ -79,6 +85,14 @@ export function Detail({
   const [description, setDescription] = useState(task.description);
   const [externalLinkDrafts, setExternalLinkDrafts] = useState<ExternalLinkDraft[]>([]);
   const [prUrl, setPrUrl] = useState(task.prUrl ?? '');
+  const [readmeContent, setReadmeContent] = useState('');
+  const [contextOpen, setContextOpen] = useState(false);
+  const [readmeMode, setReadmeMode] = useState<'write' | 'preview'>('write');
+  useEffect(() => {
+    void readme()
+      .then(setReadmeContent)
+      .catch(() => setReadmeContent(''));
+  }, [task.id]);
   const incoming = snapshot.dependencies.filter((edge) => edge.dependentId === task.id);
   const outgoing = snapshot.dependencies.filter((edge) => edge.prerequisiteId === task.id);
   const reference = snapshot.references.find(
@@ -94,132 +108,45 @@ export function Detail({
     setEditing('links');
   };
   return (
-    <aside className="detail-panel" aria-label="Task details">
-      <div className="detail-top">
-        <span className="eyebrow">{reference ? 'SHARED TASK' : 'TASK DETAILS'}</span>
-        <div>
-          <StarToggle
-            starred={task.tagIds.includes('favorites')}
-            title={task.title}
-            disabled={busy}
-            onToggle={() => toggleTag('favorites', !task.tagIds.includes('favorites'))}
-          />
-          <Button
-            variant="ghost"
-            size="icon"
-            className="icon-button"
-            onClick={close}
-            aria-label="Close task details"
-          >
-            <X size={18} />
-          </Button>
-        </div>
-      </div>
-      <Status status={task.status} />
-      {editing === 'title' ? (
-        <form
-          className="detail-editor detail-title-editor"
-          onSubmit={async (event) => {
-            event.preventDefault();
-            if (await update({ title })) setEditing(null);
-          }}
-        >
-          <label>
-            Task title
-            <Input
-              required
-              autoFocus
-              maxLength={300}
-              value={title}
-              onChange={(event) => setTitle(event.target.value)}
+    <>
+      <aside className="detail-panel" aria-label="Task details">
+        <div className="detail-top">
+          <span className="eyebrow">{reference ? 'SHARED TASK' : 'TASK DETAILS'}</span>
+          <div>
+            <StarToggle
+              starred={task.tagIds.includes('favorites')}
+              title={task.title}
+              disabled={busy}
+              onToggle={() => toggleTag('favorites', !task.tagIds.includes('favorites'))}
             />
-          </label>
-          <div className="detail-editor-actions">
-            <Button type="button" className="button" onClick={() => setEditing(null)}>
-              Cancel
-            </Button>
-            <Button type="submit" variant="primary" className="button primary" disabled={busy}>
-              Save title
+            <Button
+              variant="ghost"
+              size="icon"
+              className="icon-button"
+              onClick={close}
+              aria-label="Close task details"
+            >
+              <X size={18} />
             </Button>
           </div>
-        </form>
-      ) : (
-        <div className="detail-title-row">
-          <h2>{task.title}</h2>
-          {editing === null && (
-            <Button
-              variant="ghost"
-              size="icon"
-              className="icon-button detail-edit-button"
-              aria-label="Edit title"
-              onClick={() => {
-                setTitle(task.title);
-                setEditing('title');
-              }}
-            >
-              <Pencil size={13} />
-            </Button>
-          )}
         </div>
-      )}
-      <TagBadges tags={snapshot.tags} tagIds={task.tagIds} />
-      <div className="detail-actions">
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant="link"
-              size="sm"
-              className="text-button"
-              onClick={async () => {
-                try {
-                  await navigator.clipboard.writeText(task.id);
-                  setCopied(true);
-                } catch {
-                  setCopied(false);
-                }
-              }}
-            >
-              <Copy size={13} />
-              {copied ? 'ID copied' : 'Copy ID'}
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>{task.id}</TooltipContent>
-        </Tooltip>
-      </div>
-      <section className="detail-section detail-about">
-        <div className="detail-section-heading">
-          <h3>About</h3>
-          {editing === null && (
-            <Button
-              variant="ghost"
-              size="icon"
-              className="icon-button detail-edit-button"
-              aria-label={task.description ? 'Edit description' : 'Add description'}
-              onClick={() => {
-                setDescription(task.description);
-                setEditing('description');
-              }}
-            >
-              {task.description ? <Pencil size={13} /> : <Plus size={14} />}
-            </Button>
-          )}
-        </div>
-        {editing === 'description' ? (
+        <Status status={task.status} />
+        {editing === 'title' ? (
           <form
-            className="detail-editor"
+            className="detail-editor detail-title-editor"
             onSubmit={async (event) => {
               event.preventDefault();
-              if (await update({ description })) setEditing(null);
+              if (await update({ title })) setEditing(null);
             }}
           >
             <label>
-              Description
-              <Textarea
+              Task title
+              <Input
+                required
                 autoFocus
-                rows={4}
-                placeholder="Keep useful context out of your head."
-                value={description}
-                onChange={(event) => setDescription(event.target.value)}
+                maxLength={300}
+                value={title}
+                onChange={(event) => setTitle(event.target.value)}
               />
             </label>
             <div className="detail-editor-actions">
@@ -227,332 +154,557 @@ export function Detail({
                 Cancel
               </Button>
               <Button type="submit" variant="primary" className="button primary" disabled={busy}>
-                Save description
+                Save title
               </Button>
             </div>
           </form>
         ) : (
-          <p className="description">
-            {task.description || 'No description yet. Add a little context when it helps.'}
-          </p>
-        )}
-        <div className="detail-tags">
-          <h4>Tags</h4>
-          <TagPicker
-            tags={snapshot.tags}
-            selectedIds={task.tagIds}
-            busy={busy}
-            onAdd={(id) => toggleTag(id, true)}
-            onRemove={(id) => toggleTag(id, false)}
-            onCreate={createTag}
-            onRename={renameTag}
-            onDelete={deleteTag}
-          />
-        </div>
-      </section>
-      <section className="detail-section external-links">
-        <div className="detail-section-heading">
-          <h3>
-            External resources <span>{externalLinks.length}</span>
-          </h3>
-          {editing === null && externalLinks.length > 0 && (
-            <Button
-              variant="ghost"
-              size="icon"
-              className="icon-button detail-edit-button"
-              aria-label="Edit external resources"
-              onClick={() => beginExternalLinkEdit(false)}
-            >
-              <Pencil size={13} />
-            </Button>
-          )}
-        </div>
-        {editing === 'links' ? (
-          <form
-            className="detail-editor external-links-editor"
-            onSubmit={async (event) => {
-              event.preventDefault();
-              const links = externalLinkDrafts.map(({ inferType: _, ...link }) => link);
-              if (await update({ externalLinks: links as ExternalLink[] })) setEditing(null);
-            }}
-          >
-            <div className="external-links-heading">
-              <p>Add supporting tickets, documents, and reference material.</p>
-              <span>{externalLinkDrafts.length} / 5</span>
-            </div>
-            <ExternalLinkFields links={externalLinkDrafts} setLinks={setExternalLinkDrafts} />
-            <div className="detail-editor-actions">
-              <Button type="button" className="button" onClick={() => setEditing(null)}>
-                Cancel
-              </Button>
-              <Button type="submit" variant="primary" className="button primary" disabled={busy}>
-                Save resources
-              </Button>
-            </div>
-          </form>
-        ) : externalLinks.length > 0 ? (
-          externalLinks.map((link) => {
-            const Icon =
-              link.type === 'github'
-                ? GitBranch
-                : link.type === 'jira'
-                  ? Ticket
-                  : link.type === 'google-doc'
-                    ? FileText
-                    : Link2;
-            const typeLabel =
-              link.type === 'google-doc'
-                ? 'Google Doc'
-                : link.type.charAt(0).toUpperCase() + link.type.slice(1);
-            return (
-              <a
-                className="external-link"
-                href={link.url}
-                target="_blank"
-                rel="noreferrer"
-                key={link.url}
-              >
-                <Icon size={15} />
-                <span>
-                  <strong>{link.label || new URL(link.url).hostname}</strong>
-                  <small>{typeLabel}</small>
-                </span>
-                <ArrowUpRight size={13} />
-              </a>
-            );
-          })
-        ) : (
-          <>
-            <p className="form-hint">No external resources yet.</p>
+          <div className="detail-title-row">
+            <h2>{task.title}</h2>
             {editing === null && (
               <Button
-                className="button full"
-                disabled={busy}
-                onClick={() => beginExternalLinkEdit(true)}
+                variant="ghost"
+                size="icon"
+                className="icon-button detail-edit-button"
+                aria-label="Edit title"
+                onClick={() => {
+                  setTitle(task.title);
+                  setEditing('title');
+                }}
               >
-                <Plus size={15} />
-                Add external resource
+                <Pencil size={13} />
               </Button>
             )}
-          </>
-        )}
-      </section>
-      <section className="detail-section detail-progress">
-        <h3>Progress</h3>
-        {task.status === 'ready' && (
-          <div className="callout ready-callout">
-            <Check size={16} />
-            <span>
-              Own work done. This will complete automatically when its prerequisites finish.
-            </span>
           </div>
         )}
-        {task.kind === 'manual' && (
-          <Button
-            variant={task.manualDone ? 'default' : 'primary'}
-            className={`button full ${task.manualDone ? '' : 'primary'}`}
-            disabled={busy}
-            onClick={done}
-          >
-            {task.manualDone ? <RotateCcw size={16} /> : <Check size={16} />}
-            {task.manualDone ? 'Reopen own work' : 'Mark own work done'}
-          </Button>
-        )}
-        {task.kind === 'container' && (
-          <>
-            <Button variant="primary" className="button full primary" onClick={() => open(task.id)}>
-              Open task graph
-              <ArrowUpRight size={16} />
-            </Button>
-            <p className="form-hint">
-              {
-                snapshot.tasks.filter(
-                  (child) => task.childrenIds.includes(child.id) && child.status === 'completed',
-                ).length
-              }{' '}
-              of {task.childrenIds.length} steps complete. All owned and referenced children count.
-            </p>
-          </>
-        )}
-        {editing === 'pr' ? (
-          <form
-            className="detail-editor detail-pr-editor"
-            onSubmit={async (event) => {
-              event.preventDefault();
-              if (await update({ prUrl: prUrl.trim() || null })) setEditing(null);
-            }}
-          >
-            <PrUrlFields
-              kind={task.kind as 'manual' | 'pr'}
-              url={prUrl}
-              setUrl={setPrUrl}
-              prs={prs}
-              github={github}
-            />
-            <div className="detail-editor-actions">
-              <Button type="button" className="button" onClick={() => setEditing(null)}>
-                Cancel
-              </Button>
-              <Button type="submit" variant="primary" className="button primary" disabled={busy}>
-                Save PR gate
-              </Button>
-            </div>
-          </form>
-        ) : task.prUrl ? (
-          <div className="pr-detail">
-            {task.kind === 'manual' && (
-              <p className="form-hint">
-                PR gate: completion requires both manual work done and a verified merge.
-              </p>
-            )}
-            <a className="button full" href={task.prUrl!} target="_blank" rel="noreferrer">
-              <GitPullRequest size={16} />
-              View PR on GitHub
-              <ArrowUpRight size={15} />
-            </a>
-            <p>
-              Merge status: <PrStatus task={task} />
-            </p>
-            <small className="muted">
-              {task.prCheckedAt
-                ? `Last check: ${new Date(task.prCheckedAt).toLocaleString()}`
-                : 'Waiting for first check. Polling runs while the server is open.'}
-            </small>
-            {task.prError && (
-              <div className="callout warning">{task.prError} Last verified state is retained.</div>
-            )}
-            {editing === null && (
+        <TagBadges tags={snapshot.tags} tagIds={task.tagIds} />
+        <div className="detail-actions">
+          <Tooltip>
+            <TooltipTrigger asChild>
               <Button
                 variant="link"
                 size="sm"
                 className="text-button"
-                onClick={() => {
-                  setPrUrl(task.prUrl ?? '');
-                  setEditing('pr');
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(task.id);
+                    setCopied(true);
+                  } catch {
+                    setCopied(false);
+                  }
                 }}
               >
-                <Pencil size={13} />
-                Edit PR gate
+                <Copy size={13} />
+                {copied ? 'ID copied' : 'Copy ID'}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{task.id}</TooltipContent>
+          </Tooltip>
+        </div>
+        <section className="detail-section detail-about">
+          <div className="detail-section-heading">
+            <h3>About</h3>
+            {editing === null && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="icon-button detail-edit-button"
+                aria-label={task.description ? 'Edit description' : 'Add description'}
+                onClick={() => {
+                  setDescription(task.description);
+                  setEditing('description');
+                }}
+              >
+                {task.description ? <Pencil size={13} /> : <Plus size={14} />}
               </Button>
             )}
           </div>
-        ) : task.kind === 'manual' && editing === null ? (
+          {editing === 'description' ? (
+            <form
+              className="detail-editor"
+              onSubmit={async (event) => {
+                event.preventDefault();
+                if (await update({ description })) setEditing(null);
+              }}
+            >
+              <label>
+                Description
+                <Textarea
+                  autoFocus
+                  rows={4}
+                  placeholder="Keep useful context out of your head."
+                  value={description}
+                  onChange={(event) => setDescription(event.target.value)}
+                />
+              </label>
+              <div className="detail-editor-actions">
+                <Button type="button" className="button" onClick={() => setEditing(null)}>
+                  Cancel
+                </Button>
+                <Button type="submit" variant="primary" className="button primary" disabled={busy}>
+                  Save description
+                </Button>
+              </div>
+            </form>
+          ) : (
+            <p className="description">
+              {task.description || 'No description yet. Add a little context when it helps.'}
+            </p>
+          )}
+          <div className="detail-tags">
+            <h4>Tags</h4>
+            <TagPicker
+              tags={snapshot.tags}
+              selectedIds={task.tagIds}
+              busy={busy}
+              onAdd={(id) => toggleTag(id, true)}
+              onRemove={(id) => toggleTag(id, false)}
+              onCreate={createTag}
+              onRename={renameTag}
+              onDelete={deleteTag}
+            />
+          </div>
+        </section>
+        <section className="detail-section detail-about">
+          <div className="detail-section-heading">
+            <h3>Context</h3>
+          </div>
+          {readmeContent ? (
+            <Button
+              variant="link"
+              size="sm"
+              className="text-button"
+              onClick={() => {
+                setReadmeMode('preview');
+                setContextOpen(true);
+              }}
+            >
+              <FileText size={14} />
+              Open context
+            </Button>
+          ) : (
+            <Button
+              variant="link"
+              size="sm"
+              className="text-button"
+              onClick={() => {
+                setReadmeMode('write');
+                setContextOpen(true);
+              }}
+            >
+              <Plus size={14} />
+              Add context
+            </Button>
+          )}
+        </section>
+        <section className="detail-section external-links">
+          <div className="detail-section-heading">
+            <h3>
+              External resources <span>{externalLinks.length}</span>
+            </h3>
+            {editing === null && externalLinks.length > 0 && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="icon-button detail-edit-button"
+                aria-label="Edit external resources"
+                onClick={() => beginExternalLinkEdit(false)}
+              >
+                <Pencil size={13} />
+              </Button>
+            )}
+          </div>
+          {editing === 'links' ? (
+            <form
+              className="detail-editor external-links-editor"
+              onSubmit={async (event) => {
+                event.preventDefault();
+                const links = externalLinkDrafts.map(({ inferType: _, ...link }) => link);
+                if (await update({ externalLinks: links as ExternalLink[] })) setEditing(null);
+              }}
+            >
+              <div className="external-links-heading">
+                <p>Add supporting tickets, documents, and reference material.</p>
+                <span>{externalLinkDrafts.length} / 5</span>
+              </div>
+              <ExternalLinkFields links={externalLinkDrafts} setLinks={setExternalLinkDrafts} />
+              <div className="detail-editor-actions">
+                <Button type="button" className="button" onClick={() => setEditing(null)}>
+                  Cancel
+                </Button>
+                <Button type="submit" variant="primary" className="button primary" disabled={busy}>
+                  Save resources
+                </Button>
+              </div>
+            </form>
+          ) : externalLinks.length > 0 ? (
+            externalLinks.map((link) => {
+              const Icon =
+                link.type === 'github'
+                  ? GitBranch
+                  : link.type === 'jira'
+                    ? Ticket
+                    : link.type === 'google-doc'
+                      ? FileText
+                      : Link2;
+              const typeLabel =
+                link.type === 'google-doc'
+                  ? 'Google Doc'
+                  : link.type.charAt(0).toUpperCase() + link.type.slice(1);
+              return (
+                <a
+                  className="external-link"
+                  href={link.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  key={link.url}
+                >
+                  <Icon size={15} />
+                  <span>
+                    <strong>{link.label || new URL(link.url).hostname}</strong>
+                    <small>{typeLabel}</small>
+                  </span>
+                  <ArrowUpRight size={13} />
+                </a>
+              );
+            })
+          ) : (
+            <>
+              <p className="form-hint">No external resources yet.</p>
+              {editing === null && (
+                <Button
+                  className="button full"
+                  disabled={busy}
+                  onClick={() => beginExternalLinkEdit(true)}
+                >
+                  <Plus size={15} />
+                  Add external resource
+                </Button>
+              )}
+            </>
+          )}
+        </section>
+        <section className="detail-section detail-progress">
+          <h3>Progress</h3>
+          {task.status === 'ready' && (
+            <div className="callout ready-callout">
+              <Check size={16} />
+              <span>
+                Own work done. This will complete automatically when its prerequisites finish.
+              </span>
+            </div>
+          )}
+          {task.kind === 'manual' && (
+            <Button
+              variant={task.manualDone ? 'default' : 'primary'}
+              className={`button full ${task.manualDone ? '' : 'primary'}`}
+              disabled={busy}
+              onClick={done}
+            >
+              {task.manualDone ? <RotateCcw size={16} /> : <Check size={16} />}
+              {task.manualDone ? 'Reopen own work' : 'Mark own work done'}
+            </Button>
+          )}
+          {task.kind === 'container' && (
+            <>
+              <Button
+                variant="primary"
+                className="button full primary"
+                onClick={() => open(task.id)}
+              >
+                Open task graph
+                <ArrowUpRight size={16} />
+              </Button>
+              <p className="form-hint">
+                {
+                  snapshot.tasks.filter(
+                    (child) => task.childrenIds.includes(child.id) && child.status === 'completed',
+                  ).length
+                }{' '}
+                of {task.childrenIds.length} steps complete. All owned and referenced children
+                count.
+              </p>
+            </>
+          )}
+          {editing === 'pr' ? (
+            <form
+              className="detail-editor detail-pr-editor"
+              onSubmit={async (event) => {
+                event.preventDefault();
+                if (await update({ prUrl: prUrl.trim() || null })) setEditing(null);
+              }}
+            >
+              <PrUrlFields
+                kind={task.kind as 'manual' | 'pr'}
+                url={prUrl}
+                setUrl={setPrUrl}
+                prs={prs}
+                github={github}
+              />
+              <div className="detail-editor-actions">
+                <Button type="button" className="button" onClick={() => setEditing(null)}>
+                  Cancel
+                </Button>
+                <Button type="submit" variant="primary" className="button primary" disabled={busy}>
+                  Save PR gate
+                </Button>
+              </div>
+            </form>
+          ) : task.prUrl ? (
+            <div className="pr-detail">
+              {task.kind === 'manual' && (
+                <p className="form-hint">
+                  PR gate: completion requires both manual work done and a verified merge.
+                </p>
+              )}
+              <a className="button full" href={task.prUrl!} target="_blank" rel="noreferrer">
+                <GitPullRequest size={16} />
+                View PR on GitHub
+                <ArrowUpRight size={15} />
+              </a>
+              <p>
+                Merge status: <PrStatus task={task} />
+              </p>
+              <small className="muted">
+                {task.prCheckedAt
+                  ? `Last check: ${new Date(task.prCheckedAt).toLocaleString()}`
+                  : 'Waiting for first check. Polling runs while the server is open.'}
+              </small>
+              {task.prError && (
+                <div className="callout warning">
+                  {task.prError} Last verified state is retained.
+                </div>
+              )}
+              {editing === null && (
+                <Button
+                  variant="link"
+                  size="sm"
+                  className="text-button"
+                  onClick={() => {
+                    setPrUrl(task.prUrl ?? '');
+                    setEditing('pr');
+                  }}
+                >
+                  <Pencil size={13} />
+                  Edit PR gate
+                </Button>
+              )}
+            </div>
+          ) : task.kind === 'manual' && editing === null ? (
+            <Button
+              className="button full"
+              disabled={busy}
+              onClick={() => {
+                setPrUrl('');
+                setEditing('pr');
+              }}
+            >
+              <Plus size={15} />
+              Add PR gate
+            </Button>
+          ) : null}
+        </section>
+        <section className="detail-section">
+          <h3>
+            Prerequisites <span>{incoming.length}</span>
+          </h3>
+          {!incoming.length && (
+            <p className="form-hint">No prerequisites. This step can stand on its own.</p>
+          )}
+          {incoming.map((edge) => {
+            const source = snapshot.tasks.find(
+              (candidate) => candidate.id === edge.prerequisiteId,
+            )!;
+            return (
+              <div className="relationship" key={edge.id}>
+                <button onClick={() => open(source.id)}>
+                  <span>{source.title}</span>
+                  <Status status={source.status} />
+                </button>
+                <button
+                  className="icon-button"
+                  disabled={busy}
+                  onClick={() => removeDependency(edge.id)}
+                  aria-label={`Remove prerequisite ${source.title}`}
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            );
+          })}
           <Button
             className="button full"
             disabled={busy}
-            onClick={() => {
-              setPrUrl('');
-              setEditing('pr');
-            }}
+            onClick={() => addDependency('prerequisite')}
+            aria-haspopup="dialog"
           >
-            <Plus size={15} />
-            Add PR gate
+            <Plus size={16} />
+            Add prerequisite
           </Button>
-        ) : null}
-      </section>
-      <section className="detail-section">
-        <h3>
-          Prerequisites <span>{incoming.length}</span>
-        </h3>
-        {!incoming.length && (
-          <p className="form-hint">No prerequisites. This step can stand on its own.</p>
-        )}
-        {incoming.map((edge) => {
-          const source = snapshot.tasks.find((candidate) => candidate.id === edge.prerequisiteId)!;
-          return (
-            <div className="relationship" key={edge.id}>
-              <button onClick={() => open(source.id)}>
-                <span>{source.title}</span>
-                <Status status={source.status} />
-              </button>
-              <button
-                className="icon-button"
-                disabled={busy}
-                onClick={() => removeDependency(edge.id)}
-                aria-label={`Remove prerequisite ${source.title}`}
-              >
-                <X size={14} />
-              </button>
-            </div>
-          );
-        })}
-        <Button
-          className="button full"
-          disabled={busy}
-          onClick={() => addDependency('prerequisite')}
-          aria-haspopup="dialog"
-        >
-          <Plus size={16} />
-          Add prerequisite
-        </Button>
-      </section>
-      <section className="detail-section">
-        <h3>
-          Unblocks <span>{outgoing.length}</span>
-        </h3>
-        {!outgoing.length && <p className="form-hint">No downstream steps yet.</p>}
-        {outgoing.map((edge) => {
-          const target = snapshot.tasks.find((candidate) => candidate.id === edge.dependentId)!;
-          return (
-            <div className="relationship" key={edge.id}>
-              <button onClick={() => open(target.id)}>
-                <span>{target.title}</span>
-                <ArrowRight size={14} />
-              </button>
-              <button
-                className="icon-button"
-                disabled={busy}
-                onClick={() => removeDependency(edge.id)}
-                aria-label={`Remove dependency to ${target.title}`}
-              >
-                <X size={14} />
-              </button>
-            </div>
-          );
-        })}
-        <Button
-          className="button full"
-          disabled={busy}
-          onClick={() => addDependency('dependent')}
-          aria-haspopup="dialog"
-        >
-          <Plus size={16} />
-          Add dependent
-        </Button>
-      </section>
-      {(task.parentId || memberships.length > 0) && (
-        <section className="detail-section">
-          <h3>Lives in</h3>
-          {[
-            ...(task.parentId ? [task.parentId] : []),
-            ...memberships.map((ref) => ref.containerId),
-          ].map((id) => (
-            <button className="membership" key={id} onClick={() => open(id)}>
-              <Link2 size={13} />
-              {snapshot.tasks.find((candidate) => candidate.id === id)?.title}
-              <ArrowUpRight size={13} />
-            </button>
-          ))}
         </section>
-      )}
-      <div className="detail-footer">
-        {reference && (
-          <Button className="button full" disabled={busy} onClick={() => unlink(reference.id)}>
-            <Link2 size={14} />
-            Unlink from this graph
+        <section className="detail-section">
+          <h3>
+            Unblocks <span>{outgoing.length}</span>
+          </h3>
+          {!outgoing.length && <p className="form-hint">No downstream steps yet.</p>}
+          {outgoing.map((edge) => {
+            const target = snapshot.tasks.find((candidate) => candidate.id === edge.dependentId)!;
+            return (
+              <div className="relationship" key={edge.id}>
+                <button onClick={() => open(target.id)}>
+                  <span>{target.title}</span>
+                  <ArrowRight size={14} />
+                </button>
+                <button
+                  className="icon-button"
+                  disabled={busy}
+                  onClick={() => removeDependency(edge.id)}
+                  aria-label={`Remove dependency to ${target.title}`}
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            );
+          })}
+          <Button
+            className="button full"
+            disabled={busy}
+            onClick={() => addDependency('dependent')}
+            aria-haspopup="dialog"
+          >
+            <Plus size={16} />
+            Add dependent
           </Button>
+        </section>
+        {(task.parentId || memberships.length > 0) && (
+          <section className="detail-section">
+            <h3>Lives in</h3>
+            {[
+              ...(task.parentId ? [task.parentId] : []),
+              ...memberships.map((ref) => ref.containerId),
+            ].map((id) => (
+              <button className="membership" key={id} onClick={() => open(id)}>
+                <Link2 size={13} />
+                {snapshot.tasks.find((candidate) => candidate.id === id)?.title}
+                <ArrowUpRight size={13} />
+              </button>
+            ))}
+          </section>
         )}
-        <Button
-          variant="link"
-          size="sm"
-          className="text-button destructive"
-          onClick={remove}
-          disabled={busy}
-        >
-          <Trash2 size={14} />
-          Delete {task.kind === 'container' ? 'container' : 'task'} everywhere
-        </Button>
-      </div>
-    </aside>
+        <div className="detail-footer">
+          {reference && (
+            <Button className="button full" disabled={busy} onClick={() => unlink(reference.id)}>
+              <Link2 size={14} />
+              Unlink from this graph
+            </Button>
+          )}
+          <Button
+            variant="link"
+            size="sm"
+            className="text-button destructive"
+            onClick={remove}
+            disabled={busy}
+          >
+            <Trash2 size={14} />
+            Delete {task.kind === 'container' ? 'container' : 'task'} everywhere
+          </Button>
+        </div>
+      </aside>
+      {contextOpen && (
+        <ContextDialog
+          content={readmeContent}
+          mode={readmeMode}
+          busy={busy}
+          close={() => setContextOpen(false)}
+          setMode={setReadmeMode}
+          setContent={setReadmeContent}
+          save={async () => {
+            if (await saveReadme(readmeContent)) setContextOpen(false);
+          }}
+        />
+      )}
+    </>
+  );
+}
+
+function ContextDialog({
+  content,
+  mode,
+  busy,
+  close,
+  setMode,
+  setContent,
+  save,
+}: {
+  content: string;
+  mode: 'write' | 'preview';
+  busy: boolean;
+  close: () => void;
+  setMode: (mode: 'write' | 'preview') => void;
+  setContent: (content: string) => void;
+  save: () => void;
+}) {
+  return (
+    <Dialog title="Task context" close={close} className="context-dialog-shell">
+      <form
+        className="context-editor"
+        onSubmit={(event) => {
+          event.preventDefault();
+          save();
+        }}
+      >
+        <div className="readme-tabs" role="tablist" aria-label="Context editor">
+          <Button
+            type="button"
+            role="tab"
+            aria-selected={mode === 'write'}
+            className="text-button"
+            onClick={() => setMode('write')}
+          >
+            Write
+          </Button>
+          <Button
+            type="button"
+            role="tab"
+            aria-selected={mode === 'preview'}
+            className="text-button"
+            onClick={() => setMode('preview')}
+          >
+            Preview
+          </Button>
+        </div>
+        {mode === 'write' ? (
+          <label>
+            Markdown context
+            <Textarea
+              autoFocus
+              rows={20}
+              value={content}
+              onChange={(event) => setContent(event.target.value)}
+              placeholder="Document this task in Markdown."
+            />
+          </label>
+        ) : (
+          <Readme content={content} empty="Nothing to preview yet." />
+        )}
+        <footer>
+          <Button type="button" className="button" onClick={close}>
+            Cancel
+          </Button>
+          <Button type="submit" variant="primary" className="button primary" disabled={busy}>
+            Save context
+          </Button>
+        </footer>
+      </form>
+    </Dialog>
+  );
+}
+
+function Readme({ content, empty }: { content: string; empty: string }) {
+  if (!content) return <p className="description">{empty}</p>;
+  return (
+    <div className="markdown-body">
+      <Markdown>{content}</Markdown>
+    </div>
   );
 }

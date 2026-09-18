@@ -22,7 +22,7 @@ export function App() {
   const [selected, setSelected] = useState(selectedWorkspace);
   const [error, setError] = useState('');
   const [editor, setEditor] = useState<
-    'add' | 'add-cloud' | 'rename' | 'connect' | 'remove' | null
+    'add' | 'add-cloud' | 'rename' | 'connect' | 'retarget' | 'remove' | null
   >(null);
   const [revision, setRevision] = useState(0);
   const [syncIntent, setSyncIntent] = useState<string | null>(null);
@@ -92,7 +92,7 @@ export function App() {
             mode: 'add' as const,
             initialType: editor === 'add-cloud' ? ('cloud' as const) : ('local' as const),
           }
-        : { mode: editor as 'rename' | 'connect', workspace: workspace! })}
+        : { mode: editor as 'rename' | 'connect' | 'retarget', workspace: workspace! })}
       close={() => setEditor(null)}
       saved={(entry) => {
         discoveryId.current++;
@@ -222,7 +222,7 @@ export function App() {
             </dl>
             <p className="form-hint">
               {workspace.type === 'cloud'
-                ? 'Cloud workspaces keep tasks on this device. Use Workspace sync to review and explicitly apply changes. Cloud targets cannot be changed or converted back to local.'
+                ? 'Cloud workspaces keep tasks on this device. Use Workspace sync to review and explicitly apply changes. Retargeting preserves local data and requires a new sync review. Cloud workspaces cannot be converted back to local.'
                 : 'Tasks are stored on this device. Connecting to cloud preserves local tasks and opens a sync preview. Nothing is imported or published until you review and explicitly confirm apply.'}
             </p>
             <div className="workspace-actions">
@@ -232,6 +232,11 @@ export function App() {
               {workspace.type === 'local' && (
                 <Button className="button" onClick={() => setEditor('connect')}>
                   Connect to cloud
+                </Button>
+              )}
+              {workspace.type === 'cloud' && (
+                <Button className="button" onClick={() => setEditor('retarget')}>
+                  Change cloud target
                 </Button>
               )}
               <Button
@@ -300,6 +305,14 @@ export function App() {
                 onClick={() => setTimeout(() => setEditor('connect'), 100)}
               >
                 Connect to cloud
+              </button>
+            )}
+            {workspace.type === 'cloud' && (
+              <button
+                className="text-button"
+                onClick={() => setTimeout(() => setEditor('retarget'), 100)}
+              >
+                Change cloud target
               </button>
             )}
             <small>
@@ -516,13 +529,15 @@ function WorkspaceEditor({
   saved: (workspace: Workspace) => void;
 } & (
   | { mode: 'add'; workspace?: never; initialType?: 'local' | 'cloud' }
-  | { mode: 'rename' | 'connect'; workspace: Workspace; initialType?: never }
+  | { mode: 'rename' | 'connect' | 'retarget'; workspace: Workspace; initialType?: never }
 )) {
   const [name, setName] = useState(mode === 'add' ? '' : workspace.name);
-  const [type, setType] = useState<'local' | 'cloud'>(mode === 'connect' ? 'cloud' : initialType);
-  const [repo, updateRepo] = useState('');
-  const [branch, updateBranch] = useState('');
-  const [path, setPath] = useState('');
+  const [type, setType] = useState<'local' | 'cloud'>(
+    mode === 'connect' || mode === 'retarget' ? 'cloud' : initialType,
+  );
+  const [repo, updateRepo] = useState(mode === 'retarget' ? workspace.target!.repo : '');
+  const [branch, updateBranch] = useState(mode === 'retarget' ? workspace.target!.branch : '');
+  const [path, setPath] = useState(mode === 'retarget' ? workspace.target!.path : '');
   function setBranch(value: string) {
     if (value === branch) return;
     updateBranch(value);
@@ -533,7 +548,9 @@ function WorkspaceEditor({
     updateRepo(value);
     setBranch('');
   }
-  const [credential, setCredential] = useState<'dedicated' | 'github'>('dedicated');
+  const [credential, setCredential] = useState<'dedicated' | 'github'>(
+    mode === 'retarget' ? workspace.credential! : 'dedicated',
+  );
   const [discovery, setDiscovery] = useState<WorkspaceRepositories | null>(null);
   const [repositoryError, setRepositoryError] = useState('');
   const [search, setSearch] = useState('');
@@ -551,7 +568,7 @@ function WorkspaceEditor({
   const cloud = mode !== 'rename' && type === 'cloud';
   useEffect(() => {
     let active = true;
-    setRepo('');
+    if (mode !== 'retarget') setRepo('');
     setSearch('');
     setDiscovery(null);
     setRepositoryError('');
@@ -579,7 +596,13 @@ function WorkspaceEditor({
       entry.fullName.toLowerCase().includes(search.trim().toLowerCase()),
     ).length ?? 0;
   const title =
-    mode === 'add' ? 'Add workspace' : mode === 'rename' ? 'Rename workspace' : 'Connect to cloud';
+    mode === 'add'
+      ? 'Add workspace'
+      : mode === 'rename'
+        ? 'Rename workspace'
+        : mode === 'retarget'
+          ? 'Change cloud target'
+          : 'Connect to cloud';
   return (
     <DialogErrorContext value={error}>
       <Dialog
@@ -610,7 +633,11 @@ function WorkspaceEditor({
               const result = await api<Workspace>(
                 mode === 'add' ? '/workspaces' : `/workspaces/${encodeURIComponent(workspace.id)}`,
                 mode === 'add' ? 'POST' : 'PATCH',
-                mode === 'rename' ? { name: name.trim() } : input,
+                mode === 'rename'
+                  ? { name: name.trim() }
+                  : mode === 'retarget'
+                    ? { target: input.target!, credential: input.credential!, confirm: true }
+                    : input,
               );
               if (active.current) saved(result);
             } catch (error) {
@@ -737,9 +764,9 @@ function WorkspaceEditor({
                 must already exist. Never enter a token here.
               </p>
               <p className="form-hint">
-                Saving opens a sync preview, not an automatic apply. Review the changes and
-                explicitly confirm apply to import or publish tasks. Existing local tasks are
-                preserved. Cloud targets cannot be changed or converted back to local.
+                {mode === 'retarget'
+                  ? 'Changing the target preserves local tasks and does not access either remote. You must review and explicitly apply the new sync preview before importing or publishing.'
+                  : 'Saving opens a sync preview, not an automatic apply. Review the changes and explicitly confirm apply to import or publish tasks. Existing local tasks are preserved.'}
               </p>
             </>
           ) : (

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { mkdirSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { basename, dirname, join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import type {
   ConnectTaskInput,
@@ -530,18 +530,30 @@ export function validatePortableState(value: unknown): PortableState {
 
 export interface SyncRecord {
   base: PortableState | null;
+  baseReadmes?: Record<string, string>;
   lastSync: string | null;
-  pending: { local: PortableState; merged: PortableState; sha: string | null } | null;
+  pending: {
+    local: PortableState;
+    merged: PortableState;
+    localReadmes?: Record<string, string>;
+    mergedReadmes?: Record<string, string>;
+    sha: string | null;
+  } | null;
 }
 
 export class Store {
   private readonly db: DatabaseSync;
+  private readonly readmeDirectory: string | null;
   private closed = false;
 
   constructor(databasePath: string) {
     text(databasePath, 'Database path', true);
     if (databasePath.includes('\0')) throw new DomainError('Invalid database path');
     if (databasePath !== ':memory:') mkdirSync(dirname(resolve(databasePath)), { recursive: true });
+    this.readmeDirectory =
+      databasePath === ':memory:'
+        ? null
+        : join(dirname(resolve(databasePath)), `${basename(databasePath, '.sqlite')}-tasks`);
     this.db = new DatabaseSync(databasePath);
     try {
       this.db.exec(`
@@ -652,6 +664,60 @@ export class Store {
     return portable(this.read());
   }
 
+  readmes(): Record<string, string> {
+    const result: Record<string, string> = {};
+    for (const task of this.read().tasks) {
+      const content = this.readme(task.id, false);
+      if (content !== '') result[task.id] = content;
+    }
+    return result;
+  }
+
+  readme(id: string, requireTask = true): string {
+    if (requireTask) taskById(this.read(), id);
+    if (!this.readmeDirectory) return '';
+    try {
+      return readFileSync(join(this.readmeDirectory, `${id}.md`), 'utf8');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return '';
+      throw error;
+    }
+  }
+
+  saveReadme(id: string, content: unknown): void {
+    taskById(this.read(), id);
+    if (typeof content !== 'string') throw new DomainError('README content must be a string');
+    if (Buffer.byteLength(content) > 1024 * 1024)
+      throw new DomainError('README content must be at most 1 MB');
+    this.writeReadme(id, content);
+  }
+
+  private writeReadme(id: string, content: string): void {
+    if (!this.readmeDirectory) return;
+    const path = join(this.readmeDirectory, `${id}.md`);
+    if (!content) {
+      rmSync(path, { force: true });
+      return;
+    }
+    mkdirSync(this.readmeDirectory, { recursive: true, mode: 0o700 });
+    const temporary = `${path}.${randomUUID()}.tmp`;
+    try {
+      writeFileSync(temporary, content, { encoding: 'utf8', mode: 0o600 });
+      renameSync(temporary, path);
+    } finally {
+      rmSync(temporary, { force: true });
+    }
+  }
+
+  replaceReadmes(readmes: Record<string, string>, taskIds: Iterable<string>): void {
+    const ids = new Set(taskIds);
+    for (const [id, content] of Object.entries(readmes)) {
+      if (!ids.has(id) || typeof content !== 'string' || Buffer.byteLength(content) > 1024 * 1024)
+        throw new DomainError('Invalid README sync content');
+    }
+    for (const id of ids) this.writeReadme(id, readmes[id] ?? '');
+  }
+
   syncRecord(target: SyncTarget): SyncRecord {
     const row = this.db
       .prepare('SELECT payload FROM foggybrain_sync WHERE target = ?')
@@ -680,12 +746,15 @@ export class Store {
     local: PortableState,
     merged: PortableState,
     sha: string | null,
+    localReadmes: Record<string, string> = this.readmes(),
+    mergedReadmes: Record<string, string> = localReadmes,
   ): SyncRecord {
     merged = validatePortableState(merged);
     let record!: SyncRecord;
     this.mutate((state) => {
       if (
         JSON.stringify(portable(state)) !== JSON.stringify(local) ||
+        JSON.stringify(this.readmes()) !== JSON.stringify(localReadmes) ||
         JSON.stringify(this.syncRecord(target)) !== JSON.stringify(expected)
       )
         throw new DomainError('Sync preview is stale; re-preview', 409);
@@ -694,7 +763,7 @@ export class Store {
           'INSERT INTO foggybrain_sync_backups (target, created_at, payload) VALUES (?, ?, ?)',
         )
         .run(JSON.stringify(target), new Date().toISOString(), JSON.stringify(state));
-      record = { ...expected, pending: { local, merged, sha } };
+      record = { ...expected, pending: { local, merged, localReadmes, mergedReadmes, sha } };
       this.writeSyncRecord(target, record);
     });
     return record;
@@ -710,16 +779,24 @@ export class Store {
   finishSync(
     target: SyncTarget,
     expected: SyncRecord,
-    replacement?: { local: PortableState; remote: PortableState },
+    replacement?: {
+      local: PortableState;
+      remote: PortableState;
+      localReadmes?: Record<string, string>;
+      remoteReadmes?: Record<string, string>;
+    },
   ): void {
     if (replacement && expected.pending)
       throw new DomainError('Cannot revert with an uncertain upload; reconcile it first', 409);
     if (!replacement && !expected.pending) throw new DomainError('No pending sync', 409);
     const local = replacement?.local ?? expected.pending!.local;
     const merged = validatePortableState(replacement?.remote ?? expected.pending!.merged);
+    const localReadmes = replacement?.localReadmes ?? expected.pending?.localReadmes ?? {};
+    const mergedReadmes = replacement?.remoteReadmes ?? expected.pending?.mergedReadmes ?? {};
     this.mutate((state) => {
       if (
         JSON.stringify(portable(state)) !== JSON.stringify(local) ||
+        JSON.stringify(this.readmes()) !== JSON.stringify(localReadmes) ||
         JSON.stringify(this.syncRecord(target)) !== JSON.stringify(expected)
       )
         throw new DomainError('Local state changed during sync; re-preview to reconcile', 409);
@@ -777,7 +854,12 @@ export class Store {
             );
           }),
         }));
-      this.writeSyncRecord(target, { base: merged, lastSync: now, pending: null });
+      this.writeSyncRecord(target, {
+        base: merged,
+        ...(Object.keys(mergedReadmes).length ? { baseReadmes: mergedReadmes } : {}),
+        lastSync: now,
+        pending: null,
+      });
     });
   }
 
@@ -1073,6 +1155,7 @@ export class Store {
           positions: layout.positions.filter((position) => !deleted.has(position.nodeId)),
         }));
     });
+    for (const taskId of deleted) this.writeReadme(taskId, '');
     return [...deleted];
   }
 

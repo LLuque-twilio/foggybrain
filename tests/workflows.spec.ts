@@ -171,6 +171,33 @@ test('external resources infer editable types and appear in task details', async
   await expect(detail.getByRole('combobox', { name: 'Resource 1 type' })).toHaveValue('Jira');
 });
 
+test('task context opens a Markdown editor and preview dialog', async ({ request, page }) => {
+  const task = await create(request, 'Document the change', 'manual');
+  await page.goto('/#/map');
+  await node(page, task.id).click();
+  const detail = page.getByRole('complementary', { name: 'Task details' });
+  await detail.getByRole('button', { name: 'Add context' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Task context' });
+  await dialog
+    .getByLabel('Markdown context')
+    .fill('# Context\n\n- **Keep** this\n- [Reference](https://example.com)');
+  await dialog.getByRole('tab', { name: 'Preview' }).click();
+  await expect(dialog.getByRole('heading', { name: 'Context', exact: true })).toBeVisible();
+  await expect(dialog.getByRole('listitem')).toHaveText(['Keep this', 'Reference']);
+  await expect(dialog.getByRole('link', { name: 'Reference' })).toHaveAttribute(
+    'href',
+    'https://example.com',
+  );
+  await dialog.getByRole('button', { name: 'Save context' }).click();
+  await expect(dialog).not.toBeVisible();
+  await detail.getByRole('button', { name: 'Open context' }).click();
+  await expect(
+    page
+      .getByRole('dialog', { name: 'Task context' })
+      .getByRole('heading', { name: 'Context', exact: true }),
+  ).toBeVisible();
+});
+
 test('legacy task payloads without externalLinks remain selectable and editable', async ({
   request,
   page,

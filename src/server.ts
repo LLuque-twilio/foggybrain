@@ -300,6 +300,19 @@ function domainRoutes(
       throw new HttpError(400, 'favorite must be a boolean.');
     res.json(store.updateTask(id(req), body as UpdateTaskInput));
   });
+  app.get('/tasks/:id/readme', (req, res) => {
+    res.json({ content: store.readme(id(req)) });
+  });
+  app.put('/tasks/:id/readme', (req, res) => {
+    const body = object(req.body, ['content']);
+    stringField(body, 'content');
+    store.saveReadme(id(req), body.content);
+    res.json({ content: body.content });
+  });
+  app.delete('/tasks/:id/readme', (req, res) => {
+    store.saveReadme(id(req), '');
+    res.json({ ok: true });
+  });
   app.post('/tasks/:id/connections', (req, res) => {
     res.status(201).json(store.connectTask(id(req), req.body));
   });

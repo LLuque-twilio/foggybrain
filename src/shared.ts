@@ -23,7 +23,7 @@ export interface ExternalLink {
 
 export interface Task {
   id: string;
-  /** @maxLength 512 */
+  /** @maxLength 300 */
   title: string;
   /** @maxLength 10000 */
   description: string;
@@ -283,6 +283,8 @@ export interface UpdateWorkspaceInput {
   type?: 'cloud';
   target?: SyncTarget;
   credential?: 'dedicated' | 'github';
+  /** Required when changing an existing cloud workspace target or credential. */
+  confirm?: boolean;
 }
 
 export interface SyncStatus {
@@ -294,7 +296,7 @@ export interface SyncStatus {
 }
 
 export interface SyncChange {
-  collection: 'tasks' | 'dependencies' | 'references' | 'tags';
+  collection: 'tasks' | 'dependencies' | 'references' | 'tags' | 'readmes';
   id: string;
   title?: string;
   kind: 'added' | 'updated' | 'deleted';
@@ -332,6 +334,11 @@ export type CreateReferenceInput = Pick<TaskReference, 'containerId' | 'taskId'>
 
 export interface DeleteTaskResponse {
   deleted: string[];
+}
+
+/** Markdown stored separately from the portable task manifest. */
+export interface TaskReadme {
+  content: string;
 }
 
 export interface ErrorResponse {

@@ -408,7 +408,7 @@ test('manager starts all pollers, starts new workspaces, and stops every runtime
   assert.throws(() => workspaces.get('default'), /stopped/);
 });
 
-test('conversion preserves Store, graph and layout, performs no remote requests, and forbids retargeting', async (t) => {
+test('conversion and confirmed retargeting preserve Store, graph and layout without remote requests', async (t) => {
   const dataDir = directory(t);
   const workspaces = manager(t, { dataDir, githubToken: secret });
   const runtime = workspaces.get('default');
@@ -441,12 +441,16 @@ test('conversion preserves Store, graph and layout, performs no remote requests,
   assert.throws(() => workspaces.update('default', { type: 'local' }), /demotion/);
   assert.throws(
     () => workspaces.update('default', { target: { ...target, path: 'other.json' } }),
-    /retargeting/,
+    /confirm=true/,
   );
-  assert.throws(
-    () => workspaces.update('default', { credential: 'dedicated' }),
-    /credential changes/,
-  );
+  const retargeted = workspaces.update('default', {
+    target: { ...target, path: 'work/work.json' },
+    credential: 'github',
+    confirm: true,
+  });
+  assert.equal(retargeted.target!.path, 'work/work.json');
+  assert.notEqual(runtime.sync, sync);
+  await assert.rejects(sync.preview(), /stopped/);
   await workspaces.close();
   const reopened = manager(t, { dataDir, githubToken: secret });
   assert.equal(reopened.list().workspaces[0].name, 'Renamed cloud');

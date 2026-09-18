@@ -131,12 +131,12 @@ const management: Route[] = [
     method: 'patch',
     path: '/workspaces/{id}',
     id: 'updateWorkspace',
-    summary: 'Rename or connect a workspace',
+    summary: 'Rename, connect, or retarget a workspace',
     body: 'UpdateWorkspaceInput',
     response: 'Workspace',
     errors: [404, 409, 503],
     description:
-      'Supports local-to-cloud connection only. Existing cloud targets and credentials cannot change; validation depends on the stored workspace. An empty patch is accepted.',
+      'Supports local-to-cloud connection and confirmed cloud retargeting. Retargeting preserves local data, invalidates old previews, and never accesses either remote; review and apply a new sync preview separately. An empty patch is accepted.',
   },
   {
     method: 'get',
@@ -171,6 +171,28 @@ const domain: Route[] = [
     id: 'getState',
     summary: 'Read the graph with derived completion',
     response: 'Snapshot',
+  },
+  {
+    method: 'get',
+    path: '/tasks/{id}/readme',
+    id: 'getTaskReadme',
+    summary: 'Read a task Markdown README',
+    response: 'TaskReadme',
+  },
+  {
+    method: 'put',
+    path: '/tasks/{id}/readme',
+    id: 'saveTaskReadme',
+    summary: 'Save a task Markdown README',
+    body: 'TaskReadme',
+    response: 'TaskReadme',
+  },
+  {
+    method: 'delete',
+    path: '/tasks/{id}/readme',
+    id: 'deleteTaskReadme',
+    summary: 'Delete a task Markdown README',
+    response: 'OkResponse',
   },
   {
     method: 'post',

@@ -301,7 +301,7 @@ export class WorkspaceManager {
 
   update(id: string, input: unknown): Workspace {
     if (this.closing) throw new DomainError('Workspace service is stopped', 503);
-    const body = object(input, ['name', 'type', 'target', 'credential']);
+    const body = object(input, ['name', 'type', 'target', 'credential', 'confirm']);
     this.registry.exec('BEGIN IMMEDIATE');
     let result: Workspace;
     try {
@@ -311,19 +311,30 @@ export class WorkspaceManager {
           'Workspace type updates only support conversion to cloud; demotion is not supported',
         );
       const { id: _id, ...old } = previous;
+      const { confirm: _confirm, ...fields } = body;
       const config = configuration({
         ...(previous.type === 'local' ? { name: old.name, type: old.type } : old),
-        ...body,
+        ...fields,
       });
-      if (
+      const retargeting =
         previous.type === 'cloud' &&
         (JSON.stringify(config.target) !== JSON.stringify(previous.target) ||
-          config.credential !== previous.credential)
-      )
-        throw new DomainError(
-          'Cloud workspace retargeting or credential changes are not supported',
-        );
-      if (previous.type === 'local' && config.type === 'cloud') this.token(config);
+          config.credential !== previous.credential);
+      if (retargeting) {
+        if (body.confirm !== true)
+          throw new DomainError('Cloud workspace retargeting requires confirm=true');
+        this.token(config);
+        const runtime = this.runtimes.get(id);
+        if (runtime?.sync.getStatus().syncing)
+          throw new DomainError('Workspace sync is active', 409);
+        if (previous.target && runtime?.store.syncRecord(previous.target).pending)
+          throw new DomainError(
+            'Cannot retarget with an uncertain upload; reconcile it first',
+            409,
+          );
+      } else if ('confirm' in body)
+        throw new DomainError('confirm is only valid when retargeting a cloud workspace');
+      else if (previous.type === 'local' && config.type === 'cloud') this.token(config);
       this.registry
         .prepare('UPDATE workspaces SET config = ? WHERE id = ?')
         .run(JSON.stringify(config), id);
@@ -334,7 +345,12 @@ export class WorkspaceManager {
       throw error;
     }
     const runtime = this.runtimes.get(id);
-    if (runtime && result.type === 'cloud' && !runtime.sync.getStatus().configured) {
+    if (
+      runtime &&
+      result.type === 'cloud' &&
+      (!runtime.sync.getStatus().configured ||
+        JSON.stringify(runtime.sync.getStatus().target) !== JSON.stringify(result.target))
+    ) {
       void runtime.sync.stop();
       runtime.sync = new StateSync(runtime.store, {
         target: result.target,
