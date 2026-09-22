@@ -46,7 +46,7 @@
     "dotenv": "^17.2.2",
     "express": "^5.1.0",
     "react-markdown": "^10.1.0",
-    "tailwind-merge": "^3.6.0"
+    "tailwind-merge": "^3.7.0"
   },
   "devDependencies": {
     "@apidevtools/swagger-parser": "^13.0.0",
