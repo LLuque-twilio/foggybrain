@@ -31,13 +31,13 @@ function TooltipContent({
         data-slot="tooltip-content"
         sideOffset={sideOffset}
         className={cn(
-          'z-50 max-w-72 rounded-md bg-[#283c34] px-3 py-1.5 text-xs text-[#f7f9f0] shadow-md data-[state=delayed-open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=delayed-open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=delayed-open]:zoom-in-95',
+          'z-50 max-w-72 rounded-md bg-[var(--text-strong)] px-3 py-1.5 text-xs text-[var(--surface)] shadow-md data-[state=delayed-open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=delayed-open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=delayed-open]:zoom-in-95',
           className,
         )}
         {...props}
       >
         {children}
-        <TooltipPrimitive.Arrow className="fill-[#283c34]" />
+        <TooltipPrimitive.Arrow className="fill-[var(--text-strong)]" />
       </TooltipPrimitive.Content>
     </TooltipPrimitive.Portal>
   );

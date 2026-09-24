@@ -199,7 +199,8 @@ function Canvas({
             : dependent.status === 'completed'
               ? 'settled'
               : 'released';
-        const color = state === 'waiting' ? '#707a72' : '#658c61';
+        const color =
+          state === 'waiting' ? 'var(--graph-edge-waiting)' : 'var(--graph-edge-released)';
         return {
           id: edge.id,
           source: edge.prerequisiteId,
@@ -309,15 +310,19 @@ function Canvas({
       maxZoom={1.5}
       proOptions={{ hideAttribution: false }}
     >
-      <Background color="#b9c6b8" gap={22} size={1} />
+      <Background color="var(--graph-grid)" gap={22} size={1} />
       <Controls showInteractive={false} />
       <MiniMap<StepNode>
         nodeColor={(node) =>
-          node.selected ? '#7963b3' : node.data.task.status === 'completed' ? '#a0b78d' : '#d7dfce'
+          node.selected
+            ? 'var(--graph-selected)'
+            : node.data.task.status === 'completed'
+              ? 'var(--graph-completed)'
+              : 'var(--graph-node)'
         }
-        nodeStrokeColor={(node) => (node.selected ? '#4e387f' : 'transparent')}
+        nodeStrokeColor={(node) => (node.selected ? 'var(--graph-selected-border)' : 'transparent')}
         nodeStrokeWidth={3}
-        maskColor="rgba(247,248,242,0.7)"
+        maskColor="var(--graph-mask)"
         pannable
         zoomable
       />

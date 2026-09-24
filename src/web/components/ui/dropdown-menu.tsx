@@ -18,7 +18,7 @@ function DropdownMenuContent({
         data-slot="dropdown-menu-content"
         sideOffset={sideOffset}
         className={cn(
-          'z-50 max-h-[min(360px,var(--radix-dropdown-menu-content-available-height))] min-w-48 overflow-y-auto rounded-md border border-[#ccd5c3] bg-[#fcfdf8] p-1 text-[#283c34] shadow-lg outline-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0',
+          'z-50 max-h-[min(360px,var(--radix-dropdown-menu-content-available-height))] min-w-48 overflow-y-auto rounded-md border border-[var(--line)] bg-[var(--surface)] p-1 text-[var(--text)] shadow-lg outline-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0',
           className,
         )}
         {...props}
@@ -34,7 +34,7 @@ function DropdownMenuLabel({
   return (
     <DropdownMenuPrimitive.Label
       className={cn(
-        'px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-[#65715f]',
+        'px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--muted)]',
         className,
       )}
       {...props}
@@ -53,7 +53,7 @@ function DropdownMenuCheckboxItem({
       data-slot="dropdown-menu-checkbox-item"
       checked={checked}
       className={cn(
-        'relative flex cursor-default select-none items-center gap-2 rounded-sm py-2 pr-2 pl-8 text-xs outline-none transition-colors focus:bg-[#edf1e4] data-[disabled]:pointer-events-none data-[disabled]:opacity-50',
+        'relative flex cursor-default select-none items-center gap-2 rounded-sm py-2 pr-2 pl-8 text-xs outline-none transition-colors focus:bg-[var(--surface-hover)] data-[disabled]:pointer-events-none data-[disabled]:opacity-50',
         className,
       )}
       {...props}
@@ -76,7 +76,7 @@ function DropdownMenuSubTrigger({
   return (
     <DropdownMenuPrimitive.SubTrigger
       className={cn(
-        'flex items-center rounded-sm px-2 py-1.5 text-xs outline-none focus:bg-[#edf1e4]',
+        'flex items-center rounded-sm px-2 py-1.5 text-xs outline-none focus:bg-[var(--surface-hover)]',
         className,
       )}
       {...props}

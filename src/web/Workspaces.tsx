@@ -14,7 +14,7 @@ import { SearchableSelect } from './SearchableSelect';
 import { Button } from './components/ui/button';
 import { Checkbox } from './components/ui/checkbox';
 import { Input } from './components/ui/input';
-import { ThemeToggle } from './ThemeToggle';
+import { ThemePicker, ThemeToggle } from './ThemeToggle';
 
 const selectedWorkspace = () => new URL(window.location.href).searchParams.get('workspace');
 
@@ -189,73 +189,86 @@ export function App() {
               <div>
                 <div className="eyebrow">YOUR WORKSPACE, YOUR DEVICE</div>
                 <h1 id="settings-title">Workspace settings</h1>
-                <p>Manage the selected workspace and its storage configuration.</p>
+                <p>Adjust appearance and manage the selected workspace.</p>
               </div>
             </div>
-            <dl className="workspace-metadata" aria-label="Workspace metadata">
-              <div>
-                <dt>Name</dt>
-                <dd>{workspace.name}</dd>
+            <section className="settings-section" aria-labelledby="appearance-title">
+              <div className="settings-section-heading">
+                <div className="eyebrow">APPEARANCE</div>
+                <h2 id="appearance-title">Make FoggyBrain comfortable to read</h2>
               </div>
-              <div>
-                <dt>Storage type</dt>
-                <dd>{workspace.type === 'cloud' ? 'Cloud' : 'Local'}</dd>
+              <ThemePicker />
+            </section>
+            <section className="settings-section" aria-labelledby="workspace-storage-title">
+              <div className="settings-section-heading">
+                <div className="eyebrow">WORKSPACE</div>
+                <h2 id="workspace-storage-title">Storage and connection</h2>
               </div>
-              <div>
-                <dt>Repository</dt>
-                <dd>{workspace.target?.repo ?? 'Not connected'}</dd>
-              </div>
-              <div>
-                <dt>Branch</dt>
-                <dd>{workspace.target?.branch ?? 'Not configured'}</dd>
-              </div>
-              <div>
-                <dt>State file path</dt>
-                <dd>{workspace.target?.path ?? 'Not configured'}</dd>
-              </div>
-              <div>
-                <dt>Server credential</dt>
-                <dd>
-                  {workspace.credential === 'dedicated'
-                    ? 'Dedicated sync token (FOGGY_SYNC_TOKEN)'
-                    : workspace.credential === 'github'
-                      ? 'GitHub credential (explicit opt-in)'
-                      : 'Not configured'}
-                </dd>
-              </div>
-            </dl>
-            <p className="form-hint">
-              {workspace.type === 'cloud'
-                ? 'Cloud workspaces keep tasks on this device. Use Workspace sync to review and explicitly apply changes. Retargeting preserves local data and requires a new sync review. Cloud workspaces cannot be converted back to local.'
-                : 'Tasks are stored on this device. Connecting to cloud preserves local tasks and opens a sync preview. Nothing is imported or published until you review and explicitly confirm apply.'}
-            </p>
-            <div className="workspace-actions">
-              <Button className="button" onClick={() => setEditor('rename')}>
-                Rename workspace
-              </Button>
-              {workspace.type === 'local' && (
-                <Button className="button" onClick={() => setEditor('connect')}>
-                  Connect to cloud
+              <dl className="workspace-metadata" aria-label="Workspace metadata">
+                <div>
+                  <dt>Name</dt>
+                  <dd>{workspace.name}</dd>
+                </div>
+                <div>
+                  <dt>Storage type</dt>
+                  <dd>{workspace.type === 'cloud' ? 'Cloud' : 'Local'}</dd>
+                </div>
+                <div>
+                  <dt>Repository</dt>
+                  <dd>{workspace.target?.repo ?? 'Not connected'}</dd>
+                </div>
+                <div>
+                  <dt>Branch</dt>
+                  <dd>{workspace.target?.branch ?? 'Not configured'}</dd>
+                </div>
+                <div>
+                  <dt>State file path</dt>
+                  <dd>{workspace.target?.path ?? 'Not configured'}</dd>
+                </div>
+                <div>
+                  <dt>Server credential</dt>
+                  <dd>
+                    {workspace.credential === 'dedicated'
+                      ? 'Dedicated sync token (FOGGY_SYNC_TOKEN)'
+                      : workspace.credential === 'github'
+                        ? 'GitHub credential (explicit opt-in)'
+                        : 'Not configured'}
+                  </dd>
+                </div>
+              </dl>
+              <p className="form-hint">
+                {workspace.type === 'cloud'
+                  ? 'Cloud workspaces keep tasks on this device. Use Workspace sync to review and explicitly apply changes. Retargeting preserves local data and requires a new sync review. Cloud workspaces cannot be converted back to local.'
+                  : 'Tasks are stored on this device. Connecting to cloud preserves local tasks and opens a sync preview. Nothing is imported or published until you review and explicitly confirm apply.'}
+              </p>
+              <div className="workspace-actions">
+                <Button className="button" onClick={() => setEditor('rename')}>
+                  Rename workspace
                 </Button>
-              )}
-              {workspace.type === 'cloud' && (
-                <Button className="button" onClick={() => setEditor('retarget')}>
-                  Change cloud target
+                {workspace.type === 'local' && (
+                  <Button className="button" onClick={() => setEditor('connect')}>
+                    Connect to cloud
+                  </Button>
+                )}
+                {workspace.type === 'cloud' && (
+                  <Button className="button" onClick={() => setEditor('retarget')}>
+                    Change cloud target
+                  </Button>
+                )}
+                <Button
+                  className="button primary"
+                  variant="primary"
+                  disabled={list.workspaces.length >= Math.min(3, list.limit)}
+                  onClick={() => setEditor('add')}
+                >
+                  Add workspace
                 </Button>
-              )}
-              <Button
-                className="button primary"
-                variant="primary"
-                disabled={list.workspaces.length >= Math.min(3, list.limit)}
-                onClick={() => setEditor('add')}
-              >
-                Add workspace
-              </Button>
-            </div>
-            <p className="form-hint">
-              {list.workspaces.length} / {Math.min(3, list.limit)} saved workspaces. Each workspace
-              has an independent task graph.
-            </p>
+              </div>
+              <p className="form-hint">
+                {list.workspaces.length} / {Math.min(3, list.limit)} saved workspaces. Each
+                workspace has an independent task graph.
+              </p>
+            </section>
             <section className="workspace-danger" aria-labelledby="workspace-danger-title">
               <h2 id="workspace-danger-title">Remove from this device</h2>
               <p>

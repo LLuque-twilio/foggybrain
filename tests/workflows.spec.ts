@@ -29,7 +29,7 @@ test.beforeEach(async ({ request }) => {
   ).toBeTruthy();
 });
 
-test('theme toggle is accessible by the logo and persists across reloads', async ({
+test('theme controls are accessible, persist presets, and follow the system', async ({
   page,
   request,
 }, info) => {
@@ -67,6 +67,77 @@ test('theme toggle is accessible by the logo and persists across reloads', async
   await expect(lightToggle).toBeChecked();
   await lightToggle.click();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+
+  await page.getByRole('button', { name: 'Settings' }).click();
+  const clarity = page.getByRole('radio', { name: /^Clarity Higher/ });
+  await clarity.check();
+  await expect(clarity).toBeChecked();
+  await expect(page.locator('html')).toHaveAttribute('data-theme-preset', 'clarity');
+  await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute('content', '#ffffff');
+  expect(await page.evaluate(() => localStorage.getItem('foggybrain-theme'))).toBe('clarity');
+
+  await page.reload();
+  await expect(page.getByRole('radio', { name: /^Clarity Higher/ })).toBeChecked();
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await page.getByRole('radio', { name: /System/ }).check();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  await page.emulateMedia({ colorScheme: 'light' });
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+});
+
+test('theme text and controls meet contrast targets', async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('foggybrain-theme', 'mist'));
+  await page.goto('/#/settings');
+
+  const presets = [
+    { label: 'Mist', name: /^Mist / },
+    { label: 'Dusk', name: /^Dusk / },
+    { label: 'Clarity', name: /^Clarity Higher/ },
+    { label: 'Clarity Dark', name: /^Clarity Dark / },
+  ];
+  for (const preset of presets) {
+    await page.getByRole('radio', { name: preset.name }).check();
+    const ratios = await page.evaluate(() => {
+      const root = getComputedStyle(document.documentElement);
+      const channels = (value: string) => {
+        let color = value.trim().replace('#', '');
+        if (color.length === 3)
+          color = color
+            .split('')
+            .map((channel) => channel + channel)
+            .join('');
+        return [0, 2, 4].map((offset) => Number.parseInt(color.slice(offset, offset + 2), 16));
+      };
+      const luminance = (value: string) => {
+        const values = channels(value).map((channel) => {
+          const normalized = channel / 255;
+          return normalized <= 0.04045 ? normalized / 12.92 : ((normalized + 0.055) / 1.055) ** 2.4;
+        });
+        return values[0] * 0.2126 + values[1] * 0.7152 + values[2] * 0.0722;
+      };
+      const ratio = (foreground: string, background: string) => {
+        const light = Math.max(luminance(foreground), luminance(background));
+        const dark = Math.min(luminance(foreground), luminance(background));
+        return (light + 0.05) / (dark + 0.05);
+      };
+      return {
+        body: ratio(root.getPropertyValue('--text'), root.getPropertyValue('--canvas')),
+        muted: ratio(root.getPropertyValue('--muted'), root.getPropertyValue('--surface')),
+        primary: ratio(
+          root.getPropertyValue('--accent-contrast'),
+          root.getPropertyValue('--accent'),
+        ),
+        danger: ratio(
+          root.getPropertyValue('--danger-contrast'),
+          root.getPropertyValue('--danger'),
+        ),
+      };
+    });
+    expect(ratios.body, `${preset.label} body contrast`).toBeGreaterThanOrEqual(4.5);
+    expect(ratios.muted, `${preset.label} muted contrast`).toBeGreaterThanOrEqual(4.5);
+    expect(ratios.primary, `${preset.label} primary contrast`).toBeGreaterThanOrEqual(4.5);
+    expect(ratios.danger, `${preset.label} danger contrast`).toBeGreaterThanOrEqual(4.5);
+  }
 });
 
 test('create and inline edit through UI, keyboard sheet, local assets, and responsive shell', async ({
@@ -1249,15 +1320,15 @@ test('minimap highlights the selected node independently of completion', async (
   await node(page, a.id).locator('.node-title').click();
   await expect(page.locator('[data-slot="sheet-content"]')).toBeVisible();
   expect(Math.abs((await canvas.boundingBox())!.width - widthBefore)).toBeLessThan(1);
-  await expect(miniNodes.nth(0)).toHaveCSS('fill', 'rgb(121, 99, 179)');
-  await expect(miniNodes.nth(1)).toHaveCSS('fill', 'rgb(160, 183, 141)');
+  await expect(miniNodes.nth(0)).toHaveCSS('fill', 'rgb(116, 83, 168)');
+  await expect(miniNodes.nth(1)).toHaveCSS('fill', 'rgb(130, 157, 112)');
   await node(page, b.id).locator('.node-title').click();
-  await expect(miniNodes.nth(0)).toHaveCSS('fill', 'rgb(215, 223, 206)');
-  await expect(miniNodes.nth(1)).toHaveCSS('fill', 'rgb(121, 99, 179)');
+  await expect(miniNodes.nth(0)).toHaveCSS('fill', 'rgb(209, 219, 200)');
+  await expect(miniNodes.nth(1)).toHaveCSS('fill', 'rgb(116, 83, 168)');
   await expect(selected).toHaveCount(1);
   await page.getByRole('button', { name: 'Close task details' }).click();
   await expect(selected).toHaveCount(0);
-  await expect(miniNodes.nth(1)).toHaveCSS('fill', 'rgb(160, 183, 141)');
+  await expect(miniNodes.nth(1)).toHaveCSS('fill', 'rgb(130, 157, 112)');
 });
 
 test('manual layout persists, auto layout restores, and polling sees external updates', async ({

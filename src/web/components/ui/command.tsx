@@ -72,7 +72,7 @@ function CommandSeparator({
   return (
     <CommandPrimitive.Separator
       data-slot="command-separator"
-      className={cn('-mx-1 h-px bg-[#dce5d1]', className)}
+      className={cn('-mx-1 h-px bg-[var(--line)]', className)}
       {...props}
     />
   );

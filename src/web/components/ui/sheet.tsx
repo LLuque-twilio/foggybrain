@@ -18,7 +18,7 @@ function SheetOverlay({
     <SheetPrimitive.Overlay
       data-slot="sheet-overlay"
       className={cn(
-        'fixed inset-0 z-40 bg-[#283c34]/10 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0',
+        'fixed inset-0 z-40 bg-[var(--overlay)] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0',
         className,
       )}
       {...props}
@@ -27,13 +27,13 @@ function SheetOverlay({
 }
 
 const sheetVariants = cva(
-  'fixed z-50 flex flex-col bg-[#fcfdf8] shadow-[-8px_0_24px_rgba(52,71,43,0.12)] transition ease-in-out data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:duration-300 data-[state=open]:duration-500',
+  'fixed z-50 flex flex-col bg-[var(--surface)] text-[var(--text)] shadow-[-8px_0_24px_var(--shadow)] transition ease-in-out data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:duration-300 data-[state=open]:duration-500',
   {
     variants: {
       side: {
         right:
-          'inset-y-0 right-0 h-full w-[min(390px,94vw)] border-l border-[#dfe6d5] data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right',
-        left: 'inset-y-0 left-0 h-full w-[min(390px,94vw)] border-r border-[#dfe6d5] data-[state=closed]:slide-out-to-left data-[state=open]:slide-in-from-left',
+          'inset-y-0 right-0 h-full w-[min(390px,94vw)] border-l border-[var(--line)] data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right',
+        left: 'inset-y-0 left-0 h-full w-[min(390px,94vw)] border-r border-[var(--line)] data-[state=closed]:slide-out-to-left data-[state=open]:slide-in-from-left',
       },
     },
     defaultVariants: { side: 'right' },

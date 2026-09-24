@@ -4,6 +4,27 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#f7f8f2" />
+    <script>
+      (() => {
+        let preference = 'system';
+        try {
+          preference = localStorage.getItem('foggybrain-theme') || preference;
+        } catch {}
+        if (preference === 'light') preference = 'mist';
+        if (preference === 'dark') preference = 'dusk';
+        if (!['system', 'mist', 'dusk', 'clarity', 'clarity-dark'].includes(preference))
+          preference = 'system';
+        const dark =
+          preference === 'dusk' ||
+          preference === 'clarity-dark' ||
+          (preference === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
+        const root = document.documentElement;
+        root.dataset.themePreference = preference;
+        root.dataset.theme = dark ? 'dark' : 'light';
+        root.dataset.themePreset = preference === 'system' ? (dark ? 'dark' : 'light') : preference;
+        root.style.colorScheme = dark ? 'dark' : 'light';
+      })();
+    </script>
     <meta name="description" content="FoggyBrain: a little clarity for everything in flight." />
     <title>FoggyBrain</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />

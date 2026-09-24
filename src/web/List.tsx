@@ -222,7 +222,11 @@ export function ListView({
                 />
               </span>
               <span role="cell">
-                <i className={`tiny-status tiny-${task.status}`} />
+                <i
+                  className={`tiny-status tiny-${task.status}`}
+                  role="img"
+                  aria-label={`${task.status} status`}
+                />
                 <span className="mobile-cell-label">{task.status}</span>
               </span>
               <span role="cell" className="list-task-title">

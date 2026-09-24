@@ -449,6 +449,7 @@ export function WorkspaceApp({
             <button
               key={task.id}
               className={currentId === task.id ? 'selected' : ''}
+              aria-label={`${task.title}, ${task.status}`}
               onClick={() => open(task.id)}
             >
               <span className={`tiny-status tiny-${task.status}`} />

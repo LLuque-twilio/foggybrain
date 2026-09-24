@@ -4,15 +4,19 @@ import type * as React from 'react';
 import { cn } from '../../lib/utils';
 
 const buttonVariants = cva(
-  'inline-flex shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-md text-xs font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-[#588466] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0',
+  'inline-flex shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-md text-xs font-medium transition-colors outline-none focus-visible:ring-3 focus-visible:ring-[var(--focus)] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0',
   {
     variants: {
       variant: {
-        default: 'border border-[#bbc9b0] bg-[#fcfdf8] text-[#283c34] hover:bg-[#edf1e4]',
-        primary: 'border border-[#2e594a] bg-[#2e594a] text-[#f0f5e8] hover:bg-[#214839]',
-        destructive: 'border border-[#a46752] bg-[#a46752] text-[#fff6ee] hover:bg-[#8e5542]',
-        ghost: 'text-[#627456] hover:bg-[#e8ede0] hover:text-[#344e3c]',
-        link: 'text-[#728066] underline-offset-4 hover:text-[#264b35] hover:underline',
+        default:
+          'border border-[var(--line-strong)] bg-[var(--surface)] text-[var(--text)] hover:bg-[var(--surface-hover)]',
+        primary:
+          'border border-[var(--accent)] bg-[var(--accent)] text-[var(--accent-contrast)] hover:bg-[var(--accent-hover)]',
+        destructive:
+          'border border-[var(--danger)] bg-[var(--danger)] text-[var(--danger-contrast)] hover:bg-[var(--danger-hover)]',
+        ghost:
+          'text-[var(--muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-strong)]',
+        link: 'text-[var(--accent)] underline-offset-4 hover:underline',
       },
       size: {
         default: 'h-9 px-4 py-2',
