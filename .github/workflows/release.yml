@@ -50,7 +50,7 @@ jobs:
           cp -R dist bin package.json pnpm-lock.yaml "$STAGE/"
           # A hoisted linker writes real files, so the archive carries no store symlinks.
           pnpm install --dir "$STAGE" --prod --frozen-lockfile --ignore-scripts \
-            --config.node-linker=hoisted
+            --config.node-linker=hoisted --config.bin-links=false
           rm -f "$STAGE/pnpm-lock.yaml"
           tar -czf "foggybrain-$VERSION.tar.gz" -C stage "foggybrain-$VERSION"
           if tar -tvzf "foggybrain-$VERSION.tar.gz" | grep -q '^l'; then
