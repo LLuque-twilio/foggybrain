@@ -2057,8 +2057,9 @@ select:disabled {
 .searchable-select-popover [data-slot='command-item']:hover,
 .searchable-select-popover [data-slot='command-item'][data-active='true'],
 .searchable-select-popover [data-slot='command-item'][data-selected='true'] {
-  background: #ecf3e1;
-  outline: 1px solid #91aa79;
+  color: var(--text-strong);
+  background: var(--surface-selected);
+  outline: 1px solid var(--line-strong);
 }
 .searchable-select-popover [data-slot='command-item'][aria-selected='true'] {
   font-weight: 700;
@@ -2094,9 +2095,9 @@ textarea {
   color: #627456;
 }
 .kind-picker [role='radio'][data-state='checked'] {
-  border-color: #91aa79;
-  background: #ecf3e1;
-  color: #66844d;
+  border-color: var(--line-strong);
+  background: var(--surface-selected);
+  color: var(--text-strong);
 }
 .kind-picker [data-slot='radio-group-indicator'],
 .sync-actions [data-slot='radio-group-indicator'] {
@@ -2124,8 +2125,9 @@ textarea {
   cursor: pointer;
 }
 .connection-mode label:has(input:checked) {
-  border-color: #91aa79;
-  background: #ecf3e1;
+  color: var(--text-strong);
+  border-color: var(--line-strong);
+  background: var(--surface-selected);
 }
 .connection-mode label:has(input:disabled) {
   opacity: 0.6;
@@ -2150,7 +2152,8 @@ textarea {
   overflow-wrap: anywhere;
   padding: 12px;
   border-radius: 5px;
-  background: #ecf3e1;
+  color: var(--text-strong);
+  background: var(--surface-selected);
 }
 .repository-picker ~ .button.full {
   margin-top: 18px;
@@ -2189,8 +2192,9 @@ textarea {
   font-size: 12px;
 }
 .reference-options > button.chosen {
-  background: #eef4e4;
-  border-color: #9fb989;
+  color: var(--text-strong);
+  background: var(--surface-selected);
+  border-color: var(--line-strong);
 }
 .reference-options small,
 .impact-list small {
@@ -2498,7 +2502,8 @@ details ul {
 .tag-option-row:hover,
 .tag-option-row.is-selected,
 .tag-option-row:has(.tag-option[data-selected='true']) {
-  background: #eff3e9;
+  color: var(--text-strong);
+  background: var(--surface-hover);
 }
 .tag-option {
   display: flex;
@@ -2669,7 +2674,7 @@ details ul {
 }
 .task-list-row:hover,
 .task-list-row.selected {
-  background: #f0f4e9;
+  background: var(--surface-hover);
 }
 .task-list-row:focus-visible {
   outline: 2px solid #588466;
@@ -3535,7 +3540,8 @@ details ul {
 }
 .sync-actions .button[data-state='checked'] {
   border-color: var(--green);
-  background: #e0e7d5;
+  color: var(--text-strong);
+  background: var(--surface-selected);
 }
 .sync-confirm {
   display: flex;

@@ -123,6 +123,10 @@ test('theme text and controls meet contrast targets', async ({ page }) => {
       return {
         body: ratio(root.getPropertyValue('--text'), root.getPropertyValue('--canvas')),
         muted: ratio(root.getPropertyValue('--muted'), root.getPropertyValue('--surface')),
+        selection: ratio(
+          root.getPropertyValue('--text-strong'),
+          root.getPropertyValue('--surface-selected'),
+        ),
         primary: ratio(
           root.getPropertyValue('--accent-contrast'),
           root.getPropertyValue('--accent'),
@@ -135,6 +139,7 @@ test('theme text and controls meet contrast targets', async ({ page }) => {
     });
     expect(ratios.body, `${preset.label} body contrast`).toBeGreaterThanOrEqual(4.5);
     expect(ratios.muted, `${preset.label} muted contrast`).toBeGreaterThanOrEqual(4.5);
+    expect(ratios.selection, `${preset.label} selection contrast`).toBeGreaterThanOrEqual(4.5);
     expect(ratios.primary, `${preset.label} primary contrast`).toBeGreaterThanOrEqual(4.5);
     expect(ratios.danger, `${preset.label} danger contrast`).toBeGreaterThanOrEqual(4.5);
   }
