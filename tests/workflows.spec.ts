@@ -1499,14 +1499,19 @@ test('graph emphasizes actionable work, nearby dependencies, and container progr
   );
   await expect(edge.locator('.react-flow__edge-text')).toHaveCSS('opacity', '0');
   await page.getByRole('button', { name: 'Close task details' }).click();
-  const midpoint = await edge.locator('.react-flow__edge-interaction').evaluate((element) => {
-    const path = element as SVGPathElement;
-    const point = path.getPointAtLength(path.getTotalLength() / 2);
-    const screen = new DOMPoint(point.x, point.y).matrixTransform(path.getScreenCTM()!);
-    return { x: screen.x, y: screen.y };
-  });
-  await page.mouse.move(midpoint.x, midpoint.y);
-  await expect(edge.locator('.react-flow__edge-text')).toHaveCSS('opacity', '1');
+  // Closing the panel refits the viewport, so re-measure until the hover lands on the settled edge.
+  await expect(async () => {
+    const midpoint = await edge.locator('.react-flow__edge-interaction').evaluate((element) => {
+      const path = element as SVGPathElement;
+      const point = path.getPointAtLength(path.getTotalLength() / 2);
+      const screen = new DOMPoint(point.x, point.y).matrixTransform(path.getScreenCTM()!);
+      return { x: screen.x, y: screen.y };
+    });
+    await page.mouse.move(midpoint.x, midpoint.y);
+    await expect(edge.locator('.react-flow__edge-text')).toHaveCSS('opacity', '1', {
+      timeout: 500,
+    });
+  }).toPass();
 
   await request.post(`/api/tasks/${first.id}/done`, { data: { done: true } });
   await expect(node(page, next.id).locator('.status .lucide-sparkles')).toHaveCount(1, {
