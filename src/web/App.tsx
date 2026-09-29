@@ -261,7 +261,23 @@ export function WorkspaceApp({
   };
   const currentId = path.startsWith('/tasks/') ? path.slice('/tasks/'.length) : null;
   const current = snapshot.tasks.find((task) => task.id === currentId);
-  const backPath = previousPath ?? (current?.parentId ? `/tasks/${current.parentId}` : '/');
+  const previousContainer = snapshot.tasks.find((task) => `/tasks/${task.id}` === previousPath);
+  const cameFromContainer =
+    previousContainer?.kind === 'container' &&
+    current != null &&
+    previousContainer.childrenIds.includes(current.id);
+  const backPath = currentId
+    ? cameFromContainer ||
+      (current?.parentId === null &&
+        (previousPath === '/' ||
+          previousPath === '/map' ||
+          previousPath === '/list' ||
+          previousPath === '/prs'))
+      ? previousPath!
+      : current?.parentId
+        ? `/tasks/${current.parentId}`
+        : '/map'
+    : null;
   const backLabel =
     backPath === '/map'
       ? 'Workspace map'
@@ -269,12 +285,13 @@ export function WorkspaceApp({
         ? 'List'
         : backPath === '/prs'
           ? 'Pull requests'
-          : backPath.startsWith('/tasks/')
+          : backPath?.startsWith('/tasks/')
             ? (snapshot.tasks.find((task) => `/tasks/${task.id}` === backPath)?.title ??
               'Previous graph')
             : 'Overview';
   const goBack = () => {
-    if (previousPath) window.history.back();
+    if (!backPath) return;
+    if (previousPath === backPath) window.history.back();
     else navigate(backPath);
   };
   const isGraph = path === '/map' || !!currentId;
@@ -647,10 +664,12 @@ export function WorkspaceApp({
             <section className="graph-page">
               <div className="graph-heading">
                 <div>
-                  <button className="back-link" onClick={goBack}>
-                    <ArrowLeft size={13} />
-                    Back to {backLabel}
-                  </button>
+                  {current && (
+                    <button className="back-link" onClick={goBack}>
+                      <ArrowLeft size={13} />
+                      Back to {backLabel}
+                    </button>
+                  )}
                   <div className="graph-title">
                     <h1>{current?.title ?? 'The bigger picture'}</h1>
                     {current && <Status status={current.status} />}
