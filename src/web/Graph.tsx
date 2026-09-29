@@ -25,7 +25,7 @@ import {
   Link2,
   ListChecks,
 } from 'lucide-react';
-import type { Layout, Snapshot, TaskView } from '../shared';
+import type { Dependency, Layout, Snapshot, TaskView } from '../shared';
 import { Tooltip, TooltipContent, TooltipTrigger } from './components/ui/tooltip';
 import { Status } from './Status';
 import { PrStatus } from './PrStatus';
@@ -57,6 +57,9 @@ function Step({ data, selected }: NodeProps<StepNode>) {
         </span>
         <span>
           {data.reference && <Link2 size={13} aria-label="Shared reference" />}
+          {task.kind === 'manual' && task.status === 'available' && !task.manualDone && (
+            <span className="node-start">Can start</span>
+          )}
           {task.prUrl && (
             <Tooltip>
               <TooltipTrigger asChild>
@@ -118,19 +121,26 @@ function Step({ data, selected }: NodeProps<StepNode>) {
         </div>
       )}
       {task.kind === 'container' && (
-        <div
-          className="node-progress"
-          role="progressbar"
-          aria-label={`${data.completedChildren} of ${task.childrenIds.length} child tasks completed`}
-          aria-valuemin={0}
-          aria-valuemax={task.childrenIds.length}
-          aria-valuenow={data.completedChildren}
-        >
-          <span
-            style={{
-              width: `${task.childrenIds.length ? (data.completedChildren / task.childrenIds.length) * 100 : 0}%`,
-            }}
-          />
+        <div className="node-progress-group">
+          <div
+            className="node-progress"
+            role="progressbar"
+            aria-label={`${data.completedChildren} of ${task.childrenIds.length} child tasks completed`}
+            aria-valuemin={0}
+            aria-valuemax={task.childrenIds.length}
+            aria-valuenow={data.completedChildren}
+          >
+            <span
+              style={{
+                width: `${task.childrenIds.length ? (data.completedChildren / task.childrenIds.length) * 100 : 0}%`,
+              }}
+            />
+          </div>
+          <span className="node-progress-text">
+            {task.childrenIds.length
+              ? `${data.completedChildren} of ${task.childrenIds.length} steps complete`
+              : 'No steps yet'}
+          </span>
         </div>
       )}
       <Handle type="source" position={Position.Right} aria-label="Dependent output" />
@@ -139,6 +149,31 @@ function Step({ data, selected }: NodeProps<StepNode>) {
 }
 
 const nodeTypes = { step: Step };
+
+function autoPositions(
+  tasks: TaskView[],
+  dependencies: Dependency[],
+  dimensions?: Map<string, { width: number; height: number }>,
+) {
+  const graph = new dagre.graphlib.Graph();
+  graph.setGraph({ rankdir: 'LR', nodesep: 44, ranksep: 76, marginx: 45, marginy: 45 });
+  graph.setDefaultEdgeLabel(() => ({}));
+  for (const task of tasks) {
+    const { width, height } = dimensions?.get(task.id) ?? {
+      width: 254,
+      height: task.kind === 'manual' ? (task.prUrl ? 210 : 170) : 142,
+    };
+    graph.setNode(task.id, { width, height });
+  }
+  for (const edge of dependencies) graph.setEdge(edge.prerequisiteId, edge.dependentId);
+  dagre.layout(graph);
+  return new Map(
+    tasks.map((task) => {
+      const { x, y, width, height } = graph.node(task.id);
+      return [task.id, { x: x - width / 2, y: y - height / 2 }] as const;
+    }),
+  );
+}
 
 interface Props {
   snapshot: Snapshot;
@@ -188,6 +223,30 @@ function Canvas({
       ),
     [snapshot.dependencies, ids],
   );
+  const focusedIds = useMemo(() => {
+    if (!selectedId || !ids.has(selectedId)) return null;
+    const connected = new Set([selectedId]);
+    for (const edge of dependencies) {
+      if (edge.prerequisiteId === selectedId) connected.add(edge.dependentId);
+      if (edge.dependentId === selectedId) connected.add(edge.prerequisiteId);
+    }
+    return connected;
+  }, [selectedId, ids, dependencies]);
+  const visibleNodes = useMemo(
+    () =>
+      nodes.map((node) => ({
+        ...node,
+        selected: node.id === selectedId,
+        className: focusedIds
+          ? focusedIds.has(node.id)
+            ? node.id === selectedId
+              ? ''
+              : 'is-connected'
+            : 'is-dimmed'
+          : '',
+      })),
+    [nodes, selectedId, focusedIds],
+  );
   const edges = useMemo<Edge[]>(
     () =>
       dependencies.map((edge) => {
@@ -201,14 +260,21 @@ function Canvas({
               : 'released';
         const color =
           state === 'waiting' ? 'var(--graph-edge-waiting)' : 'var(--graph-edge-released)';
+        const shortTitle = (title: string) =>
+          title.length > 24 ? `${title.slice(0, 23)}…` : title;
         return {
           id: edge.id,
           source: edge.prerequisiteId,
           target: edge.dependentId,
           type: 'smoothstep',
-          className: `dependency-edge dependency-edge--${state}`,
+          className: `dependency-edge dependency-edge--${state}${focusedIds && edge.prerequisiteId !== selectedId && edge.dependentId !== selectedId ? ' is-dimmed' : ''}`,
           animated: state === 'released',
           selected: edge.id === selectedEdgeId,
+          label: `${shortTitle(prerequisite.title)} must finish before ${shortTitle(dependent.title)}`,
+          labelStyle: { fill: 'var(--text-strong)', fontSize: 11, fontWeight: 600 },
+          labelBgStyle: { fill: 'var(--surface)' },
+          labelBgPadding: [8, 6],
+          labelBgBorderRadius: 5,
           markerEnd: {
             type: MarkerType.ArrowClosed,
             color,
@@ -220,35 +286,22 @@ function Canvas({
           interactionWidth: 24,
         };
       }),
-    [dependencies, selectedEdgeId, taskById],
+    [dependencies, focusedIds, selectedId, selectedEdgeId, taskById],
   );
 
   useEffect(() => {
-    const graph = new dagre.graphlib.Graph();
-    graph.setGraph({ rankdir: 'LR', nodesep: 44, ranksep: 76, marginx: 45, marginy: 45 });
-    graph.setDefaultEdgeLabel(() => ({}));
-    for (const task of tasks)
-      graph.setNode(task.id, {
-        width: 254,
-        height: task.kind === 'manual' ? (task.prUrl ? 210 : 170) : 142,
-      });
-    for (const edge of dependencies) graph.setEdge(edge.prerequisiteId, edge.dependentId);
-    dagre.layout(graph);
+    const positions = autoPositions(tasks, dependencies);
     const storedPositions = new Map(
       layout?.positions.map((position) => [position.nodeId, position]),
     );
     setNodes(
       tasks.map((task) => {
         const stored = manual ? storedPositions.get(task.id) : undefined;
-        const position = stored || {
-          x: graph.node(task.id).x - 127,
-          y: graph.node(task.id).y - graph.node(task.id).height / 2,
-        };
+        const position = stored || positions.get(task.id)!;
         return {
           id: task.id,
           type: 'step',
           position: { x: position.x, y: position.y },
-          selected: task.id === selectedId,
           ariaLabel: `${task.title}, ${task.status} ${task.kind}`,
           ariaRole: 'button',
           data: {
@@ -266,9 +319,36 @@ function Canvas({
     // Callbacks and selection belong to this render; layout rebuilding follows server state, not their identity.
   }, [snapshot, viewId]);
 
+  const dimensionsKey = nodes
+    .map((node) => `${node.id}:${node.measured?.width ?? 0}:${node.measured?.height ?? 0}`)
+    .join(',');
   useEffect(() => {
-    setNodes((current) => current.map((node) => ({ ...node, selected: node.id === selectedId })));
-  }, [selectedId]);
+    if (
+      manual ||
+      nodes.length !== tasks.length ||
+      nodes.some((node) => node.measured?.width === undefined || node.measured.height === undefined)
+    )
+      return;
+    const dimensions = new Map(
+      nodes.map((node) => [
+        node.id,
+        { width: node.measured!.width!, height: node.measured!.height! },
+      ]),
+    );
+    if (tasks.some((task) => !dimensions.has(task.id))) return;
+    const positions = autoPositions(tasks, dependencies, dimensions);
+    setNodes((current) => {
+      if (current.some((node) => !positions.has(node.id))) return current;
+      const arranged = current.map((node) => {
+        const position = positions.get(node.id)!;
+        return Math.abs(node.position.x - position.x) < 0.5 &&
+          Math.abs(node.position.y - position.y) < 0.5
+          ? node
+          : { ...node, position };
+      });
+      return arranged.every((node, index) => node === current[index]) ? current : arranged;
+    });
+  }, [dimensionsKey, manual, tasks, dependencies]);
 
   const topology = `${viewId}:${tasks.map((task) => `${task.id}:${task.kind}:${task.prUrl !== null}`).join(',')}:${dependencies.map((edge) => `${edge.id}:${edge.prerequisiteId}:${edge.dependentId}`).join(',')}:${manual}`;
   useEffect(() => {
@@ -276,11 +356,11 @@ function Canvas({
       void fitView({ padding: 0.22, maxZoom: 1, duration: 250 });
     }, 80);
     return () => clearTimeout(timer);
-  }, [topology, fitView]);
+  }, [topology, dimensionsKey, fitView]);
 
   return (
     <ReactFlow<StepNode>
-      nodes={nodes}
+      nodes={visibleNodes}
       edges={edges}
       nodeTypes={nodeTypes}
       onNodesChange={(changes) => setNodes((nodes) => applyNodeChanges(changes, nodes))}

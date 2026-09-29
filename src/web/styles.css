@@ -1070,8 +1070,33 @@ h1 {
 .dependency-edge.selected path.react-flow__edge-path {
   filter: drop-shadow(0 0 3px #405e3488);
 }
+.dependency-edge.is-dimmed {
+  opacity: 0.2;
+}
+.dependency-edge.is-dimmed:hover,
+.dependency-edge.is-dimmed.selected {
+  opacity: 1;
+}
+.dependency-edge .react-flow__edge-text,
+.dependency-edge .react-flow__edge-textbg {
+  opacity: 0;
+  pointer-events: none;
+}
+.dependency-edge:hover .react-flow__edge-text,
+.dependency-edge:hover .react-flow__edge-textbg,
+.dependency-edge.selected .react-flow__edge-text,
+.dependency-edge.selected .react-flow__edge-textbg {
+  opacity: 1;
+}
 .react-flow__node-step {
   width: 254px;
+}
+.react-flow__node-step.is-dimmed {
+  opacity: 0.3;
+}
+.react-flow__node-step.is-dimmed:hover,
+.react-flow__node-step.is-dimmed:focus-within {
+  opacity: 1;
 }
 .step-node {
   width: 254px;
@@ -1086,6 +1111,9 @@ h1 {
 .step-node.is-selected {
   border-color: #587d40;
   box-shadow: 0 0 0 3px #819f6430;
+}
+.react-flow__node-step.is-connected .step-node {
+  border-color: #6e9158;
 }
 .step-node.is-completed {
   background: #f4f8eb;
@@ -1103,6 +1131,16 @@ h1 {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+.node-start {
+  padding: 3px 5px;
+  border-radius: 4px;
+  background: #e8f2d9;
+  color: #3f6529;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0;
+  white-space: nowrap;
 }
 .node-title {
   font:
@@ -1211,15 +1249,23 @@ h1 {
   padding: 3px 0;
   color: #789160;
 }
+.node-progress-group {
+  margin-top: 11px;
+}
 .node-progress {
   height: 2px;
   background: #e4ecd8;
-  margin-top: 11px;
 }
 .node-progress > span {
   display: block;
   height: 100%;
   background: #79975e;
+}
+.node-progress-text {
+  display: block;
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 9px;
 }
 .react-flow__handle {
   height: 10px;
@@ -3839,6 +3885,10 @@ html[data-theme='dark'] .sync-state-local {
 html[data-theme='dark'] .step-node.is-completed {
   border-color: #466046;
   background: #202e24;
+}
+html[data-theme='dark'] .node-start {
+  background: #2c442f;
+  color: #c7e4ba;
 }
 html[data-theme='dark'] .card-progress,
 html[data-theme='dark'] .node-progress {

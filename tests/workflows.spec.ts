@@ -361,6 +361,37 @@ test('direct container links have an in-app back fallback', async ({ request, pa
   await expect(page).toHaveURL(new RegExp(`#/tasks/${parent.id}$`));
 });
 
+test('graph back points to its parent, never a graph left via the workspace map', async ({
+  request,
+  page,
+}, info) => {
+  const parent = await create(request, 'Release', 'container');
+  await create(request, 'Deploy', 'container', parent.id);
+  await create(request, 'Verify', 'container', parent.id);
+  await page.goto(`/#/tasks/${parent.id}`);
+  await page.getByRole('button', { name: 'Open Deploy graph' }).click();
+  await expect(page.getByRole('button', { name: 'Back to Release' })).toBeVisible();
+
+  if (info.project.name === 'mobile')
+    await page.getByRole('button', { name: 'Open navigation' }).click();
+  await page.getByRole('button', { name: 'Workspace map' }).click();
+  await expect(page).toHaveURL(/#\/map$/);
+  await expect(page.locator('.graph-heading .back-link')).toHaveCount(0);
+
+  await page.getByRole('button', { name: 'Open Release graph' }).click();
+  await page.getByRole('button', { name: 'Open Deploy graph' }).click();
+  await page
+    .getByRole('navigation', { name: 'Breadcrumb' })
+    .getByRole('button', { name: 'Release' })
+    .click();
+  await expect(page.getByRole('button', { name: 'Back to Workspace map' })).toBeVisible();
+  await page.getByRole('button', { name: 'Open Verify graph' }).click();
+  await expect(page.getByRole('button', { name: 'Back to Release' })).toBeVisible();
+  await page.getByRole('button', { name: 'Back to Release' }).click();
+  await expect(page).toHaveURL(new RegExp(`#/tasks/${parent.id}$`));
+  await expect(page.getByRole('button', { name: 'Back to Workspace map' })).toBeVisible();
+});
+
 test('early-ready chain propagates, floats remain independent, reopening preserves own work', async ({
   request,
   page,
@@ -1336,6 +1367,68 @@ test('minimap highlights the selected node independently of completion', async (
   await expect(miniNodes.nth(1)).toHaveCSS('fill', 'rgb(130, 157, 112)');
 });
 
+test('graph emphasizes actionable work, nearby dependencies, and container progress', async ({
+  page,
+  request,
+}) => {
+  const parent = await create(request, 'Release', 'container');
+  const first = await create(request, 'Build', 'manual', parent.id);
+  const next = await create(request, 'Deploy', 'manual', parent.id);
+  const independent = await create(request, 'Write notes', 'manual', parent.id);
+  const otherBlocked = await create(request, 'Publish notes', 'manual', parent.id);
+  const finished = await create(request, 'Set up', 'manual', parent.id);
+  await request.post('/api/dependencies', {
+    data: { prerequisiteId: first.id, dependentId: next.id },
+  });
+  await request.post('/api/dependencies', {
+    data: { prerequisiteId: independent.id, dependentId: otherBlocked.id },
+  });
+  await request.post(`/api/tasks/${finished.id}/done`, { data: { done: true } });
+
+  await page.goto('/#/map');
+  await expect(node(page, parent.id).locator('.node-progress-text')).toHaveText(
+    '1 of 5 steps complete',
+  );
+  await page.getByRole('button', { name: 'Open Release graph' }).click();
+  await expect(node(page, first.id).locator('.node-start')).toHaveText('Can start');
+  await expect(node(page, independent.id).locator('.node-start')).toHaveText('Can start');
+  await expect(node(page, next.id).locator('.node-start')).toHaveCount(0);
+  await expect(node(page, finished.id).locator('.node-start')).toHaveCount(0);
+
+  await node(page, first.id).locator('.node-title').click();
+  await expect(node(page, next.id)).toHaveClass(/is-connected/);
+  await expect(node(page, independent.id)).toHaveClass(/is-dimmed/);
+  await expect(node(page, finished.id)).toHaveClass(/is-dimmed/);
+  const edge = page
+    .locator('.react-flow__edge')
+    .filter({ hasText: 'Build must finish before Deploy' });
+  await expect(edge).not.toHaveClass(/is-dimmed/);
+  await expect(page.locator('.react-flow__edge.is-dimmed')).toHaveCount(1);
+  await expect(edge.locator('.react-flow__edge-text')).toHaveText(
+    'Build must finish before Deploy',
+  );
+  await expect(edge.locator('.react-flow__edge-text')).toHaveCSS('opacity', '0');
+  await page.getByRole('button', { name: 'Close task details' }).click();
+  const midpoint = await edge.locator('.react-flow__edge-interaction').evaluate((element) => {
+    const path = element as SVGPathElement;
+    const point = path.getPointAtLength(path.getTotalLength() / 2);
+    const screen = new DOMPoint(point.x, point.y).matrixTransform(path.getScreenCTM()!);
+    return { x: screen.x, y: screen.y };
+  });
+  await page.mouse.move(midpoint.x, midpoint.y);
+  await expect(edge.locator('.react-flow__edge-text')).toHaveCSS('opacity', '1');
+
+  await request.post(`/api/tasks/${first.id}/done`, { data: { done: true } });
+  await expect(node(page, next.id).locator('.node-start')).toHaveText('Can start', {
+    timeout: 8000,
+  });
+  await expect(node(page, first.id).locator('.node-start')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Back to Workspace map' }).click();
+  await expect(node(page, parent.id).locator('.node-progress-text')).toHaveText(
+    '2 of 5 steps complete',
+  );
+});
+
 test('manual layout persists, auto layout restores, and polling sees external updates', async ({
   request,
   page,
@@ -1390,6 +1483,46 @@ test('manual layout persists, auto layout restores, and polling sees external up
   await expect(page.getByRole('button', { name: 'Auto layout', exact: true })).toBeVisible();
   await request.post(`/api/tasks/${b.id}/done`, { data: { done: true } });
   await expect(node(page, b.id).locator('.status')).toHaveText('Completed', { timeout: 8000 });
+});
+
+test('auto layout spaces mixed-height cards by their rendered size', async ({ request, page }) => {
+  await create(request, 'Short manual step');
+  const container = await create(request, 'Container with progress', 'container');
+  await create(request, 'Nested work', 'manual', container.id);
+  const gated = await request.post('/api/tasks', {
+    data: {
+      title: 'Manual work with a PR gate',
+      kind: 'manual',
+      prUrl: 'https://github.com/acme/example/pull/12',
+    },
+  });
+  expect(gated.ok()).toBeTruthy();
+  await create(request, 'Another ordinary step');
+  await page.goto('/#/map');
+
+  const spacing = () =>
+    page.locator('.react-flow__node-step').evaluateAll((elements) => {
+      const cards = elements
+        .map((element) => ({
+          y: new DOMMatrix(getComputedStyle(element).transform).f,
+          height: (element as HTMLElement).offsetHeight,
+        }))
+        .sort((a, b) => a.y - b.y);
+      return {
+        heights: cards.map((card) => card.height),
+        gaps: cards.slice(1).map((card, index) => card.y - cards[index].y - cards[index].height),
+      };
+    });
+  await expect.poll(async () => (await spacing()).gaps.length).toBe(3);
+  await expect
+    .poll(async () => {
+      const { gaps } = await spacing();
+      return Math.max(...gaps) - Math.min(...gaps);
+    })
+    .toBeLessThan(2);
+  const { heights, gaps } = await spacing();
+  expect(new Set(heights).size).toBeGreaterThan(1);
+  for (const gap of gaps) expect(gap).toBeCloseTo(44, 0);
 });
 
 test('node handles connect and disconnect steps through the canvas', async ({ request, page }) => {
