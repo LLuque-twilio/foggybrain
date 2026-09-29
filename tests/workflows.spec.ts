@@ -1338,6 +1338,93 @@ for (const kind of ['manual', 'pr'] as const) {
   });
 }
 
+test('PR gate borders reflect verified readiness without animating stale or failing status', async ({
+  page,
+  request,
+}) => {
+  const pr = (await (
+    await request.post('/api/tasks', {
+      data: {
+        title: 'Merge release',
+        kind: 'pr',
+        prUrl: 'https://github.com/example/api/pull/42',
+      },
+    })
+  ).json()) as TaskView;
+  const gated = (await (
+    await request.post('/api/tasks', {
+      data: {
+        title: 'Ship release',
+        kind: 'manual',
+        prUrl: 'https://github.com/example/api/pull/43',
+      },
+    })
+  ).json()) as TaskView;
+  await request.post(`/api/tasks/${gated.id}/done`, { data: { done: true } });
+  const stillWorking = (await (
+    await request.post('/api/tasks', {
+      data: {
+        title: 'Finish tests',
+        kind: 'manual',
+        prUrl: 'https://github.com/example/api/pull/44',
+      },
+    })
+  ).json()) as TaskView;
+  const snapshot = (await (await request.get('/api/state')).json()) as Snapshot;
+  let readiness: PrMergeStatus = 'ready';
+  let error: string | null = null;
+  await page.route('**/api/workspaces/default/state', (route) =>
+    route.fulfill({
+      json: {
+        ...snapshot,
+        tasks: snapshot.tasks.map((task) => ({
+          ...task,
+          prState: 'open',
+          prMergeStatus: readiness,
+          prError: error,
+        })),
+      },
+    }),
+  );
+  await page.goto('/#/map');
+  const gate = node(page, pr.id).locator('.step-node');
+  const manualGate = node(page, gated.id).locator('.step-node');
+  const manualWork = node(page, stillWorking.id).locator('.step-node');
+
+  await expect(gate).toHaveCSS('animation-name', 'pr-ready-border');
+  await expect(manualGate).toHaveCSS('animation-name', 'pr-ready-border');
+  await expect(manualWork).not.toHaveClass(/is-pr-ready/);
+  await expect(manualWork).toHaveCSS('animation-name', 'available-border');
+
+  readiness = 'checks_pending';
+  await page.reload();
+  await expect(gate).toHaveCSS('animation-name', 'pr-pending-border');
+  await expect(manualGate).toHaveCSS('animation-name', 'pr-pending-border');
+
+  readiness = 'under_review';
+  await page.reload();
+  await expect(gate).toHaveClass(/is-pr-under_review/);
+  await expect(gate).toHaveCSS('animation-name', 'none');
+
+  readiness = 'checks_failing';
+  await page.reload();
+  await expect(gate).toHaveClass(/is-pr-checks_failing/);
+  await expect(gate).toHaveCSS('animation-name', 'none');
+
+  readiness = 'ready';
+  error = 'GitHub request timed out.';
+  await page.reload();
+  await expect(gate).toHaveClass(/is-pr-stale/);
+  await expect(gate).toHaveCSS('animation-name', 'none');
+  await expect(gate.locator('.pr-status')).toHaveText('Ready to merge (stale)');
+
+  error = null;
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.reload();
+  await expect(gate).toHaveClass(/is-pr-ready/);
+  await expect(gate).toHaveCSS('animation-name', 'none');
+});
+
 test('minimap highlights the selected node independently of completion', async ({
   page,
   request,
@@ -1389,11 +1476,14 @@ test('graph emphasizes actionable work, nearby dependencies, and container progr
   await expect(node(page, parent.id).locator('.node-progress-text')).toHaveText(
     '1 of 5 steps complete',
   );
+  await expect(node(page, parent.id).locator('.node-progress-segment')).toHaveCount(5);
+  await expect(node(page, parent.id).locator('.node-progress-segment.is-complete')).toHaveCount(1);
   await page.getByRole('button', { name: 'Open Release graph' }).click();
-  await expect(node(page, first.id).locator('.node-start')).toHaveText('Can start');
-  await expect(node(page, independent.id).locator('.node-start')).toHaveText('Can start');
-  await expect(node(page, next.id).locator('.node-start')).toHaveCount(0);
-  await expect(node(page, finished.id).locator('.node-start')).toHaveCount(0);
+  await expect(page.locator('.node-start')).toHaveCount(0);
+  await expect(node(page, first.id).locator('.status .lucide-sparkles')).toHaveCount(1);
+  await expect(node(page, independent.id).locator('.status .lucide-sparkles')).toHaveCount(1);
+  await expect(node(page, next.id).locator('.status .lucide-sparkles')).toHaveCount(0);
+  await expect(node(page, finished.id).locator('.status .lucide-sparkles')).toHaveCount(0);
 
   await node(page, first.id).locator('.node-title').click();
   await expect(node(page, next.id)).toHaveClass(/is-connected/);
@@ -1419,14 +1509,60 @@ test('graph emphasizes actionable work, nearby dependencies, and container progr
   await expect(edge.locator('.react-flow__edge-text')).toHaveCSS('opacity', '1');
 
   await request.post(`/api/tasks/${first.id}/done`, { data: { done: true } });
-  await expect(node(page, next.id).locator('.node-start')).toHaveText('Can start', {
+  await expect(node(page, next.id).locator('.status .lucide-sparkles')).toHaveCount(1, {
     timeout: 8000,
   });
-  await expect(node(page, first.id).locator('.node-start')).toHaveCount(0);
+  await expect(node(page, first.id).locator('.status .lucide-sparkles')).toHaveCount(0);
   await page.getByRole('button', { name: 'Back to Workspace map' }).click();
   await expect(node(page, parent.id).locator('.node-progress-text')).toHaveText(
     '2 of 5 steps complete',
   );
+  await expect(node(page, parent.id).locator('.node-progress-segment.is-complete')).toHaveCount(2);
+});
+
+test('available steps animate gently and newly unblocked work celebrates once', async ({
+  page,
+  request,
+}) => {
+  const parent = await create(request, 'Release', 'container');
+  const prerequisite = await create(request, 'Build', 'manual', parent.id);
+  const dependent = await create(request, 'Deploy', 'manual', parent.id);
+  const alreadyDone = await create(request, 'Review', 'manual', parent.id);
+  await request.post('/api/dependencies', {
+    data: { prerequisiteId: prerequisite.id, dependentId: dependent.id },
+  });
+  await request.post('/api/dependencies', {
+    data: { prerequisiteId: prerequisite.id, dependentId: alreadyDone.id },
+  });
+  await request.post(`/api/tasks/${alreadyDone.id}/done`, { data: { done: true } });
+  await page.goto(`/#/tasks/${parent.id}`);
+
+  const actionable = node(page, prerequisite.id).locator('.step-node');
+  const waiting = node(page, dependent.id).locator('.step-node');
+  const ready = node(page, alreadyDone.id).locator('.step-node');
+  await expect(actionable).toHaveCSS('animation-name', 'available-border');
+  await expect(waiting).not.toHaveClass(/is-actionable|is-just-unlocked/);
+  await expect(ready.locator('.status')).toHaveText('Ready');
+  await expect(ready).not.toHaveClass(/is-actionable|is-just-unlocked/);
+  await expect(actionable.locator('.node-start')).toHaveCount(0);
+  await expect(actionable.locator('.status .lucide-sparkles')).toHaveCount(1);
+
+  await request.post(`/api/tasks/${prerequisite.id}/done`, { data: { done: true } });
+  await expect(waiting.locator('.node-start')).toHaveText('Just unlocked', { timeout: 8000 });
+  await expect(waiting).toHaveCSS('animation-name', 'unlock-border');
+  await expect(ready.locator('.status')).toHaveText('Completed');
+  await expect(ready).not.toHaveClass(/is-just-unlocked/);
+  await expect(waiting.locator('.node-start')).toHaveCount(0, { timeout: 5000 });
+  await expect(waiting.locator('.status .lucide-sparkles')).toHaveCount(1);
+  await expect(waiting).toHaveCSS('animation-name', 'available-border');
+  await page.reload();
+  await expect(waiting.locator('.node-start')).toHaveCount(0);
+  await expect(waiting.locator('.status .lucide-sparkles')).toHaveCount(1);
+  await expect(waiting).not.toHaveClass(/is-just-unlocked/);
+
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await expect(waiting).toHaveCSS('animation-name', 'none');
+  await expect(waiting.locator('.node-start')).toHaveCount(0);
 });
 
 test('manual layout persists, auto layout restores, and polling sees external updates', async ({
@@ -1523,6 +1659,88 @@ test('auto layout spaces mixed-height cards by their rendered size', async ({ re
   const { heights, gaps } = await spacing();
   expect(new Set(heights).size).toBeGreaterThan(1);
   for (const gap of gaps) expect(gap).toBeCloseTo(44, 0);
+});
+
+test('auto-layout connections do not pass through unrelated cards', async ({ request, page }) => {
+  const parent = await create(request, 'To-do work', 'container');
+  const titles = [
+    'UI: To-do view',
+    'CLI: todo commands',
+    'Server: accept todo',
+    'Document to-dos',
+    'Resolve open questions',
+    'Core: todo invariants',
+    'Add todo field',
+    'Verify checks',
+    'UI: hide to-dos',
+  ];
+  const tasks = new Map<string, TaskView>();
+  for (const title of titles) tasks.set(title, await create(request, title, 'manual', parent.id));
+  const links = [
+    ['Server: accept todo', 'CLI: todo commands'],
+    ['Server: accept todo', 'UI: hide to-dos'],
+    ['Resolve open questions', 'UI: To-do view'],
+    ['Document to-dos', 'Verify checks'],
+    ['Server: accept todo', 'UI: To-do view'],
+    ['Add todo field', 'Core: todo invariants'],
+    ['UI: To-do view', 'Verify checks'],
+    ['Core: todo invariants', 'Document to-dos'],
+    ['Resolve open questions', 'UI: hide to-dos'],
+    ['CLI: todo commands', 'Verify checks'],
+    ['Core: todo invariants', 'Server: accept todo'],
+    ['UI: hide to-dos', 'Verify checks'],
+  ];
+  const dependencies: Dependency[] = [];
+  for (const [from, to] of links) {
+    const response = await request.post('/api/dependencies', {
+      data: { prerequisiteId: tasks.get(from)!.id, dependentId: tasks.get(to)!.id },
+    });
+    expect(response.ok()).toBeTruthy();
+    dependencies.push((await response.json()) as Dependency);
+  }
+  await page.addInitScript(() => localStorage.setItem('foggybrain-theme', 'dark'));
+  await page.goto(`/#/tasks/${parent.id}`);
+  await expect(page.locator('.react-flow__edge')).toHaveCount(dependencies.length);
+  await expect(page.locator('.react-flow__edge-path')).toHaveCount(dependencies.length);
+  await expect(page.locator('.react-flow__edge-routed')).toHaveCount(dependencies.length);
+
+  const crossings = () =>
+    page.evaluate((edges) => {
+      const cards = Array.from(document.querySelectorAll<HTMLElement>('.react-flow__node-step'));
+      const hits: string[] = [];
+      for (const edge of edges) {
+        const path = document.querySelector<SVGPathElement>(
+          `.react-flow__edge[data-id="${edge.id}"] .react-flow__edge-path`,
+        );
+        if (!path) continue;
+        const length = path.getTotalLength();
+        for (const card of cards) {
+          if ([edge.prerequisiteId, edge.dependentId].includes(card.dataset.id!)) continue;
+          const rect = card.getBoundingClientRect();
+          if (
+            Array.from({ length: Math.ceil(length / 5) + 1 }, (_, index) => {
+              const point = path.getPointAtLength(Math.min(index * 5, length));
+              const screen = new DOMPoint(point.x, point.y).matrixTransform(path.getScreenCTM()!);
+              return (
+                screen.x > rect.left + 4 &&
+                screen.x < rect.right - 4 &&
+                screen.y > rect.top + 4 &&
+                screen.y < rect.bottom - 4
+              );
+            }).some(Boolean)
+          )
+            hits.push(`${edge.id} crosses ${card.dataset.id}`);
+        }
+      }
+      return hits;
+    }, dependencies);
+  await expect.poll(crossings).toEqual([]);
+  await page.getByRole('button', { name: 'Auto layout', exact: true }).click();
+  await expect(page.locator('.react-flow__edge-routed')).toHaveCount(dependencies.length);
+  await page.getByRole('button', { name: 'Manual layout', exact: true }).click();
+  await expect(page.locator('.react-flow__edge-routed')).toHaveCount(dependencies.length);
+  await expect.poll(crossings).toEqual([]);
+  await page.screenshot({ path: test.info().outputPath('routed-graph.png'), fullPage: true });
 });
 
 test('node handles connect and disconnect steps through the canvas', async ({ request, page }) => {

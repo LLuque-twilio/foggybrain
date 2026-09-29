@@ -51,6 +51,17 @@
   --graph-selected: #7453a8;
   --graph-selected-border: #442b70;
   --graph-mask: #f7f8f2b3;
+  --graph-action-border: #628a4a;
+  --graph-action-highlight: #3e702e;
+  --graph-action-glow: #82ab5f50;
+  --graph-pr-ready: #287d62;
+  --graph-pr-ready-glow: #4ba18150;
+  --graph-pr-pending: #a67427;
+  --graph-pr-pending-glow: #c99a4f45;
+  --graph-pr-review: #527d9d;
+  --graph-pr-warning: #a67427;
+  --graph-pr-danger: #ae5850;
+  --graph-pr-stale: #91845d;
   --green: var(--accent);
   --serif: Georgia, 'Times New Roman', serif;
 }
@@ -1112,6 +1123,102 @@ h1 {
   border-color: #587d40;
   box-shadow: 0 0 0 3px #819f6430;
 }
+.step-node.is-actionable:not(.is-selected) {
+  border-color: var(--graph-action-border);
+}
+.step-node.is-actionable:not(.is-selected, .is-just-unlocked) {
+  animation: available-border 4s ease-in-out infinite;
+}
+.step-node.is-just-unlocked {
+  border-color: var(--graph-action-border);
+  animation: unlock-border 1.8s ease-out both;
+}
+.step-node.is-just-unlocked .node-start svg {
+  animation: unlock-sparkle 900ms ease-out;
+}
+.step-node.is-pr-ready:not(.is-selected) {
+  border-color: var(--graph-pr-ready);
+  animation: pr-ready-border 4s ease-in-out infinite;
+}
+.step-node.is-pr-checks_pending:not(.is-selected) {
+  border-color: var(--graph-pr-pending);
+  animation: pr-pending-border 4s ease-in-out infinite;
+}
+.step-node.is-pr-under_review:not(.is-selected) {
+  border-color: var(--graph-pr-review);
+}
+.step-node.is-pr-changes_requested:not(.is-selected),
+.step-node.is-pr-blocked:not(.is-selected) {
+  border-color: var(--graph-pr-warning);
+}
+.step-node.is-pr-checks_failing:not(.is-selected),
+.step-node.is-pr-conflicts:not(.is-selected) {
+  border-color: var(--graph-pr-danger);
+}
+.step-node.is-pr-draft:not(.is-selected),
+.step-node.is-pr-stale:not(.is-selected) {
+  border-style: dashed;
+  border-color: var(--graph-pr-stale);
+}
+@keyframes pr-ready-border {
+  0%,
+  70%,
+  100% {
+    border-color: var(--graph-pr-ready);
+    box-shadow: 0 3px 6px #435e2c06;
+  }
+  35% {
+    box-shadow: 0 0 0 3px var(--graph-pr-ready-glow);
+  }
+}
+@keyframes pr-pending-border {
+  0%,
+  70%,
+  100% {
+    border-color: var(--graph-pr-pending);
+    box-shadow: 0 3px 6px #435e2c06;
+  }
+  35% {
+    box-shadow: 0 0 0 2px var(--graph-pr-pending-glow);
+  }
+}
+@keyframes available-border {
+  0%,
+  70%,
+  100% {
+    border-color: var(--graph-action-border);
+    box-shadow: 0 3px 6px #435e2c06;
+  }
+  35% {
+    border-color: var(--graph-action-highlight);
+    box-shadow: 0 0 0 3px var(--graph-action-glow);
+  }
+}
+@keyframes unlock-border {
+  0% {
+    border-color: var(--graph-action-highlight);
+    box-shadow: 0 0 0 0 var(--graph-action-glow);
+  }
+  35% {
+    border-color: var(--graph-action-highlight);
+    box-shadow: 0 0 0 6px var(--graph-action-glow);
+  }
+  100% {
+    border-color: var(--graph-action-border);
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+@keyframes unlock-sparkle {
+  0% {
+    transform: scale(0.75) rotate(-20deg);
+  }
+  50% {
+    transform: scale(1.25) rotate(15deg);
+  }
+  100% {
+    transform: scale(1) rotate(0);
+  }
+}
 .react-flow__node-step.is-connected .step-node {
   border-color: #6e9158;
 }
@@ -1133,6 +1240,9 @@ h1 {
   gap: 6px;
 }
 .node-start {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   padding: 3px 5px;
   border-radius: 4px;
   background: #e8f2d9;
@@ -1253,13 +1363,26 @@ h1 {
   margin-top: 11px;
 }
 .node-progress {
-  height: 2px;
+  display: flex;
+  gap: 3px;
+  height: 5px;
   background: #e4ecd8;
+  border-radius: 3px;
 }
-.node-progress > span {
+.node-progress-segment {
+  flex: 1;
+  min-width: 0;
+  border-radius: 3px;
+  background: #d5e1ca;
+}
+.node-progress-segment.is-complete,
+.node-progress-fill {
+  background: #79975e;
+}
+.node-progress-fill {
   display: block;
   height: 100%;
-  background: #79975e;
+  border-radius: 3px;
 }
 .node-progress-text {
   display: block;
@@ -3601,6 +3724,13 @@ details ul {
   padding: 0;
 }
 @media (prefers-reduced-motion: reduce) {
+  .step-node.is-actionable,
+  .step-node.is-just-unlocked,
+  .step-node.is-pr-ready,
+  .step-node.is-pr-checks_pending,
+  .step-node.is-just-unlocked .node-start svg {
+    animation: none !important;
+  }
   *,
   *:before,
   *:after {
@@ -3646,6 +3776,17 @@ html[data-theme='dark'] {
   --graph-selected: #b59add;
   --graph-selected-border: #dbc8f4;
   --graph-mask: #151b18b8;
+  --graph-action-border: #8bb77d;
+  --graph-action-highlight: #c0e3af;
+  --graph-action-glow: #86bd7759;
+  --graph-pr-ready: #79c4a0;
+  --graph-pr-ready-glow: #79c4a059;
+  --graph-pr-pending: #d5ab61;
+  --graph-pr-pending-glow: #d5ab6150;
+  --graph-pr-review: #8dbadc;
+  --graph-pr-warning: #d5ab61;
+  --graph-pr-danger: #e3928a;
+  --graph-pr-stale: #b5ad8c;
   --green: var(--accent);
   color: var(--text);
   background: var(--canvas);
@@ -3886,6 +4027,9 @@ html[data-theme='dark'] .step-node.is-completed {
   border-color: #466046;
   background: #202e24;
 }
+html[data-theme='dark'] .step-node.is-actionable:not(.is-selected) {
+  border-color: var(--graph-action-border);
+}
 html[data-theme='dark'] .node-start {
   background: #2c442f;
   color: #c7e4ba;
@@ -3893,6 +4037,12 @@ html[data-theme='dark'] .node-start {
 html[data-theme='dark'] .card-progress,
 html[data-theme='dark'] .node-progress {
   background: #334039;
+}
+html[data-theme='dark'] .node-progress-segment {
+  background: #40584a;
+}
+html[data-theme='dark'] .node-progress-segment.is-complete {
+  background: #86b277;
 }
 html[data-theme='dark'] .react-flow__controls-button,
 html[data-theme='dark'] .react-flow__minimap.react-flow__panel {
