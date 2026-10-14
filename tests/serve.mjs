@@ -8,6 +8,8 @@ process.env.FOGGY_DATA_DIR = directory;
 process.env.FOGGY_PORT = '4189';
 process.env.GH_TOKEN = '';
 process.env.GITHUB_TOKEN = '';
+// A background poll with no token stamps a stale error onto PR-gated tasks mid-test.
+process.env.FOGGY_POLL_INTERVAL_MS = '2147483647';
 process.env.GH_CONFIG_DIR = directory;
 for (const key of ['FOGGY_SYNC_REPO', 'FOGGY_SYNC_BRANCH', 'FOGGY_SYNC_PATH', 'FOGGY_SYNC_TOKEN']) {
   delete process.env[key];
