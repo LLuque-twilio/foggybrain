@@ -314,6 +314,65 @@ test('task context opens a Markdown editor and preview dialog', async ({ request
   ).toBeVisible();
 });
 
+test('container graph heading opens, edits and persists the container context', async ({
+  request,
+  page,
+}) => {
+  const container = await create(request, 'Release plan', 'container');
+  await page.goto(`/#/tasks/${container.id}`);
+  await page.getByRole('button', { name: 'Open container context' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Task context' });
+  await dialog.getByLabel('Markdown context').fill('# Rollout\n\n- Stage first');
+  await dialog.getByRole('button', { name: 'Save context' }).click();
+  await expect(dialog).not.toBeVisible();
+  await page.reload();
+  await page.getByRole('button', { name: 'Open container context' }).click();
+  await expect(
+    page
+      .getByRole('dialog', { name: 'Task context' })
+      .getByRole('heading', { name: 'Rollout', exact: true }),
+  ).toBeVisible();
+});
+
+test('context dialog actions stay visible while long content scrolls', async ({
+  request,
+  page,
+}) => {
+  const container = await create(request, 'Long context', 'container');
+  const content = Array.from({ length: 80 }, (_, index) => `- Line ${index + 1}`).join('\n');
+  expect(
+    (await request.put(`/api/tasks/${container.id}/readme`, { data: { content } })).ok(),
+  ).toBeTruthy();
+  await page.goto(`/#/tasks/${container.id}`);
+  await page.getByRole('button', { name: 'Open container context' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Task context' });
+  await expect(dialog.getByText('Line 80')).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Save context' })).toBeInViewport({
+    ratio: 1,
+  });
+  await expect(dialog.getByRole('button', { name: 'Cancel' })).toBeInViewport({ ratio: 1 });
+  await expect
+    .poll(async () => {
+      const footer = await dialog.locator('footer').boundingBox();
+      const shell = await dialog.boundingBox();
+      return footer && shell ? shell.y + shell.height - (footer.y + footer.height) : Infinity;
+    })
+    .toBeLessThanOrEqual(2);
+});
+
+test('copy ID confirmations reset after a short delay', async ({ context, request, page }) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write'], {
+    origin: 'http://127.0.0.1:4189',
+  });
+  const container = await create(request, 'Copy me', 'container');
+  await page.goto(`/#/tasks/${container.id}`);
+  await page.getByRole('button', { name: 'Copy container ID' }).click();
+  await expect(page.getByRole('button', { name: 'Container ID copied' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Copy container ID' })).toBeVisible({
+    timeout: 5000,
+  });
+});
+
 test('legacy task payloads without externalLinks remain selectable and editable', async ({
   request,
   page,

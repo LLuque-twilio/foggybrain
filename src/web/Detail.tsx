@@ -28,6 +28,7 @@ import type {
 } from '../shared';
 import { Button } from './components/ui/button';
 import { Input } from './components/ui/input';
+import { useCopied } from './useCopied';
 import { Textarea } from './components/ui/textarea';
 import { Tooltip, TooltipContent, TooltipTrigger } from './components/ui/tooltip';
 import { Dialog } from './Dialogs';
@@ -79,7 +80,8 @@ export function Detail({
   readme: () => Promise<string>;
   saveReadme: (content: string) => Promise<boolean>;
 }) {
-  const [copied, setCopied] = useState(false);
+  const { copiedText, copy } = useCopied();
+  const copied = copiedText === task.id;
   const [editing, setEditing] = useState<'title' | 'description' | 'links' | 'pr' | null>(null);
   const [title, setTitle] = useState(task.title);
   const [description, setDescription] = useState(task.description);
@@ -185,14 +187,7 @@ export function Detail({
                 variant="link"
                 size="sm"
                 className="text-button"
-                onClick={async () => {
-                  try {
-                    await navigator.clipboard.writeText(task.id);
-                    setCopied(true);
-                  } catch {
-                    setCopied(false);
-                  }
-                }}
+                onClick={() => void copy(task.id)}
               >
                 <Copy size={13} />
                 {copied ? 'ID copied' : 'Copy ID'}
@@ -627,7 +622,7 @@ export function Detail({
   );
 }
 
-function ContextDialog({
+export function ContextDialog({
   content,
   mode,
   busy,
