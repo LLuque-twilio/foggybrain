@@ -10,6 +10,7 @@ import {
   CircleHelp,
   CloudFog,
   Copy,
+  FileText,
   GitPullRequest,
   LayoutGrid,
   Link2,
@@ -41,7 +42,7 @@ import type {
 } from '../shared';
 import { workspaceApi } from './api';
 import { Graph } from './Graph';
-import { Detail } from './Detail';
+import { ContextDialog, Detail } from './Detail';
 import { DependencyDialog } from './DependencyDialog';
 import {
   DeleteDialog,
@@ -56,6 +57,7 @@ import { SyncDialog } from './SyncDialog';
 import { ListView } from './List';
 import { Tooltip, TooltipContent, TooltipTrigger } from './components/ui/tooltip';
 import { TaskDetailSheet } from './TaskDetailSheet';
+import { useCopied } from './useCopied';
 import { Button } from './components/ui/button';
 import { Sheet, SheetContent, SheetTitle } from './components/ui/sheet';
 import { ThemeToggle } from './ThemeToggle';
@@ -119,7 +121,12 @@ export function WorkspaceApp({
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState('');
-  const [copiedContainerId, setCopiedContainerId] = useState<string | null>(null);
+  const { copiedText: copiedContainerId, copy: copyContainerId } = useCopied();
+  const [containerContext, setContainerContext] = useState<{
+    taskId: string;
+    content: string;
+    mode: 'write' | 'preview';
+  } | null>(null);
   const [sidebar, setSidebar] = useState(false);
   const [mobileNavigation, setMobileNavigation] = useState(
     () => window.matchMedia('(max-width: 700px)').matches,
@@ -227,6 +234,16 @@ export function WorkspaceApp({
     } finally {
       mutation.current = false;
       setBusy(false);
+    }
+  }
+
+  async function openContainerContext(taskId: string) {
+    setError('');
+    try {
+      const { content } = await api<{ content: string }>(`/tasks/${taskId}/readme`);
+      setContainerContext({ taskId, content, mode: content ? 'preview' : 'write' });
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'Something went wrong.');
     }
   }
 
@@ -693,14 +710,7 @@ export function WorkspaceApp({
                                 ? 'Container ID copied'
                                 : 'Copy container ID'
                             }
-                            onClick={async () => {
-                              try {
-                                await navigator.clipboard.writeText(current.id);
-                                setCopiedContainerId(current.id);
-                              } catch {
-                                setCopiedContainerId(null);
-                              }
-                            }}
+                            onClick={() => void copyContainerId(current.id)}
                           >
                             {copiedContainerId === current.id ? (
                               <Check size={17} />
@@ -711,6 +721,13 @@ export function WorkspaceApp({
                         </TooltipTrigger>
                         <TooltipContent>{current.id}</TooltipContent>
                       </Tooltip>
+                      <button
+                        className="icon-button"
+                        aria-label="Open container context"
+                        onClick={() => void openContainerContext(current.id)}
+                      >
+                        <FileText size={17} />
+                      </button>
                       <button
                         className="icon-button"
                         aria-label="Edit container"
@@ -915,6 +932,24 @@ export function WorkspaceApp({
                   />
                 )}
               </TaskDetailSheet>
+              {containerContext && (
+                <ContextDialog
+                  content={containerContext.content}
+                  mode={containerContext.mode}
+                  busy={busy}
+                  close={() => setContainerContext(null)}
+                  setMode={(mode) => setContainerContext({ ...containerContext, mode })}
+                  setContent={(content) => setContainerContext({ ...containerContext, content })}
+                  save={async () => {
+                    const saved = await run(() =>
+                      api(`/tasks/${containerContext.taskId}/readme`, 'PUT', {
+                        content: containerContext.content,
+                      }),
+                    );
+                    if (saved) setContainerContext(null);
+                  }}
+                />
+              )}
               <div className="graph-legend">
                 {(['available', 'blocked', 'ready', 'completed'] as const).map((status) => (
                   <span key={status}>
