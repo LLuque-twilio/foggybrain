@@ -2080,7 +2080,15 @@ h1 {
   padding: 18px;
 }
 .context-editor footer {
-  margin-top: 18px;
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  margin: 18px 0 -26px;
+  padding-bottom: 26px;
+  background: #fcfdf8;
+}
+html[data-theme='dark'] .context-editor footer {
+  background: #1c2521;
 }
 .dialog > header {
   display: flex;
@@ -3439,6 +3447,10 @@ details ul {
   }
   .dialog footer {
     gap: 7px;
+  }
+  .context-editor footer {
+    margin-bottom: -22px;
+    padding-bottom: 22px;
   }
   .dialog footer .button {
     font-size: 10px;
