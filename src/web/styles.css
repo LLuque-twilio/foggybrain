@@ -2079,12 +2079,15 @@ h1 {
   background: #f9fbf4;
   padding: 18px;
 }
+.context-editor {
+  --dialog-padding: 26px;
+}
 .context-editor footer {
   position: sticky;
-  bottom: 0;
+  bottom: calc(var(--dialog-padding) * -1);
   z-index: 1;
-  margin: 18px 0 -26px;
-  padding-bottom: 26px;
+  margin: 18px 0 calc(var(--dialog-padding) * -1);
+  padding-bottom: var(--dialog-padding);
   background: #fcfdf8;
 }
 html[data-theme='dark'] .context-editor footer {
@@ -3448,9 +3451,8 @@ details ul {
   .dialog footer {
     gap: 7px;
   }
-  .context-editor footer {
-    margin-bottom: -22px;
-    padding-bottom: 22px;
+  .context-editor {
+    --dialog-padding: 22px;
   }
   .dialog footer .button {
     font-size: 10px;

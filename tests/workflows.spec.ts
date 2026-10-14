@@ -351,6 +351,13 @@ test('context dialog actions stay visible while long content scrolls', async ({
     ratio: 1,
   });
   await expect(dialog.getByRole('button', { name: 'Cancel' })).toBeInViewport({ ratio: 1 });
+  await expect
+    .poll(async () => {
+      const footer = await dialog.locator('footer').boundingBox();
+      const shell = await dialog.boundingBox();
+      return footer && shell ? shell.y + shell.height - (footer.y + footer.height) : Infinity;
+    })
+    .toBeLessThanOrEqual(2);
 });
 
 test('copy ID confirmations reset after a short delay', async ({ context, request, page }) => {
