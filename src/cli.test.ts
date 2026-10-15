@@ -82,11 +82,13 @@ async function fixture(
       body:
         request.path === '/api/state'
           ? snapshot
-          : request.path.endsWith('/deletion-preview')
-            ? preview
-            : request.method === 'DELETE'
-              ? { deleted: ['c', 'a'] }
-              : { id: 'server-id', ...(request.body as object) },
+          : request.path.endsWith('/context') && request.method === 'GET'
+            ? { content: '' }
+            : request.path.endsWith('/deletion-preview')
+              ? preview
+              : request.method === 'DELETE'
+                ? { deleted: ['c', 'a'] }
+                : { id: 'server-id', ...(request.body as object) },
     };
     res.writeHead(result.status ?? 200, { 'Content-Type': 'application/json' });
     res.end(result.raw ? String(result.body) : JSON.stringify(result.body));
@@ -733,6 +735,101 @@ test('CLI workspace validation and server limit/retarget errors preserve machine
     assert.deepEqual(JSON.parse(result.stderr), { error: `HTTP 409: ${error}` });
     assert.equal(server.requests.length, 1);
   }
+});
+
+test('CLI task show includes the server context and context commands use the context endpoint', async (t) => {
+  const stored = new Map<string, string>([['b', '# Notes\nbody']]);
+  const { run, requests } = await fixture(t, ({ method, path, body }) => {
+    const id = path.match(/\/tasks\/([^/]+)\/context/)?.[1];
+    if (id === undefined) return { body: path === '/api/state' ? snapshot : {} };
+    if (method === 'PUT') stored.set(id, (body as { content: string }).content);
+    if (method === 'DELETE') {
+      stored.delete(id);
+      return { body: { ok: true } };
+    }
+    return { body: { content: stored.get(id) ?? '' } };
+  });
+  const shown = await run(['--json', 'task', 'show', 'b']);
+  assert.equal(shown.code, 0);
+  assert.equal(JSON.parse(shown.stdout).context, '# Notes\nbody');
+  assert.equal(JSON.parse((await run(['--json', 'task', 'show', 'a'])).stdout).context, '');
+  assert.deepEqual(requests.slice(0, 2), [
+    { method: 'GET', path: '/api/state' },
+    { method: 'GET', path: '/api/tasks/b/context' },
+  ]);
+  const read = await run(['--json', 'task', 'context', 'show', 'b']);
+  assert.equal(read.code, 0);
+  assert.equal(read.stderr, '');
+  assert.deepEqual(JSON.parse(read.stdout), { content: '# Notes\nbody' });
+  assert.deepEqual(JSON.parse((await run(['task', 'context', 'show', 'a'])).stdout), {
+    content: '',
+  });
+
+  const dir = await mkdtemp(join(tmpdir(), 'foggy-cli-context-'));
+  const file = join(dir, 'context.md');
+  await writeFile(file, 'from file\n');
+  const before = requests.length;
+  const viaContent = await run(['--json', 'task', 'context', 'set', 'a', '--content', 'inline']);
+  assert.deepEqual(JSON.parse(viaContent.stdout), { content: 'inline' });
+  const viaFile = await run(['--json', 'task', 'context', 'set', 'a', '--file', file]);
+  assert.deepEqual(JSON.parse(viaFile.stdout), { content: 'from file\n' });
+  const viaStdin = await run(
+    ['--json', 'task', 'context', 'set', 'a', '--stdin'],
+    {},
+    '# piped\nlines\n',
+  );
+  assert.equal(viaStdin.code, 0);
+  assert.equal(viaStdin.stderr, '');
+  assert.deepEqual(JSON.parse(viaStdin.stdout), { content: '# piped\nlines\n' });
+  assert.deepEqual(
+    requests.slice(before).map(({ method, path, body }) => ({ method, path, body })),
+    [
+      { method: 'PUT', path: '/api/tasks/a/context', body: { content: 'inline' } },
+      { method: 'PUT', path: '/api/tasks/a/context', body: { content: 'from file\n' } },
+      { method: 'PUT', path: '/api/tasks/a/context', body: { content: '# piped\nlines\n' } },
+    ],
+  );
+  const removed = await run(['--json', 'task', 'context', 'delete', 'a']);
+  assert.equal(removed.code, 0);
+  assert.deepEqual(JSON.parse(removed.stdout), { ok: true });
+  assert.equal(stored.has('a'), false);
+  assert.deepEqual(requests.at(-1), { method: 'DELETE', path: '/api/tasks/a/context' });
+});
+
+test('CLI task context honors --workspace and rejects invalid input without writing', async (t) => {
+  const { run, requests } = await fixture(t);
+  await run(['--json', '--workspace', 'w 1', 'task', 'context', 'show', 'a']);
+  await run(['--workspace', 'w 1', 'task', 'context', 'set', 'a', '--content', 'x']);
+  await run(['--workspace', 'w 1', 'task', 'context', 'delete', 'a']);
+  assert.deepEqual(
+    requests.map(({ method, path }) => `${method} ${path}`),
+    [
+      'GET /api/workspaces/w%201/tasks/a/context',
+      'PUT /api/workspaces/w%201/tasks/a/context',
+      'DELETE /api/workspaces/w%201/tasks/a/context',
+    ],
+  );
+  requests.length = 0;
+  const missingFile = join(tmpdir(), 'foggy-missing-context-file.md');
+  for (const args of [
+    ['task', 'context', 'set', 'a'],
+    ['task', 'context', 'set', 'a', '--content', 'x', '--stdin'],
+    ['task', 'context', 'set', 'a', '--content', 'x', '--file', missingFile],
+    ['task', 'context', 'set', 'a', '--file', missingFile],
+    ['task', 'context'],
+    ['task', 'context', 'show'],
+  ]) {
+    const result = await run(['--json', ...args]);
+    assert.equal(result.code, 1, JSON.stringify(args));
+    assert.equal(result.stdout, '', JSON.stringify(args));
+    assert.equal(typeof JSON.parse(result.stderr).error, 'string', JSON.stringify(args));
+  }
+  assert.equal(requests.length, 0);
+  const failed = await fixture(t, () => ({ status: 404, body: { error: 'Task not found' } }));
+  const result = await failed.run(['--json', 'task', 'context', 'show', 'nope']);
+  assert.equal(result.code, 1);
+  assert.equal(result.stdout, '');
+  assert.deepEqual(JSON.parse(result.stderr), { error: 'HTTP 404: Task not found' });
 });
 
 test('CLI list filters ownership/status; show includes children and relationship IDs; graph scopes shared children', async (t) => {

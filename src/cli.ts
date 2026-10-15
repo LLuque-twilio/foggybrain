@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { existsSync, realpathSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { fileURLToPath } from 'node:url';
@@ -13,6 +14,7 @@ import type {
   SyncPreview,
   SyncStatus,
   Tag,
+  TaskContext,
   TaskView,
   UpdateTaskInput,
   UpdateWorkspaceInput,
@@ -444,15 +446,19 @@ export async function main(argv = process.argv): Promise<void> {
     });
   task
     .command('show <id>')
-    .description('Full task plus children, prerequisites, dependents, and relationship records')
+    .description(
+      'Full task plus Markdown context, children, prerequisites, dependents, and relationship records',
+    )
     .action(async (id) => {
       const snapshot = await state();
       const task = taskFrom(snapshot, id);
+      const { content } = await request<TaskContext>(`/tasks/${encodeURIComponent(id)}/context`);
       const dependencies = snapshot.dependencies.filter(
         (edge) => edge.prerequisiteId === id || edge.dependentId === id,
       );
       output({
         ...task,
+        context: content,
         tags: snapshot.tags.filter((tag) => task.tagIds.includes(tag.id)),
         children: snapshot.tasks.filter((child) => task.childrenIds.includes(child.id)),
         prerequisites: snapshot.tasks.filter((candidate) =>
@@ -471,6 +477,53 @@ export async function main(argv = process.argv): Promise<void> {
         ),
       });
     });
+  const context = task
+    .command('context')
+    .description('Read, replace, or delete a task Markdown context document')
+    .action(missingCommand('task context '));
+  context
+    .command('show <id>')
+    .description('Print {"content": "..."}; content is empty when the task has no context')
+    .action(async (id) =>
+      output(await request<TaskContext>(`/tasks/${encodeURIComponent(id)}/context`)),
+    );
+  context
+    .command('set <id>')
+    .description('Replace the context with exactly one of --content, --file, or --stdin')
+    .option('--content <text>', 'context Markdown text (empty text removes the context)')
+    .option('--file <path>', 'read context Markdown from a file')
+    .option('--stdin', 'read context Markdown from standard input')
+    .action(async (id, options) => {
+      const sources = [options.content, options.file, options.stdin].filter(
+        (value) => value !== undefined,
+      );
+      if (sources.length !== 1)
+        throw new Error('Provide exactly one of --content, --file, or --stdin.');
+      let content: string;
+      if (options.content !== undefined) content = options.content;
+      else if (options.file !== undefined) {
+        try {
+          content = await readFile(options.file, 'utf8');
+        } catch (error) {
+          throw new Error(
+            `Cannot read --file ${options.file}: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+      } else {
+        process.stdin.setEncoding('utf8');
+        content = '';
+        for await (const chunk of process.stdin) content += chunk;
+      }
+      output(
+        await request<TaskContext>(`/tasks/${encodeURIComponent(id)}/context`, 'PUT', { content }),
+      );
+    });
+  context
+    .command('delete <id>')
+    .description('Remove the context document')
+    .action(async (id) =>
+      output(await request(`/tasks/${encodeURIComponent(id)}/context`, 'DELETE')),
+    );
   taskTagOptions(task.command('update <id>'))
     .description('Update editable fields; use --description "" to clear a description')
     .option('--title <title>', 'new title')

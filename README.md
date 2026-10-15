@@ -56,7 +56,7 @@ In the UI, create a container, add tasks, and connect prerequisites. Task detail
 
 - Use `--json` for machine-readable output and `foggy --help` to discover commands.
 - The server defaults to `http://127.0.0.1:4173`; override with `--url` or `FOGGY_URL`.
-- The CLI has no task-context command; use the task details UI or the documented task README API.
+- Task Markdown context is managed with `foggy task context show|set|delete`, the task details UI, or the `/tasks/:id/context` API.
 - Before deletion, run `foggy --json task delete TASK_ID --dry-run`, review the impact, and obtain approval before repeating with `--yes` instead of `--dry-run`.
 - Preview and obtain approval before applying state sync. Never blindly retry timed-out writes.
 

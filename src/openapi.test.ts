@@ -350,12 +350,12 @@ test('all operations conform over HTTP with real isolated workspace/domain store
       kind: 'manual',
       prUrl: 'https://github.com/owner/repo/pull/1',
     });
-    assert.deepEqual(await call('GET', `${prefix}/tasks/${task.id}/readme`, 200), { content: '' });
-    assert.deepEqual(
-      await call('PUT', `${prefix}/tasks/${task.id}/readme`, 200, { content: '# Context' }),
-      { content: '# Context' },
-    );
-    assert.deepEqual(await call('DELETE', `${prefix}/tasks/${task.id}/readme`, 200), { ok: true });
+    const contextPath = `${prefix}/tasks/${task.id}/context`;
+    assert.deepEqual(await call('GET', contextPath, 200), { content: '' });
+    assert.deepEqual(await call('PUT', contextPath, 200, { content: '# Context' }), {
+      content: '# Context',
+    });
+    assert.deepEqual(await call('DELETE', contextPath, 200), { ok: true });
     const tag = await call('POST', `${prefix}/tags`, 201, {
       name: 'Release',
       color: '#123456',

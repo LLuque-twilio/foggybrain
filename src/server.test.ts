@@ -1426,3 +1426,31 @@ test('loadEnv false reads nothing from disk, config file included', async () => 
   assert.deepEqual(env, {});
   rmSync(directory, { recursive: true, force: true });
 });
+
+test('task context routes work with and without a workspace prefix', async (t) => {
+  const dataDir = mkdtempSync(join(tmpdir(), 'foggy-context-'));
+  const workspaces = new WorkspaceManager({
+    dataDir,
+    fetch: async () => assert.fail('No network'),
+  });
+  t.after(async () => {
+    await workspaces.close();
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+  const { request } = await fixture(t, { workspaces });
+  const created = await request('/api/workspaces', 'POST', { name: 'Work', type: 'local' });
+  for (const prefix of ['/api', `/api/workspaces/${created.body.id}`]) {
+    const task = (await request(`${prefix}/tasks`, 'POST', { title: 'T', kind: 'manual' })).body;
+    const context = `${prefix}/tasks/${task.id}/context`;
+    assert.deepEqual((await request(context)).body, { content: '' });
+    const put = await request(context, 'PUT', { content: '# Notes' });
+    assert.equal(put.status, 200);
+    assert.deepEqual(put.body, { content: '# Notes' });
+    assert.deepEqual((await request(context)).body, { content: '# Notes' });
+    assert.deepEqual((await request(context, 'DELETE')).body, { ok: true });
+    assert.deepEqual((await request(context)).body, { content: '' });
+    assert.equal((await request(`${prefix}/tasks/${task.id}/readme`)).status, 404);
+    assert.equal((await request(context, 'PUT', { content: 5 })).status, 400);
+    assert.equal((await request(`${prefix}/tasks/missing/context`)).status, 404);
+  }
+});

@@ -341,7 +341,7 @@ test('context dialog actions stay visible while long content scrolls', async ({
   const container = await create(request, 'Long context', 'container');
   const content = Array.from({ length: 80 }, (_, index) => `- Line ${index + 1}`).join('\n');
   expect(
-    (await request.put(`/api/tasks/${container.id}/readme`, { data: { content } })).ok(),
+    (await request.put(`/api/tasks/${container.id}/context`, { data: { content } })).ok(),
   ).toBeTruthy();
   await page.goto(`/#/tasks/${container.id}`);
   await page.getByRole('button', { name: 'Open container context' }).click();

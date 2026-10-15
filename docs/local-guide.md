@@ -121,7 +121,7 @@ State paths list safe JSON file candidates from the selected branch, without rea
 
 Open **Settings** to view the selected workspace's name, storage type, repository, branch, state path, and credential mode, or to rename, connect, retarget, and add workspaces. **Change cloud target** prepopulates the current values and requires confirmation before saving.
 
-Create/connect/retarget API mutations only store configuration, with **no remote reads or writes**; the UI's separate repository discovery performs read-only GitHub requests before saving. After cloud creation, connection, or retargeting, the UI opens and fetches a new sync preview. Review the graph and README changes and explicitly confirm **Apply sync** to load existing cloud state or publish local changes; the graph refreshes after apply. Failed previews leave the configuration saved and display an error. For an already-connected workspace, open **Workspace sync** and choose **Preview sync**. Reloading alone does not import remote tasks.
+Create/connect/retarget API mutations only store configuration, with **no remote reads or writes**; the UI's separate repository discovery performs read-only GitHub requests before saving. After cloud creation, connection, or retargeting, the UI opens and fetches a new sync preview. Review the graph and context changes and explicitly confirm **Apply sync** to load existing cloud state or publish local changes; the graph refreshes after apply. Failed previews leave the configuration saved and display an error. For an already-connected workspace, open **Workspace sync** and choose **Preview sync**. Reloading alone does not import remote tasks.
 
 From the CLI, create an empty cloud workspace, then run `--workspace ID sync preview` and apply only after review to fetch existing remote state. To publish local state, connect a local workspace to an unused remote file path, then review/apply. Use the same workspace ID throughout. See [workspace CLI details](cli.md#workspaces) and the safeguards below.
 
@@ -136,7 +136,7 @@ From the CLI, create an empty cloud workspace, then run `--workspace ID sync pre
 
 Ownership and references are different. A task has at most one owning parent. A reference makes the **same task**, not a copy, a child of another container without moving it. Both kinds of membership count toward container completion. Duplicate membership and effective cycles involving containment, references, and prerequisites are rejected by the server.
 
-Each task can also keep optional Markdown **Context**, separate from its short description and completion fields. Open task details, choose **Add context** or **Edit**, then switch between **Write** and **Preview**. Saving empty content removes the context. The server stores it as a task README sidecar outside SQLite; it is not embedded in `TaskView` or the portable graph manifest, and it never affects completion.
+Each task can also keep optional Markdown **Context**, separate from its short description and completion fields. Open task details, choose **Add context** or **Edit**, then switch between **Write** and **Preview**. Saving empty content removes the context. The server stores it as a task context sidecar outside SQLite; it is not embedded in `TaskView` or the portable graph manifest, and it never affects completion.
 
 ## Using The UI
 
@@ -225,7 +225,7 @@ One token can cover multiple workspace files in the same repository. Permissions
 
 ## Manual State Sync
 
-Optional manual state sync shares a versioned task graph and task Markdown context through a **private GitHub state repository**, separate from `github sync` PR polling. The server uses GitHub's Contents API for reads and Git Database API for atomic manifest/README commits, not a git CLI or local clone.
+Optional manual state sync shares a versioned task graph and task Markdown context through a **private GitHub state repository**, separate from `github sync` PR polling. The server uses GitHub's Contents API for reads and Git Database API for atomic manifest/context commits, not a git CLI or local clone.
 
 1. Create or choose a dedicated private state repository and an **existing branch** (default `main`). Initialize the repository first if it has no branch.
 2. Prefer a dedicated fine-grained token restricted to **only that selected private state repository**, with **Contents: read and write** (and Metadata read). Obtain organization approval if required. Dedicated mode uses `FOGGY_SYNC_TOKEN` without fallback. Alternatively, workspace create/connect with explicit `--credential github` opts into server GitHub credential reuse (`GH_TOKEN`, `GITHUB_TOKEN`, or `gh auth token`); that credential must have Contents read/write on the state repository. Reuse is never automatic.
@@ -245,7 +245,7 @@ pnpm --silent run foggy --json sync status
 pnpm --silent run foggy --json sync preview
 ```
 
-5. Review `localChanges`, `remoteChanges`, `conflicts`, `validationError`, and `canApply`. Change lists may include `collection: "readmes"`; resolve each task ID before reporting the impact. README conflicts use `readmes/TASK_ID` and contain the complete base, local, and remote Markdown values. A conflicted or blocked preview still exits `0`. If appropriate, request a new preview with `sync preview --resolve local` or `--resolve remote` and review it again. Resolution chooses that side for every conflict, including README content; it is not a force overwrite and cannot bypass graph validation or a missing baseline.
+5. Review `localChanges`, `remoteChanges`, `conflicts`, `validationError`, and `canApply`. Change lists may include `collection: "readmes"`; resolve each task ID before reporting the impact. context conflicts use `readmes/TASK_ID` and contain the complete base, local, and remote Markdown values. A conflicted or blocked preview still exits `0`. If appropriate, request a new preview with `sync preview --resolve local` or `--resolve remote` and review it again. Resolution chooses that side for every conflict, including context content; it is not a force overwrite and cannot bypass graph validation or a missing baseline.
 6. Only after authorization, apply the exact returned `previewId` from the reviewed preview with `canApply: true`:
 
 ```sh
@@ -260,7 +260,7 @@ The UI offers the same review-and-confirm workflow under **Workspace sync** in t
 
 For first sync, an empty local graph can pull remote state, or a missing remote file can receive local state. Two nonempty sides without a shared baseline are blocked. Preserve both: use a separate new local data directory for a pull or a distinct unused remote path for an independent publication, rather than wiping existing data.
 
-Portable `version: 3` JSON includes editable task fields and external links, custom tags, tag memberships, dependencies, and references. It excludes task README content, the canonical Favorites definition, PR verification, derived completion, layouts, and timestamps. For target `work/work.json`, task context syncs separately at `work/tasks/{task-id}.md`; apply publishes the manifest and managed sidecars in one commit without touching unrelated files. Version 1 and 2 inputs upgrade in memory with empty external-link lists. PR state is reverified locally by server polling. SQLite holds the sync baseline and automatic full graph backups in `foggybrain_sync_backups`; README sidecars are not included in those backup rows. There is no restore API or automatic pruning. Keep independent backups of the whole data directory. **Git history and local backups retain deleted sensitive information**; deleting a task is not secure erasure. See [manual sync CLI details](cli.md#manual-state-sync) for response fields and recovery safeguards.
+Portable `version: 3` JSON includes editable task fields and external links, custom tags, tag memberships, dependencies, and references. It excludes task context content, the canonical Favorites definition, PR verification, derived completion, layouts, and timestamps. For target `work/work.json`, task context syncs separately at `work/tasks/{task-id}.md`; apply publishes the manifest and managed sidecars in one commit without touching unrelated files. Version 1 and 2 inputs upgrade in memory with empty external-link lists. PR state is reverified locally by server polling. SQLite holds the sync baseline and automatic full graph backups in `foggybrain_sync_backups`; context sidecars are not included in those backup rows. There is no restore API or automatic pruning. Keep independent backups of the whole data directory. **Git history and local backups retain deleted sensitive information**; deleting a task is not secure erasure. See [manual sync CLI details](cli.md#manual-state-sync) for response fields and recovery safeguards.
 
 ## Configuration And Data
 

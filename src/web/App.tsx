@@ -240,7 +240,7 @@ export function WorkspaceApp({
   async function openContainerContext(taskId: string) {
     setError('');
     try {
-      const { content } = await api<{ content: string }>(`/tasks/${taskId}/readme`);
+      const { content } = await api<{ content: string }>(`/tasks/${taskId}/context`);
       setContainerContext({ taskId, content, mode: content ? 'preview' : 'write' });
     } catch (error) {
       setError(error instanceof Error ? error.message : 'Something went wrong.');
@@ -657,12 +657,12 @@ export function WorkspaceApp({
                 renameTag={renameTag}
                 deleteTag={previewTagDelete}
                 readme={() =>
-                  api<{ content: string }>(`/tasks/${task.id}/readme`).then(
+                  api<{ content: string }>(`/tasks/${task.id}/context`).then(
                     (result) => result.content,
                   )
                 }
                 saveReadme={(content) =>
-                  run(() => api(`/tasks/${task.id}/readme`, 'PUT', { content }))
+                  run(() => api(`/tasks/${task.id}/context`, 'PUT', { content }))
                 }
               />
             )}
@@ -922,12 +922,12 @@ export function WorkspaceApp({
                     renameTag={renameTag}
                     deleteTag={previewTagDelete}
                     readme={() =>
-                      api<{ content: string }>(`/tasks/${selected.id}/readme`).then(
+                      api<{ content: string }>(`/tasks/${selected.id}/context`).then(
                         (result) => result.content,
                       )
                     }
                     saveReadme={(content) =>
-                      run(() => api(`/tasks/${selected.id}/readme`, 'PUT', { content }))
+                      run(() => api(`/tasks/${selected.id}/context`, 'PUT', { content }))
                     }
                   />
                 )}
@@ -942,7 +942,7 @@ export function WorkspaceApp({
                   setContent={(content) => setContainerContext({ ...containerContext, content })}
                   save={async () => {
                     const saved = await run(() =>
-                      api(`/tasks/${containerContext.taskId}/readme`, 'PUT', {
+                      api(`/tasks/${containerContext.taskId}/context`, 'PUT', {
                         content: containerContext.content,
                       }),
                     );

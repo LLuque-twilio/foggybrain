@@ -138,14 +138,15 @@ foggy task show <id>
 
 Returns all task fields, plus:
 
-| Field           | Contents                                                                               |
-| --------------- | -------------------------------------------------------------------------------------- |
-| `children`      | Immediate owned and referenced children as `TaskView[]`.                               |
-| `prerequisites` | Direct prerequisite tasks as `TaskView[]`, including completed prerequisites.          |
-| `dependents`    | Direct tasks depending on this task, as `TaskView[]`.                                  |
-| `dependencies`  | All dependency records touching the task, including IDs needed for removal.            |
-| `references`    | References whose container or target is this task, including IDs needed for unlinking. |
-| `tags`          | Tag objects resolved from the task's `tagIds`, in workspace tag order.                 |
+| Field           | Contents                                                                                                 |
+| --------------- | -------------------------------------------------------------------------------------------------------- |
+| `children`      | Immediate owned and referenced children as `TaskView[]`.                                                 |
+| `prerequisites` | Direct prerequisite tasks as `TaskView[]`, including completed prerequisites.                            |
+| `dependents`    | Direct tasks depending on this task, as `TaskView[]`.                                                    |
+| `dependencies`  | All dependency records touching the task, including IDs needed for removal.                              |
+| `references`    | References whose container or target is this task, including IDs needed for unlinking.                   |
+| `tags`          | Tag objects resolved from the task's `tagIds`, in workspace tag order.                                   |
+| `context`       | The task's Markdown context string, or `""` when none exists (fetched from the server context endpoint). |
 
 The original `waitingOn` is only the IDs of incomplete direct prerequisites. `childrenIds` includes owned and referenced children. The extra arrays are drawn from the same snapshot. Unknown IDs fail instead of returning an empty success.
 
@@ -173,15 +174,31 @@ Use `--pr URL` to attach or replace a manual task's PR gate, or `--remove-pr` to
 
 ### Markdown Context
 
-Each task can have one optional Markdown README/context document, separate from its description and `TaskView`. The CLI has no README command. Use the task details **Context** editor, or the documented API when automation explicitly needs to read or update it:
+Each task can have one optional Markdown context document, separate from its description and `TaskView`. `task show` includes it as `context`; the commands below read and change it directly.
 
 ```text
-GET    /api/tasks/:id/readme
-PUT    /api/tasks/:id/readme       {"content":"..."}
-DELETE /api/tasks/:id/readme
+foggy task context show <id>
+foggy task context set <id> (--content <text> | --file <path> | --stdin)
+foggy task context delete <id>
 ```
 
-With an explicit workspace, use `/api/workspaces/:workspaceId/tasks/:id/readme` and keep the same workspace selection used for the task. `GET` returns `{"content":""}` when no context exists; `PUT` replaces the complete document and empty content removes it; `DELETE` returns `{"ok":true}`. Read before replacing, use server-returned IDs, and never edit sidecar files directly. Task deletion removes context for every task in its owned deletion set. The API's 256kb JSON request limit applies even though stored and synced README content supports up to 1 MB.
+- `show` prints `{"content":"..."}`; `content` is `""` when the task has no context.
+- `set` requires exactly one input source. `--content` takes the text inline, `--file` reads a file, and `--stdin` reads standard input to end of input (use it from agents without a TTY, for example `foggy --json task context set ID --stdin < notes.md`). It replaces the complete document and prints `{"content":"..."}`; empty content removes the context. Read before replacing.
+- `delete` removes the context and prints `{"ok":true}`.
+
+All three honor `--workspace` / `FOGGY_WORKSPACE`, require an existing task, and follow the usual conventions: one JSON value on stdout and exit `0`, or `{"error":"..."}` on stderr and exit `1`. The CLI never keeps local state; the server owns the document.
+
+The same operations are available over HTTP:
+
+```text
+GET    /api/tasks/:id/context
+PUT    /api/tasks/:id/context       {"content":"..."}
+DELETE /api/tasks/:id/context
+```
+
+With an explicit workspace, use `/api/workspaces/:workspaceId/tasks/:id/context` and keep the same workspace selection used for the task. `GET` returns `{"content":""}` when no context exists; `PUT` replaces the complete document; `DELETE` returns `{"ok":true}`. Use server-returned IDs and never edit sidecar files directly. Task deletion removes context for every task in its owned deletion set. The API's 256kb JSON request limit applies even though stored and synced context supports up to 1 MB.
+
+Storage and sync names keep the historical wording: context lives in sidecar files in a `workspace-<id>-tasks/` directory, sync preview/conflict entries use the `readmes` collection and `readmes/TASK_ID` paths, and synced files are `tasks/{task-id}.md`.
 
 ### Done And Reopen
 
@@ -341,13 +358,13 @@ foggy --json sync apply <preview-id> --yes
 | `sync preview`        | `POST /api/sync/preview` with `{}` or `{resolution:"local"}` / `{resolution:"remote"}` | `SyncPreview`                                                  |
 | `sync apply ID --yes` | `POST /api/sync/apply` with `{previewId:ID, confirm:true}`                             | `SyncStatus`                                                   |
 
-`target` contains `{repo, branch, path}` (or is null in unconfigured status). Status is local inspection, not proof of current remote access or equality. `dirty` compares local portable state and task README sidecars with the saved baseline and includes pending reconciliation; `syncing` indicates an active server operation.
+`target` contains `{repo, branch, path}` (or is null in unconfigured status). Status is local inspection, not proof of current remote access or equality. `dirty` compares local portable state and task context sidecars with the saved baseline and includes pending reconciliation; `syncing` indicates an active server operation.
 
-A preview returns `previewId`, `mode` (`merge` or `revert`), `target`, `localChanges`, `remoteChanges`, `conflicts`, `validationError`, `canApply`, and `resolution`. Changes describe what would change on each side, with `collection`, `id`, optional `title`, and `kind` (`added`, `updated`, `deleted`). `collection` can be `tasks`, `dependencies`, `references`, `tags`, or `readmes`; README entries use the task ID and may omit `title`, so resolve that ID before reporting impact. Conflicts include `path`, `base`, `local`, and `remote`; README conflicts use `readmes/TASK_ID` and contain complete Markdown values. **A preview with conflicts or validation errors is successful inspection: exit `0` is not permission to apply.** Review both change lists, all conflicts, `canApply`, and `validationError` before authorization.
+A preview returns `previewId`, `mode` (`merge` or `revert`), `target`, `localChanges`, `remoteChanges`, `conflicts`, `validationError`, `canApply`, and `resolution`. Changes describe what would change on each side, with `collection`, `id`, optional `title`, and `kind` (`added`, `updated`, `deleted`). `collection` can be `tasks`, `dependencies`, `references`, `tags`, or `readmes`; context entries use the task ID and may omit `title`, so resolve that ID before reporting impact. Conflicts include `path`, `base`, `local`, and `remote`; context conflicts use `readmes/TASK_ID` and contain complete Markdown values. **A preview with conflicts or validation errors is successful inspection: exit `0` is not permission to apply.** Review both change lists, all conflicts, `canApply`, and `validationError` before authorization.
 
 ### Revert To Origin
 
-`sync preview --revert` sends `{mode:"revert"}` and freshly fetches the configured repository, branch, manifest, and task README sidecars. Unlike `--resolve remote`, it proposes discarding all local differences and replacing the graph and task context exactly with remote state. It never writes to GitHub. The manifest must exist and contain valid portable state; valid empty remote state can remove all local tasks and context. Missing manifests and uncertain pending uploads block revert. `--revert` and `--resolve` are mutually exclusive.
+`sync preview --revert` sends `{mode:"revert"}` and freshly fetches the configured repository, branch, manifest, and task context sidecars. Unlike `--resolve remote`, it proposes discarding all local differences and replacing the graph and task context exactly with remote state. It never writes to GitHub. The manifest must exist and contain valid portable state; valid empty remote state can remove all local tasks and context. Missing manifests and uncertain pending uploads block revert. `--revert` and `--resolve` are mutually exclusive.
 
 ```sh
 foggy --json --workspace WORKSPACE_ID sync preview --revert
@@ -355,9 +372,9 @@ foggy --json --workspace WORKSPACE_ID sync preview --revert
 foggy --json --workspace WORKSPACE_ID sync apply REVIEWED_PREVIEW_ID --yes
 ```
 
-Apply refetches and checks the reviewed revision and README sidecars, rejects concurrent local changes, and backs up the full SQLite graph snapshot before graph/context replacement and baseline update. README sidecars are not included in that SQLite backup row. Layouts and matching PR verification are preserved using normal import rules. A new preview replaces the old one; apply consumes it. After failures/timeouts, inspect state and re-preview, because local replacement may already have committed. The UI exposes the same flow through **Workspace sync > Revert to origin**. This restores from GitHub, not from a local backup.
+Apply refetches and checks the reviewed revision and context sidecars, rejects concurrent local changes, and backs up the full SQLite graph snapshot before graph/context replacement and baseline update. context sidecars are not included in that SQLite backup row. Layouts and matching PR verification are preserved using normal import rules. A new preview replaces the old one; apply consumes it. After failures/timeouts, inspect state and re-preview, because local replacement may already have committed. The UI exposes the same flow through **Workspace sync > Revert to origin**. This restores from GitHub, not from a local backup.
 
-`--resolve local` or `--resolve remote` chooses that side for every conflicting value, including complete README documents, while retaining nonconflicting changes from both sides. It creates a new preview, not a whole-state replacement or force override. Conflicts remain visible even when resolved. Invalid merged graphs and missing common baselines still block apply.
+`--resolve local` or `--resolve remote` chooses that side for every conflicting value, including complete context documents, while retaining nonconflicting changes from both sides. It creates a new preview, not a whole-state replacement or force override. Conflicts remain visible even when resolved. Invalid merged graphs and missing common baselines still block apply.
 
 ```sh
 foggy --json sync status
@@ -376,7 +393,7 @@ Preview IDs are process-local, single-use tokens, not durable approvals. A newer
 
 On first sync, an empty local graph can pull existing remote state, or a missing remote file can receive local state. If both sides are nonempty without a shared baseline, apply is blocked even with `--resolve`. Preserve existing data: use a separate new local data directory to inspect/pull remote state or a distinct unused remote path to publish an independent graph. Do not wipe either side to bypass the guard.
 
-The versioned JSON (`version: 3`) contains editable task fields including external links, custom tag definitions, tag memberships, and dependency/reference records, not task README content, PR verification, derived completion, layouts, timestamps, or the canonical Favorites definition. For a target `work/work.json`, README sidecars sync separately at `work/tasks/{task-id}.md`; paths are derived and never stored in the manifest. Version 1 and 2 inputs upgrade with empty external-link lists. PR state is reverified locally by server polling; remote JSON cannot assert a verified merge. Manifest JSON uses two-space indentation and a trailing newline. The server persists its baseline in SQLite and makes automatic full graph backups in `foggybrain_sync_backups`; README sidecars are not included in those rows. There is no restore API or automatic backup pruning. Keep independent backups of the full data directory. Sync reads with GitHub's Contents API and publishes the manifest plus managed README sidecars atomically with the Git Database API, without a local git CLI or clone. Deleting sensitive text from current state does not remove it from history or backups.
+The versioned JSON (`version: 3`) contains editable task fields including external links, custom tag definitions, tag memberships, and dependency/reference records, not task context content, PR verification, derived completion, layouts, timestamps, or the canonical Favorites definition. For a target `work/work.json`, context sidecars sync separately at `work/tasks/{task-id}.md`; paths are derived and never stored in the manifest. Version 1 and 2 inputs upgrade with empty external-link lists. PR state is reverified locally by server polling; remote JSON cannot assert a verified merge. Manifest JSON uses two-space indentation and a trailing newline. The server persists its baseline in SQLite and makes automatic full graph backups in `foggybrain_sync_backups`; context sidecars are not included in those rows. There is no restore API or automatic backup pruning. Keep independent backups of the full data directory. Sync reads with GitHub's Contents API and publishes the manifest plus managed context sidecars atomically with the Git Database API, without a local git CLI or clone. Deleting sensitive text from current state does not remove it from history or backups.
 
 ### Diagnosing Failures
 
@@ -390,7 +407,7 @@ foggy --json --workspace WORKSPACE_ID sync preview
 
 Status reads local configuration and baseline bookkeeping only; it does not contact GitHub or retain the last error. Preview reads GitHub without changing either graph or writing a remote file, but replaces the previous process-local preview. Inspect both change lists, `conflicts`, `validationError`, and `canApply`. A successful preview cannot verify write permission or prove that an earlier upload succeeded. Do not use apply as a diagnostic probe.
 
-Request failures name the phase, including repository/branch/manifest/README reads and Git reference, commit, blob, or tree writes, with the upstream HTTP status when available. HTTP 401 suggests checking credential validity/expiry; 403 suggests permissions, organization/SSO approval, rate limits, or branch rules; 404 suggests checking the target and private-resource access. A missing state-file GET 404 remains normal bootstrap behavior, not an error. HTTP 409 requires a fresh reviewed preview; 422 also calls for checking the target and branch rules. For 429 or 5xx, wait and check rate limits or GitHub service health before re-previewing. These are static diagnostic suggestions, not a definitive explanation from GitHub.
+Request failures name the phase, including repository/branch/manifest/context reads and Git reference, commit, blob, or tree writes, with the upstream HTTP status when available. HTTP 401 suggests checking credential validity/expiry; 403 suggests permissions, organization/SSO approval, rate limits, or branch rules; 404 suggests checking the target and private-resource access. A missing state-file GET 404 remains normal bootstrap behavior, not an error. HTTP 409 requires a fresh reviewed preview; 422 also calls for checking the target and branch rules. For 429 or 5xx, wait and check rate limits or GitHub service health before re-previewing. These are static diagnostic suggestions, not a definitive explanation from GitHub.
 
 Timeouts identify the server's overall 10-second sync deadline; transport failures suggest checking the server's network, DNS, TLS, and proxy connectivity. Messages intentionally omit upstream bodies, status text, URLs, tokens, and raw exceptions. After a write failure, never blindly retry: the upload may have committed, and retained upload intent may require reconciliation. Obtain authorization before applying a newly reviewed preview.
 
@@ -527,6 +544,6 @@ For ordinary work: inspect `graph`/`task show`, choose `available` work, perform
 
 ## Data Shapes
 
-`TaskView` includes `id`, `title`, `description`, `kind`, `parentId`, `manualDone`, `prUrl`, `prState`, `prMergeStatus`, `prCheckedAt`, `prError`, `externalLinks`, `tagIds`, `createdAt`, `updatedAt`, `status`, `ownSatisfied`, `waitingOn`, and `childrenIds`. Task Markdown context is read separately through the README API and is not a `TaskView` field. `Snapshot` also includes workspace `tags`; each tag has `id`, `name`, `color`, and `system`. Nullable fields are returned as JSON `null`, not empty IDs. The CLI forwards server-created and server-computed fields rather than synthesizing completion or IDs.
+`TaskView` includes `id`, `title`, `description`, `kind`, `parentId`, `manualDone`, `prUrl`, `prState`, `prMergeStatus`, `prCheckedAt`, `prError`, `externalLinks`, `tagIds`, `createdAt`, `updatedAt`, `status`, `ownSatisfied`, `waitingOn`, and `childrenIds`. Task Markdown context is read through `task context show` (or `task show`'s `context` field) and is not a `TaskView` field. `Snapshot` also includes workspace `tags`; each tag has `id`, `name`, `color`, and `system`. Nullable fields are returned as JSON `null`, not empty IDs. The CLI forwards server-created and server-computed fields rather than synthesizing completion or IDs.
 
 Authoritative TypeScript shapes are in [`src/shared.ts`](../src/shared.ts); the generated [`openapi.json`](../openapi.json) is the HTTP reference, and [`CONTRACT.md`](../CONTRACT.md) defines semantic guarantees. See the [API maintainer guide](api.md) for generation and validation boundaries. Task create/update/done/reopen return the server `TaskView`; relationship additions return the server relationship record; removal results and GitHub payloads are passed through unchanged. Consumers should use named fields and relationship IDs rather than depending on array ordering.

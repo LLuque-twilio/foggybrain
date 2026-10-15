@@ -337,7 +337,7 @@ export interface DeleteTaskResponse {
 }
 
 /** Markdown stored separately from the portable task manifest. */
-export interface TaskReadme {
+export interface TaskContext {
   content: string;
 }
 
