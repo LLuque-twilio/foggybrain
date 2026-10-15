@@ -769,10 +769,10 @@
         "x-query-policy": "undeclared-ignored"
       }
     },
-    "/api/tasks/{id}/readme": {
+    "/api/tasks/{id}/context": {
       "get": {
-        "operationId": "getTaskReadme",
-        "summary": "Read a task Markdown README",
+        "operationId": "getTaskContext",
+        "summary": "Read a task Markdown context",
         "description": "Uses the persisted default workspace; returns 404 when none exists. See CONTRACT.md for state-dependent validation and semantics.",
         "parameters": [
           {
@@ -793,7 +793,7 @@
               }
             },
             "content": {
-              "application/json": { "schema": { "$ref": "#/components/schemas/TaskReadme" } }
+              "application/json": { "schema": { "$ref": "#/components/schemas/TaskContext" } }
             }
           },
           "400": {
@@ -848,8 +848,8 @@
         "x-query-policy": "undeclared-ignored"
       },
       "put": {
-        "operationId": "saveTaskReadme",
-        "summary": "Save a task Markdown README",
+        "operationId": "saveTaskContext",
+        "summary": "Save a task Markdown context",
         "description": "Uses the persisted default workspace; returns 404 when none exists. See CONTRACT.md for state-dependent validation and semantics.",
         "parameters": [
           {
@@ -870,7 +870,7 @@
               }
             },
             "content": {
-              "application/json": { "schema": { "$ref": "#/components/schemas/TaskReadme" } }
+              "application/json": { "schema": { "$ref": "#/components/schemas/TaskContext" } }
             }
           },
           "400": {
@@ -926,13 +926,13 @@
         "requestBody": {
           "required": true,
           "content": {
-            "application/json": { "schema": { "$ref": "#/components/schemas/TaskReadme" } }
+            "application/json": { "schema": { "$ref": "#/components/schemas/TaskContext" } }
           }
         }
       },
       "delete": {
-        "operationId": "deleteTaskReadme",
-        "summary": "Delete a task Markdown README",
+        "operationId": "deleteTaskContext",
+        "summary": "Delete a task Markdown context",
         "description": "Uses the persisted default workspace; returns 404 when none exists. See CONTRACT.md for state-dependent validation and semantics.",
         "parameters": [
           {
@@ -3094,10 +3094,10 @@
         "x-query-policy": "undeclared-ignored"
       }
     },
-    "/api/workspaces/{workspaceId}/tasks/{id}/readme": {
+    "/api/workspaces/{workspaceId}/tasks/{id}/context": {
       "get": {
-        "operationId": "getTaskReadmeScoped",
-        "summary": "Read a task Markdown README",
+        "operationId": "getTaskContextScoped",
+        "summary": "Read a task Markdown context",
         "description": "Uses only the explicitly selected workspace. See CONTRACT.md for state-dependent validation and semantics.",
         "parameters": [
           {
@@ -3125,7 +3125,7 @@
               }
             },
             "content": {
-              "application/json": { "schema": { "$ref": "#/components/schemas/TaskReadme" } }
+              "application/json": { "schema": { "$ref": "#/components/schemas/TaskContext" } }
             }
           },
           "400": {
@@ -3180,8 +3180,8 @@
         "x-query-policy": "undeclared-ignored"
       },
       "put": {
-        "operationId": "saveTaskReadmeScoped",
-        "summary": "Save a task Markdown README",
+        "operationId": "saveTaskContextScoped",
+        "summary": "Save a task Markdown context",
         "description": "Uses only the explicitly selected workspace. See CONTRACT.md for state-dependent validation and semantics.",
         "parameters": [
           {
@@ -3209,7 +3209,7 @@
               }
             },
             "content": {
-              "application/json": { "schema": { "$ref": "#/components/schemas/TaskReadme" } }
+              "application/json": { "schema": { "$ref": "#/components/schemas/TaskContext" } }
             }
           },
           "400": {
@@ -3265,13 +3265,13 @@
         "requestBody": {
           "required": true,
           "content": {
-            "application/json": { "schema": { "$ref": "#/components/schemas/TaskReadme" } }
+            "application/json": { "schema": { "$ref": "#/components/schemas/TaskContext" } }
           }
         }
       },
       "delete": {
-        "operationId": "deleteTaskReadmeScoped",
-        "summary": "Delete a task Markdown README",
+        "operationId": "deleteTaskContextScoped",
+        "summary": "Delete a task Markdown context",
         "description": "Uses only the explicitly selected workspace. See CONTRACT.md for state-dependent validation and semantics.",
         "parameters": [
           {
@@ -6222,7 +6222,7 @@
         "required": ["deleted"],
         "additionalProperties": false
       },
-      "TaskReadme": {
+      "TaskContext": {
         "type": "object",
         "properties": { "content": { "type": "string" } },
         "required": ["content"],

@@ -1,4 +1,4 @@
-import express, { type ErrorRequestHandler, type Request } from 'express';
+import express, { type ErrorRequestHandler, type Request, type RequestHandler } from 'express';
 import { config as loadDotenv } from 'dotenv';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -300,19 +300,22 @@ function domainRoutes(
       throw new HttpError(400, 'favorite must be a boolean.');
     res.json(store.updateTask(id(req), body as UpdateTaskInput));
   });
-  app.get('/tasks/:id/readme', (req, res) => {
+  const readContext: RequestHandler = (req, res) => {
     res.json({ content: store.readme(id(req)) });
-  });
-  app.put('/tasks/:id/readme', (req, res) => {
+  };
+  const saveContext: RequestHandler = (req, res) => {
     const body = object(req.body, ['content']);
     stringField(body, 'content');
     store.saveReadme(id(req), body.content);
     res.json({ content: body.content });
-  });
-  app.delete('/tasks/:id/readme', (req, res) => {
+  };
+  const deleteContext: RequestHandler = (req, res) => {
     store.saveReadme(id(req), '');
     res.json({ ok: true });
-  });
+  };
+  app.get('/tasks/:id/context', readContext);
+  app.put('/tasks/:id/context', saveContext);
+  app.delete('/tasks/:id/context', deleteContext);
   app.post('/tasks/:id/connections', (req, res) => {
     res.status(201).json(store.connectTask(id(req), req.body));
   });

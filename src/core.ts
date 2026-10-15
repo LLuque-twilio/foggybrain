@@ -686,9 +686,9 @@ export class Store {
 
   saveReadme(id: string, content: unknown): void {
     taskById(this.read(), id);
-    if (typeof content !== 'string') throw new DomainError('README content must be a string');
+    if (typeof content !== 'string') throw new DomainError('Context content must be a string');
     if (Buffer.byteLength(content) > 1024 * 1024)
-      throw new DomainError('README content must be at most 1 MB');
+      throw new DomainError('Context content must be at most 1 MB');
     this.writeReadme(id, content);
   }
 
@@ -713,7 +713,7 @@ export class Store {
     const ids = new Set(taskIds);
     for (const [id, content] of Object.entries(readmes)) {
       if (!ids.has(id) || typeof content !== 'string' || Buffer.byteLength(content) > 1024 * 1024)
-        throw new DomainError('Invalid README sync content');
+        throw new DomainError('Invalid context sync content');
     }
     for (const id of ids) this.writeReadme(id, readmes[id] ?? '');
   }
