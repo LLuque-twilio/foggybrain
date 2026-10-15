@@ -1,6 +1,6 @@
 {
   "name": "foggybrain",
-  "version": "0.8.4",
+  "version": "0.8.5",
   "private": true,
   "license": "MIT",
   "packageManager": "pnpm@10.14.0",
