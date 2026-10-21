@@ -38,8 +38,8 @@ test('generated OpenAPI matches the checked-in document and passes SwaggerParser
     JSON.parse(readFileSync(new URL('../openapi.json', import.meta.url), 'utf8')),
   );
   await validateOpenApi(document);
-  assert.equal(operations.length, 67);
-  assert.equal(new Set(operations.map(({ operation }) => operation.operationId)).size, 67);
+  assert.equal(operations.length, 68);
+  assert.equal(new Set(operations.map(({ operation }) => operation.operationId)).size, 68);
 });
 
 test('OpenAPI inventory matches independently parsed Express registrations and domain mounts', () => {
@@ -293,6 +293,12 @@ test('all operations conform over HTTP with real isolated workspace/domain store
   assert.equal(cloud.credential, 'dedicated');
   await call('PATCH', `/api/workspaces/${cloud.id}`, 200, {});
   await call('PATCH', `/api/workspaces/${local.id}`, 200, { name: 'Renamed' });
+  assert.equal(
+    (await call('PUT', `/api/workspaces/${local.id}/default`, 200)).defaultWorkspaceId,
+    local.id,
+  );
+  await call('PUT', '/api/workspaces/missing/default', 404);
+  await call('PUT', '/api/workspaces/default/default', 200);
   assert.deepEqual((await call('GET', '/api/workspaces/repositories', 200)).repositories, [
     { id: 2, fullName: 'owner/state', defaultBranch: 'main' },
   ]);

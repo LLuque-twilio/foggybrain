@@ -84,6 +84,25 @@ export function App() {
   const workspace = list?.workspaces.find(
     (entry) => entry.id === (selected ?? list.defaultWorkspaceId),
   );
+  const [defaultBusy, setDefaultBusy] = useState(false);
+  const [defaultError, setDefaultError] = useState('');
+
+  async function makeDefault(id: string) {
+    setDefaultBusy(true);
+    setDefaultError('');
+    try {
+      const result = await api<WorkspaceList>(
+        `/workspaces/${encodeURIComponent(id)}/default`,
+        'PUT',
+      );
+      discoveryId.current++;
+      setList(result);
+    } catch (error) {
+      setDefaultError(error instanceof Error ? error.message : 'Cannot set default workspace.');
+    } finally {
+      setDefaultBusy(false);
+    }
+  }
   const adding = editor === 'add' || editor === 'add-cloud';
   const workspaceEditor = list && editor && editor !== 'remove' && (adding || workspace) && (
     <WorkspaceEditor
@@ -237,6 +256,12 @@ export function App() {
                 </div>
               </dl>
               <p className="form-hint">
+                {workspace.id === list.defaultWorkspaceId
+                  ? 'This is the default workspace. It opens when no workspace is chosen in the address.'
+                  : `Opens by default: ${list.workspaces.find((entry) => entry.id === list.defaultWorkspaceId)?.name ?? 'none'}.`}
+              </p>
+              {defaultError && <p role="alert">{defaultError}</p>}
+              <p className="form-hint">
                 {workspace.type === 'cloud'
                   ? 'Cloud workspaces keep tasks on this device. Use Workspace sync to review and explicitly apply changes. Retargeting preserves local data and requires a new sync review. Cloud workspaces cannot be converted back to local.'
                   : 'Tasks are stored on this device. Connecting to cloud preserves local tasks and opens a sync preview. Nothing is imported or published until you review and explicitly confirm apply.'}
@@ -244,6 +269,15 @@ export function App() {
               <div className="workspace-actions">
                 <Button className="button" onClick={() => setEditor('rename')}>
                   Rename workspace
+                </Button>
+                <Button
+                  className="button"
+                  disabled={defaultBusy || workspace.id === list.defaultWorkspaceId}
+                  onClick={() => void makeDefault(workspace.id)}
+                >
+                  {workspace.id === list.defaultWorkspaceId
+                    ? 'Default workspace'
+                    : 'Make default workspace'}
                 </Button>
                 {workspace.type === 'local' && (
                   <Button className="button" onClick={() => setEditor('connect')}>

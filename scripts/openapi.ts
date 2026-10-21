@@ -139,6 +139,16 @@ const management: Route[] = [
       'Supports local-to-cloud connection and confirmed cloud retargeting. Retargeting preserves local data, invalidates old previews, and never accesses either remote; review and apply a new sync preview separately. An empty patch is accepted.',
   },
   {
+    method: 'put',
+    path: '/workspaces/{id}/default',
+    id: 'setDefaultWorkspace',
+    summary: 'Set the default workspace',
+    response: 'WorkspaceList',
+    errors: [404, 409, 503],
+    description:
+      'Persists the workspace used by unscoped domain requests, the CLI without --workspace, and the UI without ?workspace. Idempotent; never changes tab selection or task data.',
+  },
+  {
     method: 'get',
     path: '/workspaces/{id}/removal-preview',
     id: 'previewWorkspaceRemoval',

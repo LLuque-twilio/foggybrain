@@ -101,6 +101,12 @@ test('workspace removal requires strict reviewed confirmation and reroutes the d
     .store.createTask({ title: 'Replacement task', kind: 'manual' });
   const { request } = await fixture(t, { workspaces });
   const path = '/api/workspaces/default';
+  const defaulted = await request(`/api/workspaces/${other.id}/default`, 'PUT');
+  assert.equal(defaulted.status, 200);
+  assert.equal(defaulted.body.defaultWorkspaceId, other.id);
+  assert.equal((await request('/api/workspaces')).body.defaultWorkspaceId, other.id);
+  assert.equal((await request('/api/workspaces/missing/default', 'PUT')).status, 404);
+  assert.equal((await request(`${path}/default`, 'PUT')).body.defaultWorkspaceId, 'default');
   const preview = await request(`${path}/removal-preview`);
   assert.equal(preview.status, 200);
   assert.equal(preview.headers['cache-control'], 'no-store');

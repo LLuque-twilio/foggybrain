@@ -617,6 +617,85 @@
         }
       }
     },
+    "/api/workspaces/{id}/default": {
+      "put": {
+        "operationId": "setDefaultWorkspace",
+        "summary": "Set the default workspace",
+        "description": "Persists the workspace used by unscoped domain requests, the CLI without --workspace, and the UI without ?workspace. Idempotent; never changes tab selection or task data. Unscoped management endpoint. See CONTRACT.md for state-dependent validation and semantics.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Server-returned resource ID; relationship removal uses the relationship ID, not a task ID."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "headers": {
+              "Cache-Control": {
+                "description": "API responses are not cached, including credential-backed discovery.",
+                "schema": { "type": "string", "const": "no-store" }
+              }
+            },
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/WorkspaceList" } }
+            }
+          },
+          "400": {
+            "description": "Malformed JSON/URL, unsupported fields, invalid input, or missing confirmation.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "403": {
+            "description": "Host, Origin, or cross-site request rejected by the local-tool boundary.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "404": {
+            "description": "Route, workspace, task, or relationship not found; no default workspace exists.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "409": {
+            "description": "Graph conflict, workspace limit, active sync, or stale preview; review state before retrying.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "413": {
+            "description": "JSON body exceeds the 256kb limit.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "415": {
+            "description": "Unsupported Content-Type, JSON charset, or content encoding.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "500": {
+            "description": "Unexpected internal server error; details are not exposed.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          },
+          "503": {
+            "description": "Selected credentials/configuration unavailable or workspace service stopped.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
+            }
+          }
+        },
+        "x-query-policy": "undeclared-ignored"
+      }
+    },
     "/api/workspaces/{id}/removal-preview": {
       "get": {
         "operationId": "previewWorkspaceRemoval",

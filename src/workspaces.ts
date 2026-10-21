@@ -368,6 +368,20 @@ export class WorkspaceManager {
     return result;
   }
 
+  setDefault(id: string): WorkspaceList {
+    if (this.closing) throw new DomainError('Workspace service is stopped', 503);
+    this.registry.exec('BEGIN IMMEDIATE');
+    try {
+      this.workspace(id);
+      this.registry.prepare('UPDATE workspace_settings SET default_id = ? WHERE id = 1').run(id);
+      this.registry.exec('COMMIT');
+    } catch (error) {
+      this.registry.exec('ROLLBACK');
+      throw error;
+    }
+    return this.list();
+  }
+
   get(id: string): WorkspaceRuntime {
     if (this.closing) throw new DomainError('Workspace service is stopped', 503);
     const workspace = this.workspace(id);

@@ -130,15 +130,15 @@ export function createApp(
     next();
   });
   app.use('/api', (req, _res, next) => {
-    const emptySync =
-      req.method === 'POST' &&
-      /^(?:\/workspaces\/[^/]+)?\/github\/sync$/.test(req.path) &&
+    const emptyAction =
+      ((req.method === 'POST' && /^(?:\/workspaces\/[^/]+)?\/github\/sync$/.test(req.path)) ||
+        (req.method === 'PUT' && /^\/workspaces\/[^/]+\/default$/.test(req.path))) &&
       !req.headers['content-type'] &&
       !req.headers['transfer-encoding'] &&
       (!req.headers['content-length'] || req.headers['content-length'] === '0');
     if (
       ['POST', 'PATCH', 'PUT'].includes(req.method) &&
-      !emptySync &&
+      !emptyAction &&
       !req.is('application/json')
     ) {
       next(new HttpError(415, 'Content-Type must be application/json.'));
@@ -185,6 +185,7 @@ export function createApp(
     }
     app.post('/api/workspaces', (req, res) => res.status(201).json(manager.create(req.body)));
     app.patch('/api/workspaces/:id', (req, res) => res.json(manager.update(id(req), req.body)));
+    app.put('/api/workspaces/:id/default', (req, res) => res.json(manager.setDefault(id(req))));
     app.get('/api/workspaces/:id/removal-preview', (req, res) => {
       if (Object.keys(req.query).length) throw new HttpError(400, 'Unsupported query fields.');
       res.json(manager.removalPreview(id(req)));
