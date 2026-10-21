@@ -599,6 +599,7 @@ test('CLI workspace management is unscoped and forwards server results and cloud
       ['create', 'Personal'],
       { method: 'POST', path: '/api/workspaces', body: { name: 'Personal', type: 'local' } },
     ],
+    [['default', 'a/b'], { method: 'PUT', path: '/api/workspaces/a%2Fb/default' }],
     [
       ['rename', 'a/b', 'New name'],
       { method: 'PATCH', path: '/api/workspaces/a%2Fb', body: { name: 'New name' } },
@@ -707,6 +708,7 @@ test('CLI workspace validation and server limit/retarget errors preserve machine
     ['workspace'],
     ['workspace', 'create'],
     ['workspace', 'rename', 'id'],
+    ['workspace', 'default'],
     ['workspace', 'create', 'Cloud', '--type', 'cloud'],
     ['workspace', 'create', 'Local', '--repo', 'owner/repo'],
     ['workspace', 'create', 'Local', '--credential', 'dedicated'],

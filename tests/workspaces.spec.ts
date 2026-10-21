@@ -1230,6 +1230,36 @@ test('settings direct route shows metadata and renames without preview; blur and
   expect(writes).toEqual(['/api/workspaces/default']);
 });
 
+test('settings can make the selected workspace the persisted default', async ({ page }) => {
+  const list: WorkspaceList = {
+    workspaces: ['default', 'second'].map((id) => ({
+      id,
+      name: id,
+      type: 'local',
+      target: null,
+      credential: null,
+    })),
+    defaultWorkspaceId: 'default',
+    limit: 3,
+  };
+  const puts: string[] = [];
+  await page.route('**/api/workspaces', (route) => route.fulfill({ json: list }));
+  await page.route('**/api/workspaces/second/default', (route) => {
+    puts.push(`${route.request().method()} ${new URL(route.request().url()).pathname}`);
+    list.defaultWorkspaceId = 'second';
+    return route.fulfill({ json: list });
+  });
+  await page.route('**/api/workspaces/second/**', (route) => route.fallback());
+  await page.goto('/?workspace=second#/settings');
+  const settings = page.getByRole('region', { name: 'Workspace settings' });
+  await expect(settings.getByText('Opens by default: default.')).toBeVisible();
+  await settings.getByRole('button', { name: 'Make default workspace' }).click();
+  await expect(settings.getByRole('button', { name: 'Default workspace' })).toBeDisabled();
+  await expect(settings.getByText(/This is the default workspace/)).toBeVisible();
+  expect(puts).toEqual(['PUT /api/workspaces/second/default']);
+  await expect(page).toHaveURL(/workspace=second#\/settings$/);
+});
+
 for (const flow of ['create', 'connect'] as const) {
   test(`${flow} cloud previews once in the selected workspace and imports only after confirmation`, async ({
     page,

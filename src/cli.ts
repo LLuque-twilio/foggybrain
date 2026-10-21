@@ -235,6 +235,19 @@ export async function main(argv = process.argv): Promise<void> {
       ),
     );
   workspace
+    .command('default <id>')
+    .description('Set the default workspace used when no --workspace is given')
+    .action(async (id) =>
+      output(
+        await request<WorkspaceList>(
+          `/workspaces/${encodeURIComponent(id)}/default`,
+          'PUT',
+          undefined,
+          false,
+        ),
+      ),
+    );
+  workspace
     .command('retarget <id>')
     .description('Change a cloud workspace target without reading or writing either remote')
     .requiredOption('--repo <owner/repo>', 'existing private state repository')

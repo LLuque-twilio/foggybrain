@@ -34,13 +34,14 @@ Normal `task list` and `graph` output is a human-readable tab-separated list wit
 foggy workspace list
 foggy workspace create <name> [--type local|cloud] [--repo owner/repo] [--branch branch] [--path path] [--credential dedicated|github]
 foggy workspace rename <id> <name>
+foggy workspace default <id>
 foggy workspace connect <id> --repo owner/repo [--branch branch] [--path path] [--credential dedicated|github]
 foggy workspace retarget <id> --repo owner/repo --yes [--branch branch] [--path path] [--credential dedicated|github]
 ```
 
 The server supports at most **three entries**, each with its own local SQLite graph. Local workspaces have no state-sync target. Cloud workspaces are **local-first**, not hosted databases: edits persist locally and move to/from GitHub only through manual sync. Browser tabs select independently; changing a tab does not change the CLI default or another tab. Keep the same `--workspace ID` (or `FOGGY_WORKSPACE`) across edits, deletion preview/confirmation, and sync preview/apply.
 
-`list` returns `{workspaces, defaultWorkspaceId, limit}`. `defaultWorkspaceId` is a string when a default exists; an empty registry returns `workspaces: []` and `defaultWorkspaceId: null`. Create, rename, connect, and retarget return a `Workspace`: `{id, name, type, target, credential}`. Local `target` and `credential` are null; cloud `target` is `{repo, branch, path}`. All management commands print JSON even without `--json` and always use unscoped `/api/workspaces` routes, ignoring global workspace selection. Use server-returned IDs, never names or indexes.
+`list` returns `{workspaces, defaultWorkspaceId, limit}`. `defaultWorkspaceId` is a string when a default exists; an empty registry returns `workspaces: []` and `defaultWorkspaceId: null`. `default` persists the workspace used by unscoped calls and returns the updated list; it is idempotent and an unknown ID fails with 404. Create, rename, connect, and retarget return a `Workspace`: `{id, name, type, target, credential}`. Local `target` and `credential` are null; cloud `target` is `{repo, branch, path}`. All management commands print JSON even without `--json` and always use unscoped `/api/workspaces` routes, ignoring global workspace selection. Use server-returned IDs, never names or indexes.
 
 Create defaults to `--type local`; local creation rejects cloud-only flags. Cloud creation and connect require `--repo`, default `--branch main`, `--path foggybrain/state.json`, and **`--credential dedicated`**. Connect converts an existing local workspace to cloud without replacing its graph. `retarget` changes a cloud workspace's repository, branch, path, or credential only with `--yes`; it preserves local data, makes no remote request, and invalidates prior sync previews. It requires the selected server credential and rejects an active sync or uncertain prior upload. Omitted retarget options reset to `main`, `foggybrain/state.json`, and `dedicated`; pass unchanged values explicitly rather than assuming they are preserved. Review and explicitly apply a new sync preview after the target changes. Cloud-to-local demotion is not supported. Local workspace removal is available in UI Settings with preview and confirmation, not through a CLI command. The final workspace can be removed. Removing the default assigns the oldest surviving workspace as the default for unscoped CLI calls, or leaves no default if none remain; explicit removed IDs fail without fallback.
 
@@ -55,6 +56,7 @@ foggy --json workspace list
 foggy --json workspace create "Personal"
 foggy --json workspace create "Shared" --type cloud --repo OWNER/PRIVATE_STATE_REPO
 foggy --json workspace rename WORKSPACE_ID "Release planning"
+foggy --json workspace default WORKSPACE_ID
 foggy --json workspace connect LOCAL_WORKSPACE_ID --repo OWNER/PRIVATE_STATE_REPO --credential dedicated
 foggy --json workspace retarget CLOUD_WORKSPACE_ID --repo OWNER/PRIVATE_STATE_REPO --branch main --path foggybrain/state.json --credential dedicated --yes
 foggy --json --workspace WORKSPACE_ID sync status

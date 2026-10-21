@@ -91,6 +91,30 @@ test('non-default removal deletes only its exact database and a replacement defa
   assert.equal(reopened.list().defaultWorkspaceId, survivor.id);
 });
 
+test('setDefault persists across restarts, is idempotent, and rejects unknown or removed IDs', async (t) => {
+  const dataDir = directory(t);
+  const workspaces = manager(t, { dataDir });
+  const other = workspaces.create({ name: 'Other', type: 'local' });
+  assert.equal(workspaces.list().defaultWorkspaceId, 'default');
+  assert.equal(workspaces.setDefault(other.id).defaultWorkspaceId, other.id);
+  assert.equal(workspaces.setDefault(other.id).defaultWorkspaceId, other.id);
+  assert.throws(
+    () => workspaces.setDefault('missing'),
+    (error: unknown) => error instanceof DomainError && error.status === 404,
+  );
+  assert.equal(workspaces.list().defaultWorkspaceId, other.id);
+  const preview = workspaces.removalPreview('default');
+  workspaces.setDefault('default');
+  await assert.rejects(workspaces.remove('default', { revision: preview.revision }), /stale/);
+  workspaces.setDefault(other.id);
+  await workspaces.close();
+  const reopened = manager(t, { dataDir });
+  assert.equal(reopened.list().defaultWorkspaceId, other.id);
+  await reopened.remove(other.id, { revision: reopened.removalPreview(other.id).revision });
+  assert.equal(reopened.list().defaultWorkspaceId, 'default');
+  assert.throws(() => reopened.setDefault(other.id), /not found/);
+});
+
 test('removal rejects stale graph, layout, configuration and registry previews', async (t) => {
   const workspaces = manager(t, { dataDir: directory(t) });
   const last = workspaces.removalPreview('default');
