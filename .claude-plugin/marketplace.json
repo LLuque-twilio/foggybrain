@@ -1,0 +1,34 @@
+{
+  "name": "foggybrain",
+  "owner": {
+    "name": "Logan",
+    "email": "loganluque.tech@gmail.com"
+  },
+  "metadata": {
+    "description": "FoggyBrain plugin for Claude Code",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "foggybrain",
+      "source": "./plugins/foggybrain",
+      "description": "Manage FoggyBrain task graphs, Markdown context, resources, tags, dependencies, workspaces, safe cloud retargeting, PR gates, and reviewed state sync through its CLI/API",
+      "version": "1.6.0",
+      "author": { "name": "Logan" },
+      "license": "MIT",
+      "keywords": [
+        "foggybrain",
+        "tasks",
+        "context",
+        "markdown",
+        "resources",
+        "tags",
+        "dependencies",
+        "workspaces",
+        "sync",
+        "planning"
+      ],
+      "category": "productivity"
+    }
+  ]
+}
