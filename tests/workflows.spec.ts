@@ -1559,14 +1559,24 @@ test('graph emphasizes actionable work, nearby dependencies, and container progr
   await expect(edge.locator('.react-flow__edge-text')).toHaveCSS('opacity', '0');
   await page.getByRole('button', { name: 'Close task details' }).click();
   // Closing the panel refits the viewport, so re-measure until the hover lands on the settled edge.
+  // On narrow viewports the midpoint can be off-screen or under a node, so hover the first point
+  // along the path that actually hit-tests to this edge.
   await expect(async () => {
-    const midpoint = await edge.locator('.react-flow__edge-interaction').evaluate((element) => {
+    const target = await edge.locator('.react-flow__edge-interaction').evaluate((element) => {
       const path = element as SVGPathElement;
-      const point = path.getPointAtLength(path.getTotalLength() / 2);
-      const screen = new DOMPoint(point.x, point.y).matrixTransform(path.getScreenCTM()!);
-      return { x: screen.x, y: screen.y };
+      const edgeGroup = path.closest('.react-flow__edge')!;
+      const length = path.getTotalLength();
+      for (const fraction of [0.5, 0.4, 0.6, 0.3, 0.7, 0.2, 0.8]) {
+        const point = path.getPointAtLength(length * fraction);
+        const screen = new DOMPoint(point.x, point.y).matrixTransform(path.getScreenCTM()!);
+        if (edgeGroup.contains(document.elementFromPoint(screen.x, screen.y))) {
+          return { x: screen.x, y: screen.y };
+        }
+      }
+      return null;
     });
-    await page.mouse.move(midpoint.x, midpoint.y);
+    expect(target, 'no visible, unobscured point on the dependency edge').not.toBeNull();
+    await page.mouse.move(target!.x, target!.y);
     await expect(edge.locator('.react-flow__edge-text')).toHaveCSS('opacity', '1', {
       timeout: 500,
     });
