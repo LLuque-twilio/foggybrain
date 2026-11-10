@@ -453,8 +453,8 @@ export function DeleteDialog({
       )}
       <h3>Other tasks affected</h3>
       <p className="form-hint">
-        Dependencies and references to deleted tasks will be removed. The tasks below may unblock,
-        complete, or reopen.
+        Links to deleted tasks are cut. Tasks listed here are kept, but may unblock, complete, or
+        reopen.
       </p>
       <div className="impact-list">
         {preview.affectedTasks.length ? (
@@ -472,9 +472,9 @@ export function DeleteDialog({
         )}
       </div>
       <p className="form-hint">
-        {preview.removedDependencies.length} dependency connections and{' '}
-        {preview.removedReferences.length} references will be removed. Independently owned reference
-        targets are kept.
+        {preview.removedDependencies.length} dependency links and {preview.removedReferences.length}{' '}
+        references will be removed. Dependent tasks and independently owned reference targets are
+        kept.
       </p>
       <footer>
         <Button className="button" onClick={close}>

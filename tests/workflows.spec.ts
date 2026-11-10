@@ -1871,6 +1871,12 @@ test('deletion rechecks changed impact and requires a fresh confirmation', async
   await page.getByRole('button', { name: 'Delete container', exact: true }).click();
   const dialog = page.locator('.dialog');
   await expect(dialog).toContainText('No other tasks depend on this task.');
+  await expect(dialog).toContainText(
+    'Links to deleted tasks are cut. Tasks listed here are kept, but may unblock, complete, or reopen.',
+  );
+  await expect(dialog).toContainText(
+    '0 dependency links and 0 references will be removed. Dependent tasks and independently owned reference targets are kept.',
+  );
   await request.post('/api/references', { data: { containerId: prod.id, taskId: stage.id } });
   await dialog.getByRole('button', { name: 'Delete permanently' }).click();
   await expect(dialog.getByRole('alert')).toContainText('The graph changed');
