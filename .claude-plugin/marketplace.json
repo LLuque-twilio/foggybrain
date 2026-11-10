@@ -13,7 +13,7 @@
       "name": "foggybrain",
       "source": "./plugins/foggybrain",
       "description": "Manage FoggyBrain task graphs, Markdown context, resources, tags, dependencies, workspaces, safe cloud retargeting, PR gates, and reviewed state sync through its CLI/API",
-      "version": "1.6.0",
+      "version": "1.7.0",
       "author": { "name": "Logan" },
       "license": "MIT",
       "keywords": [

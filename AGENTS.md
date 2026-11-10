@@ -26,6 +26,10 @@ For manual integration work, `pnpm dev` starts the API on `127.0.0.1:4173` and t
 
 For API changes, regenerate `openapi.json` with `pnpm openapi:generate` and run `pnpm openapi:check` as well. Never hand edit the artifact. DTO field shapes come from `src/shared.ts`; `scripts/openapi.ts` owns route metadata and focused conditional schema refinements. The spec is not a runtime validator. See `docs/api.md` for ownership and contract-test coverage, and `docs/pr-verification.md` for PR readiness precedence.
 
+## Releases
+
+Merging does not release. Bump `version` in `package.json` (semver: minor for features, patch for fixes) in the PR that should ship, then after merge tag that commit on `master` with `v{version}` and push the tag (`git tag v0.11.0 origin/master && git push origin v0.11.0`). `.github/workflows/release.yml` runs on `v*` tags, fails unless the tag equals `v` + `package.json` version, reruns CI, and publishes the archive that `foggy upgrade` installs. A tag with a `-suffix` publishes a prerelease. When a PR changes `plugins/foggybrain/`, also bump the plugin `version` in `plugins/foggybrain/.claude-plugin/plugin.json` and its entry in `.claude-plugin/marketplace.json`, which must match; installed plugins only update on a version change.
+
 ## Agent CLI Usage
 
 Use source execution with quiet pnpm output, or build and optionally `pnpm link` to use `foggy`:
