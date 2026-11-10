@@ -7,6 +7,7 @@ import { RadioGroup, RadioGroupItem } from './components/ui/radio-group';
 import { Textarea } from './components/ui/textarea';
 import { ExternalLinkFields, PrUrlFields, type ExternalLinkDraft } from './TaskFields';
 import { TagPicker } from './Tags';
+import { SearchableSelect } from './SearchableSelect';
 import {
   type ExternalLink,
   type CreateTaskInput,
@@ -481,6 +482,97 @@ export function DeleteDialog({
         </Button>
         <Button className="button danger" disabled={busy} onClick={confirm}>
           Delete permanently
+        </Button>
+      </footer>
+    </Dialog>
+  );
+}
+
+const ROOT_DESTINATION = 'root';
+
+function containerPath(snapshot: Snapshot, task: TaskView): string {
+  const titles: string[] = [];
+  const seen = new Set<string>();
+  for (
+    let current: TaskView | undefined = task;
+    current && !seen.has(current.id);
+    current = snapshot.tasks.find((candidate) => candidate.id === current!.parentId)
+  ) {
+    seen.add(current.id);
+    titles.unshift(current.title);
+  }
+  return titles.join(' / ');
+}
+
+export function MoveDialog({
+  task,
+  snapshot,
+  close,
+  submit,
+  busy,
+}: {
+  task: TaskView;
+  snapshot: Snapshot;
+  close: () => void;
+  submit: (parentId: string | null) => Promise<boolean>;
+  busy: boolean;
+}) {
+  const [destination, setDestination] = useState('');
+  const owned = new Set([task.id]);
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const candidate of snapshot.tasks) {
+      if (candidate.parentId && owned.has(candidate.parentId) && !owned.has(candidate.id)) {
+        owned.add(candidate.id);
+        grew = true;
+      }
+    }
+  }
+  const referencing = new Set(
+    snapshot.references.filter((ref) => ref.taskId === task.id).map((ref) => ref.containerId),
+  );
+  const options = [
+    ...(task.parentId === null ? [] : [{ value: ROOT_DESTINATION, label: 'Root' }]),
+    ...snapshot.tasks
+      .filter(
+        (candidate) =>
+          candidate.kind === 'container' &&
+          candidate.id !== task.parentId &&
+          !owned.has(candidate.id) &&
+          !referencing.has(candidate.id),
+      )
+      .map((candidate) => ({ value: candidate.id, label: containerPath(snapshot, candidate) }))
+      .sort((a, b) => a.label.localeCompare(b.label)),
+  ];
+  return (
+    <Dialog title="Move task" close={close}>
+      <p className="form-hint">
+        Moves <strong>{task.title}</strong>
+        {task.kind === 'container' ? ' and everything it owns' : ''}. Dependencies and references
+        stay connected.
+      </p>
+      <SearchableSelect
+        label="Destination"
+        placeholder="Type to filter containers..."
+        options={options}
+        value={destination}
+        onChange={setDestination}
+        disabled={busy}
+        emptyMessage="No other containers can hold this task."
+      />
+      <footer>
+        <Button className="button" onClick={close}>
+          Cancel
+        </Button>
+        <Button
+          className="button primary"
+          disabled={!destination || busy}
+          onClick={async () => {
+            if (await submit(destination === ROOT_DESTINATION ? null : destination)) close();
+          }}
+        >
+          Move
+          <ArrowRight size={15} />
         </Button>
       </footer>
     </Dialog>

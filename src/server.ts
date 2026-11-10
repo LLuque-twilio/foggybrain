@@ -289,12 +289,14 @@ function domainRoutes(
     const body = object(req.body, [
       'title',
       'description',
+      'parentId',
       'prUrl',
       'externalLinks',
       'tagIds',
       'favorite',
     ]);
     for (const field of ['title', 'description']) stringField(body, field, true);
+    if (body.parentId !== null) stringField(body, 'parentId', true);
     if (body.prUrl !== null) stringField(body, 'prUrl', true);
     stringArrayField(body, 'tagIds', true);
     if ('favorite' in body && typeof body.favorite !== 'boolean')

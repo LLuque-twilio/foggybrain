@@ -117,6 +117,8 @@ export interface UpdateTaskInput {
   title?: string;
   /** @maxLength 10000 */
   description?: string;
+  /** Destination container ID, or null to move to the root. Owned children move with the task. */
+  parentId?: string | null;
   prUrl?: string | null;
   /** @maxItems 5 */
   externalLinks?: ExternalLink[];

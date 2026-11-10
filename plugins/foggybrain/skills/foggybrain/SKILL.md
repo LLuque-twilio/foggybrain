@@ -80,12 +80,17 @@ foggy --json --workspace WORKSPACE_ID task create "Review design" --external-lin
 foggy --json --workspace WORKSPACE_ID task update TASK_ID --title "New title" --description "Updated criteria"
 foggy --json --workspace WORKSPACE_ID task update MANUAL_TASK_ID --pr "https://github.com/OWNER/REPO/pull/123"
 foggy --json --workspace WORKSPACE_ID task update MANUAL_TASK_ID --remove-pr
+foggy --json --workspace WORKSPACE_ID task move TASK_ID --parent CONTAINER_ID
+foggy --json --workspace WORKSPACE_ID task move TASK_ID --root
 foggy --json --workspace WORKSPACE_ID task done MANUAL_TASK_ID
 foggy --json --workspace WORKSPACE_ID task reopen MANUAL_TASK_ID
 ```
 
 `create` defaults to manual and root ownership. `--parent` must identify a container.
-`update` cannot change kind, parent, IDs, derived status, or verified merge state.
+`update` cannot change kind, IDs, derived status, or verified merge state. `move` changes
+the owning parent; owned children come along and every relationship is kept. Moving
+into the current location, the task itself or an owned descendant, a container that
+already references the task, or anything creating a cycle is rejected unchanged.
 An empty description clears it. Changing a PR URL switches to that normalized URL's
 workspace-local cached verification; only an unseen URL starts unverified. Removing an
 optional manual PR gate preserves manualDone; PR tasks cannot remove their gate. Task

@@ -565,6 +565,18 @@ export async function main(argv = process.argv): Promise<void> {
         throw new Error('Provide at least one editable field, tag change, --star, or --unstar.');
       output(await request<TaskView>(`/tasks/${encodeURIComponent(id)}`, 'PATCH', body));
     });
+  task
+    .command('move <id>')
+    .description('Move a task and its owned children into a container or to the root')
+    .option('--parent <container-id>', 'destination container ID')
+    .addOption(new Option('--root', 'move to the root level').conflicts('parent'))
+    .action(async (id, options) => {
+      if (options.parent === undefined && !options.root)
+        throw new Error('Provide --parent <container-id> or --root.');
+      if (options.parent === '') throw new Error('--parent requires a container ID.');
+      const body: UpdateTaskInput = { parentId: options.root ? null : options.parent };
+      output(await request<TaskView>(`/tasks/${encodeURIComponent(id)}`, 'PATCH', body));
+    });
   for (const [name, done] of [
     ['done', true],
     ['reopen', false],

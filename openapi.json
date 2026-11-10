@@ -5877,6 +5877,10 @@
         "properties": {
           "title": { "type": "string", "pattern": "\\S", "maxLength": 512 },
           "description": { "type": "string", "maxLength": 10000 },
+          "parentId": {
+            "type": ["string", "null"],
+            "description": "Destination container ID, or null to move to the root. Owned children move with the task."
+          },
           "prUrl": { "type": ["string", "null"] },
           "externalLinks": {
             "type": "array",

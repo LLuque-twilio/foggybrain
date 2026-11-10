@@ -1460,3 +1460,108 @@ test('task context routes work with and without a workspace prefix', async (t) =
     assert.equal((await request(`${prefix}/tasks/missing/context`)).status, 404);
   }
 });
+
+test('PATCH parentId moves tasks with validation, atomic rejection, and derived completion', async (t) => {
+  const { request } = await fixture(t);
+  const create = async (body: unknown): Promise<TaskView> => {
+    const response = await request('/api/tasks', 'POST', body);
+    assert.equal(response.status, 201);
+    return response.body;
+  };
+  const move = (id: string, parentId: unknown, extra: Record<string, unknown> = {}) =>
+    request(`/api/tasks/${id}`, 'PATCH', { parentId, ...extra });
+  const source = await create({ title: 'Source', kind: 'container' });
+  const destination = await create({ title: 'Destination', kind: 'container' });
+  const nested = await create({ title: 'Nested', kind: 'container', parentId: source.id });
+  const leaf = await create({ title: 'Leaf', kind: 'manual', parentId: nested.id });
+  const plain = await create({ title: 'Plain', kind: 'manual' });
+  await request(`/api/tasks/${leaf.id}/done`, 'POST', { done: true });
+
+  const moved = await move(nested.id, destination.id);
+  assert.equal(moved.status, 200);
+  assert.equal(moved.body.parentId, destination.id);
+  let snapshot: Snapshot = (await request('/api/state')).body;
+  const byId = (task: { id: string }) => snapshot.tasks.find((item) => item.id === task.id)!;
+  assert.equal(byId(leaf).parentId, nested.id);
+  assert.equal(byId(destination).status, 'completed');
+  assert.equal(byId(source).status, 'available');
+
+  assert.equal(
+    (await request(`/api/references`, 'POST', { containerId: source.id, taskId: plain.id })).status,
+    201,
+  );
+  const before = (await request('/api/state')).body;
+  for (const [parentId, status] of [
+    [plain.id, 400],
+    [1, 400],
+    ['', 400],
+    ['missing', 404],
+    [nested.id, 409],
+    [destination.id, 409],
+  ] as const) {
+    const response = await move(nested.id, parentId);
+    assert.equal(response.status, status, `parentId ${String(parentId)}`);
+    assert.equal(typeof response.body.error, 'string');
+  }
+  assert.equal((await move(destination.id, nested.id)).status, 409);
+  assert.equal((await move(leaf.id, nested.id, { title: 'Renamed' })).status, 409);
+  assert.equal((await move(plain.id, source.id)).status, 409);
+  assert.equal((await move('missing', null)).status, 404);
+  assert.deepEqual((await request('/api/state')).body, before);
+
+  const toRoot = await move(nested.id, null, { title: 'Nested at root' });
+  assert.equal(toRoot.status, 200);
+  assert.equal(toRoot.body.parentId, null);
+  assert.equal(toRoot.body.title, 'Nested at root');
+  snapshot = (await request('/api/state')).body;
+  assert.equal(byId(destination).status, 'available', 'empty containers remain open');
+});
+
+test('task moves are workspace scoped without fallback', async (t) => {
+  const dataDir = mkdtempSync(join(tmpdir(), 'foggy-server-move-workspaces-'));
+  const workspaces = new WorkspaceManager({
+    dataDir,
+    fetch: async () => assert.fail('No network'),
+  });
+  t.after(async () => {
+    await workspaces.close();
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+  const { request } = await fixture(t, { workspaces });
+  const created = await request('/api/workspaces', 'POST', { name: 'Work', type: 'local' });
+  const prefix = `/api/workspaces/${created.body.id}`;
+  const scopedContainer = await request(`${prefix}/tasks`, 'POST', {
+    title: 'Work group',
+    kind: 'container',
+  });
+  const scopedTask = await request(`${prefix}/tasks`, 'POST', {
+    title: 'Work task',
+    kind: 'manual',
+  });
+  const defaultContainer = await request('/api/tasks', 'POST', {
+    title: 'Default group',
+    kind: 'container',
+  });
+  assert.equal(
+    (
+      await request(`/api/tasks/${scopedTask.body.id}`, 'PATCH', {
+        parentId: defaultContainer.body.id,
+      })
+    ).status,
+    404,
+  );
+  assert.equal(
+    (
+      await request(`${prefix}/tasks/${scopedTask.body.id}`, 'PATCH', {
+        parentId: defaultContainer.body.id,
+      })
+    ).status,
+    404,
+  );
+  const moved = await request(`${prefix}/tasks/${scopedTask.body.id}`, 'PATCH', {
+    parentId: scopedContainer.body.id,
+  });
+  assert.equal(moved.status, 200);
+  assert.equal(moved.body.parentId, scopedContainer.body.id);
+  assert.equal((await request('/api/state')).body.tasks.length, 1);
+});

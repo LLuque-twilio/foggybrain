@@ -3,6 +3,7 @@ import {
   ArrowRight,
   ArrowUpRight,
   Check,
+  FolderInput,
   Copy,
   FileText,
   GitBranch,
@@ -49,6 +50,7 @@ export function Detail({
   open,
   done,
   remove,
+  move,
   unlink,
   addDependency,
   removeDependency,
@@ -70,6 +72,7 @@ export function Detail({
   open: (id: string) => void;
   done: () => void;
   remove: () => void;
+  move: () => void;
   unlink: (id: string) => void;
   addDependency: (direction: ConnectTaskInput['direction']) => void;
   removeDependency: (id: string) => void;
@@ -593,6 +596,10 @@ export function Detail({
               Unlink from this graph
             </Button>
           )}
+          <Button className="button full" disabled={busy} onClick={move} aria-haspopup="dialog">
+            <FolderInput size={14} />
+            Move to…
+          </Button>
           <Button
             variant="link"
             size="sm"

@@ -48,6 +48,7 @@ import {
   DeleteDialog,
   Dialog,
   DialogErrorContext,
+  MoveDialog,
   ReferenceDialog,
   TagDeleteDialog,
   TaskDialog,
@@ -66,6 +67,7 @@ type Modal =
   | { type: 'create'; parentId?: string | null; prUrl?: string }
   | { type: 'dependency'; task: TaskView; direction: ConnectTaskInput['direction'] }
   | { type: 'reference'; containerId: string }
+  | { type: 'move'; task: TaskView }
   | { type: 'delete'; task: TaskView; preview: DeletionPreview }
   | { type: 'tag-delete'; tag: Tag; affectedTasks: TaskView[] }
   | { type: 'help' }
@@ -356,6 +358,11 @@ export function WorkspaceApp({
       }
     }
     return success;
+  }
+
+  function openMove(task: TaskView) {
+    setError('');
+    setModal({ type: 'move', task });
   }
 
   function updateTask(id: string, input: UpdateTaskInput) {
@@ -649,6 +656,7 @@ export function WorkspaceApp({
                   void run(() => api(`/tasks/${task.id}/done`, 'POST', { done: !task.manualDone }))
                 }
                 remove={() => void previewDelete(task)}
+                move={() => openMove(task)}
                 unlink={(id) => void run(() => api(`/references/${id}`, 'DELETE'))}
                 addDependency={(direction) => setModal({ type: 'dependency', task, direction })}
                 removeDependency={(id) => void run(() => api(`/dependencies/${id}`, 'DELETE'))}
@@ -906,6 +914,7 @@ export function WorkspaceApp({
                       )
                     }
                     remove={() => void previewDelete(selected)}
+                    move={() => openMove(selected)}
                     unlink={(id) =>
                       void run(async () => {
                         await api(`/references/${id}`, 'DELETE');
@@ -1317,6 +1326,17 @@ export function WorkspaceApp({
             createTag={createTag}
             renameTag={renameTag}
             deleteTag={previewTagDelete}
+          />
+        )}
+        {modal?.type === 'move' && (
+          <MoveDialog
+            task={snapshot.tasks.find((task) => task.id === modal.task.id) ?? modal.task}
+            snapshot={snapshot}
+            close={() => {
+              if (!mutation.current) setModal(null);
+            }}
+            busy={busy}
+            submit={(parentId) => updateTask(modal.task.id, { parentId })}
           />
         )}
         {modal?.type === 'reference' && (

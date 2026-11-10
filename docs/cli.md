@@ -158,7 +158,7 @@ The original `waitingOn` is only the IDs of incomplete direct prerequisites. `ch
 foggy task update <id> [--title <title>] [--description <text>] [--pr <url> | --remove-pr] [--external-links <json>] [--tag <id>...] [--star | --unstar]
 ```
 
-At least one flag is required. Omitted fields are unchanged. An empty description clears it. Kind, parent, ID, computed status, and PR merge state are not editable here. Updating a PR URL switches to that URL's workspace-local cached verification; unseen URLs start unverified.
+At least one flag is required. Omitted fields are unchanged. An empty description clears it. Kind, ID, computed status, and PR merge state are not editable here; use `task move` to change the parent. Updating a PR URL switches to that URL's workspace-local cached verification; unseen URLs start unverified.
 
 Repeated `--tag TAG_ID` replaces the task's **entire custom tag set** with exactly those IDs, up to three; it does not add to the existing set. Omitting `--tag` leaves custom tags unchanged. Use `--star` or `--unstar` for Favorites. All supplied fields, custom tags, and Favorites commit in one task update transaction.
 
@@ -173,6 +173,21 @@ foggy --json task update TASK_ID --tag TAG_ID --tag OTHER_TAG_ID --star
 Returns the updated `TaskView`.
 
 Use `--pr URL` to attach or replace a manual task's PR gate, or `--remove-pr` to remove it. Removing a gate preserves manual work status; the detached URL's workspace-local verification remains cached. Standalone PR tasks cannot remove their required gate.
+
+### Move
+
+```text
+foggy task move <id> (--parent <container-id> | --root)
+```
+
+Changes the task's owning parent. Exactly one destination is required. Owned children move with it; dependencies, references, context, tags, and PR gates are unchanged, and the server recalculates completion. The server rejects a destination that is not a container, the current location, the task itself or one of its owned descendants, a container that already references the task, or any move that creates a cycle; nothing changes on failure.
+
+```sh
+foggy --json task move TASK_ID --parent CONTAINER_ID
+foggy --json task move TASK_ID --root
+```
+
+Returns the updated `TaskView`.
 
 ### Markdown Context
 
