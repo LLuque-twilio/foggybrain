@@ -1180,7 +1180,7 @@ test('invalid task inputs and partial updates leave the store unchanged', (t) =>
     { title: undefined },
     { description: 1 },
     { kind: 'container' },
-    { parentId: null },
+    { parentId: 1 },
     { prUrl: '' },
     { title: 'Would partially change', description: null },
   ]) {
@@ -1848,4 +1848,289 @@ test('rejected sync rollback conditionally restores only its own record without 
   assert.deepEqual(store.snapshot(), snapshot);
   store.restoreSyncRecord(target, first, previous);
   assert.deepEqual(store.syncRecord(target), previous);
+});
+
+function move(store: Store, task: { id: string }, parentId: string | null) {
+  return store.updateTask(task.id, { parentId });
+}
+
+test('moves a root container with its owned subtree into another container', (t) => {
+  const store = memory(t);
+  const moved = container(store, 'Moved');
+  const nested = container(store, 'Nested', moved.id);
+  const leaf = manual(store, 'Leaf', nested.id);
+  const sibling = manual(store, 'Sibling', moved.id);
+  const destination = container(store, 'Destination');
+  const result = move(store, moved, destination.id);
+  assert.equal(result.parentId, destination.id);
+  assert.deepEqual(view(store, destination).childrenIds, [moved.id]);
+  assert.deepEqual(view(store, moved).childrenIds, [nested.id, sibling.id]);
+  assert.equal(view(store, nested).parentId, moved.id);
+  assert.equal(view(store, leaf).parentId, nested.id);
+  assert.equal(view(store, sibling).parentId, moved.id);
+  assert.deepEqual(
+    store
+      .snapshot()
+      .tasks.filter((task) => task.parentId === null)
+      .map((task) => task.id),
+    [destination.id],
+  );
+});
+
+test('moves tasks of every kind to root, between containers, and into deep nesting', (t) => {
+  const store = memory(t);
+  const a = container(store, 'A');
+  const b = container(store, 'B');
+  const deep = container(store, 'Deep', container(store, 'Mid', b.id).id);
+  const step = manual(store, 'Step', a.id);
+  const pr = store.createTask({
+    title: 'PR',
+    kind: 'pr',
+    prUrl: 'https://github.com/acme/app/pull/1',
+    parentId: a.id,
+  });
+  const inner = container(store, 'Inner', a.id);
+  assert.equal(move(store, step, deep.id).parentId, deep.id);
+  assert.equal(move(store, pr, b.id).parentId, b.id);
+  assert.equal(move(store, inner, null).parentId, null);
+  assert.equal(move(store, step, null).parentId, null);
+  assert.equal(move(store, deep, a.id).parentId, a.id);
+  assert.deepEqual(view(store, a).childrenIds, [deep.id]);
+  assert.ok(view(store, b).childrenIds.includes(pr.id));
+});
+
+test('moves preserve identity, fields, tags, PR gates, context, dependencies, and references', (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'foggybrain-move-'));
+  const store = new Store(join(directory, 'workspace.sqlite'));
+  t.after(() => {
+    store.close();
+    rmSync(directory, { recursive: true, force: true });
+  });
+  const tag = store.createTag({ name: 'Keep', color: '#123456' });
+  const source = container(store, 'Source');
+  const destination = container(store, 'Destination');
+  const task = store.createTask({
+    title: 'Moving',
+    description: 'Details',
+    kind: 'manual',
+    parentId: source.id,
+    prUrl: 'https://github.com/acme/app/pull/2',
+    externalLinks: [{ url: 'https://example.com/doc', label: 'Doc', type: 'generic' }],
+    tagIds: [tag.id],
+    favorite: true,
+  });
+  const prerequisite = manual(store, 'Prerequisite');
+  const dependent = manual(store, 'Dependent', source.id);
+  const owned = container(store, 'Owned', source.id);
+  const shared = manual(store, 'Shared');
+  const incoming = store.addDependency(prerequisite.id, task.id);
+  const outgoing = store.addDependency(task.id, dependent.id);
+  const reference = store.addReference(owned.id, shared.id);
+  store.saveReadme(task.id, '# Context\n');
+  const before = view(store, task);
+  move(store, task, destination.id);
+  move(store, owned, destination.id);
+  const after = view(store, task);
+  const { parentId, updatedAt, ...unchanged } = after;
+  const { parentId: _p, updatedAt: _u, ...original } = before;
+  assert.equal(parentId, destination.id);
+  assert.ok(updatedAt >= before.updatedAt);
+  assert.deepEqual(unchanged, original);
+  assert.equal(store.readme(task.id), '# Context\n');
+  const snapshot = store.snapshot();
+  assert.deepEqual(snapshot.dependencies, [incoming, outgoing]);
+  assert.deepEqual(snapshot.references, [reference]);
+  assert.deepEqual(view(store, owned).childrenIds, [shared.id]);
+  assert.equal(
+    store.exportState().tasks.find((item) => item.id === task.id)!.parentId,
+    destination.id,
+  );
+});
+
+test('moves reject non-container, missing, malformed, self, descendant, and current destinations atomically', (t) => {
+  const store = memory(t);
+  const outer = container(store, 'Outer');
+  const inner = container(store, 'Inner', outer.id);
+  const deepest = container(store, 'Deepest', inner.id);
+  const leaf = manual(store, 'Leaf', deepest.id);
+  const plain = manual(store, 'Plain');
+  const pr = store.createTask({
+    title: 'PR',
+    kind: 'pr',
+    prUrl: 'https://github.com/acme/app/pull/3',
+  });
+  rejectsUnchanged(store, () => move(store, leaf, plain.id), 400);
+  rejectsUnchanged(store, () => move(store, outer, pr.id), 400);
+  rejectsUnchanged(store, () => move(store, leaf, 'missing'), 404);
+  rejectsUnchanged(store, () => move(store, { id: 'missing' }, outer.id), 404);
+  rejectsUnchanged(store, () => store.updateTask(leaf.id, { parentId: 7 as never }), 400);
+  rejectsUnchanged(store, () => store.updateTask(leaf.id, { parentId: '' }), 400);
+  rejectsUnchanged(store, () => move(store, outer, outer.id), 409);
+  rejectsUnchanged(store, () => move(store, outer, inner.id), 409);
+  rejectsUnchanged(store, () => move(store, outer, deepest.id), 409);
+  rejectsUnchanged(store, () => move(store, inner, deepest.id), 409);
+  rejectsUnchanged(store, () => move(store, leaf, deepest.id), 409);
+  rejectsUnchanged(store, () => move(store, outer, null), 409);
+});
+
+test('moves into a container that already references the task are rejected', (t) => {
+  const store = memory(t);
+  const destination = container(store, 'Destination');
+  const elsewhere = container(store, 'Elsewhere');
+  const task = manual(store, 'Shared', elsewhere.id);
+  const nested = container(store, 'Nested', elsewhere.id);
+  store.addReference(destination.id, task.id);
+  store.addReference(destination.id, nested.id);
+  rejectsUnchanged(store, () => move(store, task, destination.id), 409);
+  rejectsUnchanged(store, () => move(store, nested, destination.id), 409);
+  const other = container(store, 'Other');
+  assert.equal(move(store, task, other.id).parentId, other.id);
+  assert.ok(view(store, destination).childrenIds.includes(task.id));
+});
+
+test('moves reject cycles hidden behind references and dependencies', (t) => {
+  const store = memory(t);
+  const outer = container(store, 'Outer');
+  const referencer = container(store, 'Referencer', outer.id);
+  const moving = container(store, 'Moving');
+  store.addReference(moving.id, outer.id);
+  rejectsUnchanged(store, () => move(store, moving, referencer.id), 409);
+  rejectsUnchanged(store, () => move(store, moving, outer.id), 409);
+
+  const gate = manual(store, 'Gate');
+  const consumer = container(store, 'Consumer');
+  store.addDependency(consumer.id, gate.id);
+  rejectsUnchanged(store, () => move(store, gate, consumer.id), 409);
+
+  const prerequisiteContainer = container(store, 'Prerequisite container');
+  const downstream = manual(store, 'Downstream');
+  store.addDependency(downstream.id, prerequisiteContainer.id);
+  assert.equal(
+    move(store, downstream, prerequisiteContainer.id).parentId,
+    prerequisiteContainer.id,
+  );
+});
+
+test('moves recompute completion for the old and new parents and their consumers', (t) => {
+  const store = memory(t);
+  const source = container(store, 'Source');
+  const destination = container(store, 'Destination');
+  const done = manual(store, 'Done', destination.id);
+  store.setDone(done.id, true);
+  const open = manual(store, 'Open', source.id);
+  const sourceConsumer = manual(store, 'After source');
+  const destinationConsumer = manual(store, 'After destination');
+  store.addDependency(source.id, sourceConsumer.id);
+  store.addDependency(destination.id, destinationConsumer.id);
+  assert.equal(view(store, destination).status, 'completed');
+  assert.equal(view(store, destinationConsumer).status, 'available');
+  assert.equal(view(store, sourceConsumer).status, 'blocked');
+
+  move(store, open, destination.id);
+  assert.equal(view(store, source).status, 'available', 'empty containers remain open');
+  assert.equal(view(store, sourceConsumer).status, 'blocked');
+  assert.equal(view(store, destination).status, 'available');
+  assert.equal(view(store, destinationConsumer).status, 'blocked');
+
+  const finished = manual(store, 'Finished', destination.id);
+  store.setDone(finished.id, true);
+  move(store, finished, source.id);
+  assert.equal(view(store, source).status, 'completed');
+  assert.equal(view(store, sourceConsumer).status, 'available');
+
+  store.setDone(open.id, true);
+  assert.equal(view(store, destination).status, 'completed');
+  assert.equal(view(store, destinationConsumer).status, 'available');
+});
+
+test('moves propagate completion through shared references and nested owners', (t) => {
+  const store = memory(t);
+  const top = container(store, 'Top');
+  const middle = container(store, 'Middle', top.id);
+  const observer = container(store, 'Observer');
+  store.addReference(observer.id, middle.id);
+  const finished = manual(store, 'Finished', middle.id);
+  store.setDone(finished.id, true);
+  assert.equal(view(store, top).status, 'completed');
+  assert.equal(view(store, observer).status, 'completed');
+
+  const open = manual(store, 'Open');
+  move(store, open, middle.id);
+  for (const task of [middle, top, observer]) assert.equal(view(store, task).status, 'available');
+
+  move(store, open, null);
+  for (const task of [middle, top, observer]) assert.equal(view(store, task).status, 'completed');
+});
+
+test('moves clean the old view layout and keep other layouts', (t) => {
+  const store = memory(t);
+  const source = container(store, 'Source');
+  const destination = container(store, 'Destination');
+  const task = manual(store, 'Task', source.id);
+  const stay = manual(store, 'Stay', source.id);
+  store.saveLayout({
+    viewId: source.id,
+    mode: 'manual',
+    positions: [
+      { nodeId: task.id, x: 1, y: 2 },
+      { nodeId: stay.id, x: 3, y: 4 },
+    ],
+  });
+  store.saveLayout({
+    viewId: 'root',
+    mode: 'manual',
+    positions: [
+      { nodeId: source.id, x: 5, y: 6 },
+      { nodeId: destination.id, x: 7, y: 8 },
+    ],
+  });
+  move(store, task, destination.id);
+  const layouts = store.snapshot().layouts;
+  assert.deepEqual(layouts.find((layout) => layout.viewId === source.id)!.positions, [
+    { nodeId: stay.id, x: 3, y: 4 },
+  ]);
+  move(store, source, destination.id);
+  assert.deepEqual(store.snapshot().layouts.find((layout) => layout.viewId === 'root')!.positions, [
+    { nodeId: destination.id, x: 7, y: 8 },
+  ]);
+  assert.deepEqual(
+    store.snapshot().layouts.find((layout) => layout.viewId === source.id)!.positions,
+    [{ nodeId: stay.id, x: 3, y: 4 }],
+  );
+});
+
+test('moves combine atomically with other field updates', (t) => {
+  const store = memory(t);
+  const source = container(store, 'Source');
+  const destination = container(store, 'Destination');
+  const task = manual(store, 'Task', source.id);
+  rejectsUnchanged(
+    store,
+    () => store.updateTask(task.id, { title: 'Renamed', parentId: source.id }),
+    409,
+  );
+  rejectsUnchanged(
+    store,
+    () => store.updateTask(task.id, { title: '   ', parentId: destination.id }),
+    400,
+  );
+  const updated = store.updateTask(task.id, { title: 'Renamed', parentId: destination.id });
+  assert.equal(updated.title, 'Renamed');
+  assert.equal(updated.parentId, destination.id);
+});
+
+test('moves persist across store instances', (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'foggybrain-move-persist-'));
+  const path = join(directory, 'workspace.sqlite');
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const first = new Store(path);
+  const source = container(first, 'Source');
+  const destination = container(first, 'Destination');
+  const task = manual(first, 'Task', source.id);
+  move(first, task, destination.id);
+  first.close();
+  const second = new Store(path);
+  t.after(() => second.close());
+  assert.equal(view(second, task).parentId, destination.id);
+  assert.deepEqual(view(second, source).childrenIds, []);
 });

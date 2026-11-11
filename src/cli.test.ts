@@ -1664,3 +1664,56 @@ test('CLI config supplies FOGGY_URL and FOGGY_WORKSPACE when the environment doe
   assert.equal(result.code, 0);
   assert.equal(requests.at(-1)!.path, '/api/workspaces/ws-1/state');
 });
+
+test('CLI task move sends parentId for a container or root with JSON output', async (t) => {
+  const { run, requests } = await fixture(t);
+  const toContainer = await run(['--json', 'task', 'move', 'task/1', '--parent', 'group-1']);
+  assert.equal(toContainer.code, 0);
+  assert.equal(toContainer.stderr, '');
+  assert.deepEqual(JSON.parse(toContainer.stdout), { id: 'server-id', parentId: 'group-1' });
+  const toRoot = await run(['--json', 'task', 'move', 'task/1', '--root']);
+  assert.equal(toRoot.code, 0);
+  assert.equal(toRoot.stderr, '');
+  assert.deepEqual(JSON.parse(toRoot.stdout), { id: 'server-id', parentId: null });
+  const workspace = await run(['--json', '--workspace', 'ws1', 'task', 'move', 'a', '--root']);
+  assert.equal(workspace.code, 0);
+  assert.deepEqual(requests, [
+    { method: 'PATCH', path: '/api/tasks/task%2F1', body: { parentId: 'group-1' } },
+    { method: 'PATCH', path: '/api/tasks/task%2F1', body: { parentId: null } },
+    { method: 'PATCH', path: '/api/workspaces/ws1/tasks/a', body: { parentId: null } },
+  ]);
+});
+
+test('CLI task move requires exactly one destination and sends nothing otherwise', async (t) => {
+  const { run, requests } = await fixture(t);
+  for (const args of [
+    ['task', 'move', 'a'],
+    ['task', 'move', 'a', '--parent', 'b', '--root'],
+    ['task', 'move', 'a', '--parent', ''],
+  ]) {
+    const result = await run(['--json', ...args]);
+    assert.equal(result.code, 1, args.join(' '));
+    assert.equal(result.stdout, '');
+    assert.equal(typeof JSON.parse(result.stderr).error, 'string');
+  }
+  assert.deepEqual(requests, []);
+  const help = await run(['task', 'move', '--help']);
+  assert.equal(help.code, 0);
+  assert.match(help.stdout, /--parent <container-id>/);
+  assert.match(help.stdout, /--root/);
+});
+
+test('CLI task move reports server rejections as JSON errors', async (t) => {
+  for (const [status, error] of [
+    [409, 'A task cannot be moved into itself or its own children'],
+    [409, 'Task is already referenced by this container'],
+    [400, 'Task must be a container'],
+    [404, 'Task not found'],
+  ] as const) {
+    const { run } = await fixture(t, () => ({ status, body: { error } }));
+    const result = await run(['--json', 'task', 'move', 'a', '--parent', 'b']);
+    assert.equal(result.code, 1);
+    assert.equal(result.stdout, '');
+    assert.deepEqual(JSON.parse(result.stderr), { error: `HTTP ${status}: ${error}` });
+  }
+});

@@ -26,6 +26,10 @@ For manual integration work, `pnpm dev` starts the API on `127.0.0.1:4173` and t
 
 For API changes, regenerate `openapi.json` with `pnpm openapi:generate` and run `pnpm openapi:check` as well. Never hand edit the artifact. DTO field shapes come from `src/shared.ts`; `scripts/openapi.ts` owns route metadata and focused conditional schema refinements. The spec is not a runtime validator. See `docs/api.md` for ownership and contract-test coverage, and `docs/pr-verification.md` for PR readiness precedence.
 
+## Releases
+
+Merging does not release. Bump `version` in `package.json` (semver: minor for features, patch for fixes) in the PR that should ship, then after merge tag that commit on `master` with `v{version}` and push the tag (`git tag v0.11.0 origin/master && git push origin v0.11.0`). `.github/workflows/release.yml` runs on `v*` tags, fails unless the tag equals `v` + `package.json` version, reruns CI, and publishes the archive that `foggy upgrade` installs. A tag with a `-suffix` publishes a prerelease. When a PR changes `plugins/foggybrain/`, also bump the plugin `version` in `plugins/foggybrain/.claude-plugin/plugin.json` and its entry in `.claude-plugin/marketplace.json`, which must match; installed plugins only update on a version change.
+
 ## Agent CLI Usage
 
 Use source execution with quiet pnpm output, or build and optionally `pnpm link` to use `foggy`:
@@ -48,7 +52,7 @@ foggy --json task done MANUAL_TASK_ID
 foggy --json task show MANUAL_TASK_ID
 ```
 
-`task done` satisfies only manual work (`manualDone`). Manual tasks may also have an optional PR gate (`task create/update --pr URL`); their own condition requires both manual work done and a verified merge. `task update ID --remove-pr` removes only an optional manual gate, preserving manual work status. `ready` means own condition satisfied but blocked from completion by prerequisites; it is not `completed`. `available` means unfinished own work without incomplete prerequisites; `blocked` means unfinished own work with incomplete prerequisites. A PR task requires a verified merge. A container requires all owned and referenced children to complete; **empty containers remain open**. Reopening propagates through dependencies and shared memberships. Containment, reference, and dependency cycles are invalid. References share identity and completion without changing ownership.
+`task done` satisfies only manual work (`manualDone`). Manual tasks may also have an optional PR gate (`task create/update --pr URL`); their own condition requires both manual work done and a verified merge. `task update ID --remove-pr` removes only an optional manual gate, preserving manual work status. `ready` means own condition satisfied but blocked from completion by prerequisites; it is not `completed`. `available` means unfinished own work without incomplete prerequisites; `blocked` means unfinished own work with incomplete prerequisites. A PR task requires a verified merge. A container requires all owned and referenced children to complete; **empty containers remain open**. Reopening propagates through dependencies and shared memberships. Containment, reference, and dependency cycles are invalid. References share identity and completion without changing ownership. `task move ID --parent CONTAINER_ID|--root` changes ownership; owned children move along, and duplicate membership or cycles reject the move.
 
 `task list --parent ID` shows immediate owned children only. `task show ID` includes referenced children and direct prerequisites/dependents. `graph ID` scopes to a container and transitive owned/referenced children; only relationships with both endpoints in scope appear, so use unscoped `graph` or `task show` to inspect external edges.
 

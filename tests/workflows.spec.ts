@@ -1559,14 +1559,24 @@ test('graph emphasizes actionable work, nearby dependencies, and container progr
   await expect(edge.locator('.react-flow__edge-text')).toHaveCSS('opacity', '0');
   await page.getByRole('button', { name: 'Close task details' }).click();
   // Closing the panel refits the viewport, so re-measure until the hover lands on the settled edge.
+  // On narrow viewports the midpoint can be off-screen or under a node, so hover the first point
+  // along the path that actually hit-tests to this edge.
   await expect(async () => {
-    const midpoint = await edge.locator('.react-flow__edge-interaction').evaluate((element) => {
+    const target = await edge.locator('.react-flow__edge-interaction').evaluate((element) => {
       const path = element as SVGPathElement;
-      const point = path.getPointAtLength(path.getTotalLength() / 2);
-      const screen = new DOMPoint(point.x, point.y).matrixTransform(path.getScreenCTM()!);
-      return { x: screen.x, y: screen.y };
+      const edgeGroup = path.closest('.react-flow__edge')!;
+      const length = path.getTotalLength();
+      for (const fraction of [0.5, 0.4, 0.6, 0.3, 0.7, 0.2, 0.8]) {
+        const point = path.getPointAtLength(length * fraction);
+        const screen = new DOMPoint(point.x, point.y).matrixTransform(path.getScreenCTM()!);
+        if (edgeGroup.contains(document.elementFromPoint(screen.x, screen.y))) {
+          return { x: screen.x, y: screen.y };
+        }
+      }
+      return null;
     });
-    await page.mouse.move(midpoint.x, midpoint.y);
+    expect(target, 'no visible, unobscured point on the dependency edge').not.toBeNull();
+    await page.mouse.move(target!.x, target!.y);
     await expect(edge.locator('.react-flow__edge-text')).toHaveCSS('opacity', '1', {
       timeout: 500,
     });
@@ -1871,6 +1881,12 @@ test('deletion rechecks changed impact and requires a fresh confirmation', async
   await page.getByRole('button', { name: 'Delete container', exact: true }).click();
   const dialog = page.locator('.dialog');
   await expect(dialog).toContainText('No other tasks depend on this task.');
+  await expect(dialog).toContainText(
+    'Links to deleted tasks are cut. Tasks listed here are kept, but may unblock, complete, or reopen.',
+  );
+  await expect(dialog).toContainText(
+    '0 dependency links and 0 references will be removed. Dependent tasks and independently owned reference targets are kept.',
+  );
   await request.post('/api/references', { data: { containerId: prod.id, taskId: stage.id } });
   await dialog.getByRole('button', { name: 'Delete permanently' }).click();
   await expect(dialog.getByRole('alert')).toContainText('The graph changed');
@@ -1882,4 +1898,77 @@ test('deletion rechecks changed impact and requires a fresh confirmation', async
   const after = (await (await request.get('/api/state')).json()) as Snapshot;
   expect(after.tasks.some((task) => task.id === stage.id)).toBeFalsy();
   expect(after.tasks.some((task) => task.id === prod.id)).toBeTruthy();
+});
+
+test('move dialog relocates a container with its children and back to the root', async ({
+  request,
+  page,
+}) => {
+  const release = await create(request, 'Release', 'container');
+  const stage = await create(request, 'Stage', 'container', release.id);
+  const roadmap = await create(request, 'Roadmap', 'container');
+  const child = await create(request, 'Roadmap step', 'manual', roadmap.id);
+  const plain = await create(request, 'Plain step', 'manual');
+  const shared = await create(request, 'Shared review', 'container');
+  await request.post('/api/references', { data: { containerId: shared.id, taskId: roadmap.id } });
+
+  await page.goto('/#/map');
+  await node(page, roadmap.id).click();
+  const detail = page.getByRole('complementary', { name: 'Task details' });
+  await detail.getByRole('button', { name: 'Move to…' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Move task' });
+  const picker = dialog.getByRole('combobox', { name: 'Destination' });
+  await picker.click();
+  await expect(dialog.getByRole('option')).toHaveText(['Release', 'Release / Stage']);
+  await expect(dialog.getByRole('option', { name: 'Plain step' })).toHaveCount(0);
+  await picker.fill('stage');
+  await dialog.getByRole('option', { name: 'Release / Stage', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Move', exact: true }).click();
+  await expect(dialog).not.toBeVisible();
+  await expect(node(page, roadmap.id)).toHaveCount(0);
+
+  let snapshot = (await (await request.get('/api/state')).json()) as Snapshot;
+  const find = (id: string) => snapshot.tasks.find((task) => task.id === id)!;
+  expect(find(roadmap.id).parentId).toBe(stage.id);
+  expect(find(child.id).parentId).toBe(roadmap.id);
+  expect(find(plain.id).parentId).toBeNull();
+
+  await page.goto(`/#/tasks/${stage.id}`);
+  await node(page, roadmap.id).click();
+  await detail.getByRole('button', { name: 'Move to…' }).click();
+  await dialog.getByRole('combobox', { name: 'Destination' }).click();
+  await expect(dialog.getByRole('option')).toHaveText(['Root', 'Release']);
+  await dialog.getByRole('option', { name: 'Root', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Move', exact: true }).click();
+  await expect(dialog).not.toBeVisible();
+  snapshot = (await (await request.get('/api/state')).json()) as Snapshot;
+  expect(find(roadmap.id).parentId).toBeNull();
+  expect(find(child.id).parentId).toBe(roadmap.id);
+});
+
+test('move errors stay inside the dialog and leave the graph unchanged', async ({
+  request,
+  page,
+}) => {
+  const gate = await create(request, 'Gate', 'manual');
+  const consumer = await create(request, 'Consumer', 'container');
+  await request.post('/api/dependencies', {
+    data: { prerequisiteId: consumer.id, dependentId: gate.id },
+  });
+  const before = (await (await request.get('/api/state')).json()) as Snapshot;
+  await page.goto('/#/map');
+  await node(page, gate.id).click();
+  await page
+    .getByRole('complementary', { name: 'Task details' })
+    .getByRole('button', { name: 'Move to…' })
+    .click();
+  const dialog = page.getByRole('dialog', { name: 'Move task' });
+  const move = dialog.getByRole('button', { name: 'Move', exact: true });
+  await expect(move).toBeDisabled();
+  await dialog.getByRole('combobox', { name: 'Destination' }).click();
+  await dialog.getByRole('option', { name: 'Consumer', exact: true }).click();
+  await move.click();
+  await expect(dialog.getByRole('alert')).toContainText('cycle');
+  await expect(dialog).toBeVisible();
+  expect(await (await request.get('/api/state')).json()).toEqual(before);
 });

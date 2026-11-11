@@ -324,6 +324,23 @@ function derive(state: StoredSnapshot): Snapshot {
   };
 }
 
+function moveTask(state: StoredSnapshot, task: Task, parentId: unknown): void {
+  const destination = parentId === null ? null : containerById(state, parentId).id;
+  if (destination === task.parentId) throw new DomainError('Task is already in this location', 409);
+  if (destination !== null) {
+    if (ownedIds(state, task.id).has(destination))
+      throw new DomainError('A task cannot be moved into itself or its own children', 409);
+    if (state.references.some((ref) => ref.containerId === destination && ref.taskId === task.id))
+      throw new DomainError('Task is already referenced by this container', 409);
+  }
+  const previousView = task.parentId ?? 'root';
+  for (const layout of state.layouts) {
+    if (layout.viewId === previousView)
+      layout.positions = layout.positions.filter((position) => position.nodeId !== task.id);
+  }
+  task.parentId = destination;
+}
+
 function ownedIds(state: StoredSnapshot, id: string): Set<string> {
   taskById(state, id);
   const children = new Map<string, string[]>();
@@ -915,10 +932,19 @@ export class Store {
   }
 
   updateTask(id: string, input: UpdateTaskInput): TaskView {
-    objectInput(input, ['title', 'description', 'prUrl', 'externalLinks', 'tagIds', 'favorite']);
+    objectInput(input, [
+      'title',
+      'description',
+      'parentId',
+      'prUrl',
+      'externalLinks',
+      'tagIds',
+      'favorite',
+    ]);
     if (!Object.keys(input).length) throw new DomainError('At least one field is required');
     return this.mutate((state) => {
       const task = taskById(state, id);
+      if ('parentId' in input) moveTask(state, task, input.parentId);
       if ('title' in input) task.title = text(input.title, 'Title', true);
       if ('description' in input) task.description = text(input.description, 'Description');
       if ('tagIds' in input) {
