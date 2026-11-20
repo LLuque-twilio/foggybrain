@@ -32,6 +32,7 @@ test('the settable keys exclude the variables that cannot live in the file', () 
     'FOGGY_SYNC_REPO',
     'FOGGY_SYNC_BRANCH',
     'FOGGY_SYNC_PATH',
+    'FOGGY_SYNC_TIMEOUT_MS',
     'FOGGY_PORT',
     'FOGGY_DATA_DIR',
     'FOGGY_POLL_INTERVAL_MS',
@@ -60,6 +61,10 @@ test('assertConfigValue applies the same rules the server enforces at startup', 
 
   assertConfigValue('FOGGY_POLL_INTERVAL_MS', '15000');
   assert.throws(() => assertConfigValue('FOGGY_POLL_INTERVAL_MS', '1000'), /15000/);
+  assertConfigValue('FOGGY_SYNC_TIMEOUT_MS', '60000');
+  assert.throws(() => assertConfigValue('FOGGY_SYNC_TIMEOUT_MS', '999'), /1000 and 600000/);
+  assert.throws(() => assertConfigValue('FOGGY_SYNC_TIMEOUT_MS', '600001'), /1000 and 600000/);
+  assert.throws(() => assertConfigValue('FOGGY_SYNC_TIMEOUT_MS', '1e4'), /1000 and 600000/);
 
   assertConfigValue('FOGGY_SYNC_REPO', 'owner/state');
   assert.throws(() => assertConfigValue('FOGGY_SYNC_REPO', 'nope'), /repository/i);

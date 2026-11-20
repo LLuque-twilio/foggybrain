@@ -195,20 +195,14 @@ function RoutedEdge({
   labelBgBorderRadius,
   interactionWidth,
 }: EdgeProps<RoutedStepEdge>) {
-  const points = [
-    { x: sourceX, y: sourceY },
-    ...(data?.points ?? []),
-    { x: targetX, y: targetY },
-  ];
+  const points = [{ x: sourceX, y: sourceY }, ...(data?.points ?? []), { x: targetX, y: targetY }];
   // Horizontal tangents at every waypoint keep curves flowing left-to-right; waypoints come in
   // pairs spanning a skipped column, so the segment between them is a straight pass-through.
-  const path = points
-    .slice(1)
-    .reduce((d, point, index) => {
-      const previous = points[index];
-      const bend = (point.x - previous.x) / 2;
-      return `${d} C ${previous.x + bend} ${previous.y} ${point.x - bend} ${point.y} ${point.x} ${point.y}`;
-    }, `M ${sourceX} ${sourceY}`);
+  const path = points.slice(1).reduce((d, point, index) => {
+    const previous = points[index];
+    const bend = (point.x - previous.x) / 2;
+    return `${d} C ${previous.x + bend} ${previous.y} ${point.x - bend} ${point.y} ${point.x} ${point.y}`;
+  }, `M ${sourceX} ${sourceY}`);
   const middle = Math.floor((points.length - 2) / 2);
   const labelX = (points[middle].x + points[middle + 1].x) / 2;
   const labelY = (points[middle].y + points[middle + 1].y) / 2;

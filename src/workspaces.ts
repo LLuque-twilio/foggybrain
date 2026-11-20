@@ -23,6 +23,7 @@ export interface WorkspaceManagerOptions {
   dedicatedToken?: string;
   githubToken?: string;
   intervalMs?: number;
+  syncTimeoutMs?: number;
   fetch?: typeof fetch;
 }
 
@@ -363,6 +364,7 @@ export class WorkspaceManager {
         target: result.target,
         resolveToken: () => this.token(result),
         fetch: this.options.fetch,
+        timeoutMs: this.options.syncTimeoutMs,
       });
     }
     return result;
@@ -400,6 +402,7 @@ export class WorkspaceManager {
         target: workspace.target,
         resolveToken: () => this.token(workspace),
         fetch: this.options.fetch,
+        timeoutMs: this.options.syncTimeoutMs,
       });
       const runtime = { store, github, sync };
       this.runtimes.set(id, runtime);

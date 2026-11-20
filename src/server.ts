@@ -7,6 +7,7 @@ import { applyConfigFile, configFilePath, readConfigFile, readTokenFromGhCli } f
 import { Store, DomainError } from './core.js';
 import { GithubPoller, parsePollInterval } from './github.js';
 import { readSyncConfig, StateSync } from './sync.js';
+import { parseSyncTimeout } from './sync-timeout.js';
 import type {
   CreateTagInput,
   CreateTaskInput,
@@ -44,6 +45,7 @@ export function readConfig(env: NodeJS.ProcessEnv = process.env) {
     intervalMs: parsePollInterval(env.FOGGY_POLL_INTERVAL_MS),
     syncTarget: readSyncConfig(env),
     syncToken: env.FOGGY_SYNC_TOKEN,
+    syncTimeoutMs: parseSyncTimeout(env.FOGGY_SYNC_TIMEOUT_MS),
   };
 }
 
@@ -483,6 +485,7 @@ export async function startServer(options: EnvironmentOptions = {}) {
     dedicatedToken: settings.syncToken,
     githubToken: token,
     intervalMs: settings.intervalMs,
+    syncTimeoutMs: settings.syncTimeoutMs,
   });
   try {
     for (const workspace of workspaces.list().workspaces) workspaces.get(workspace.id);

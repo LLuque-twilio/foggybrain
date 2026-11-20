@@ -1577,7 +1577,7 @@ test('CLI config wizard keeps a value on a blank answer and validates what it is
   await run(['--json', 'config', 'set', 'FOGGY_PORT', '5000'], env);
 
   // One line per key, in CONFIG_KEYS order; blank keeps whatever is already there.
-  const answers = ['ghp_abcdefgh3f2a', '', '', '', '', '', '', '', '', 'ws-1'].join('\n');
+  const answers = ['ghp_abcdefgh3f2a', '', '', '', '', '', '', '', '', '', 'ws-1'].join('\n');
   const wizard = await run(['--json', 'config'], env, `${answers}\n`);
   assert.equal(wizard.code, 0);
   assert.deepEqual(JSON.parse(await readFile(path, 'utf8')), {
@@ -1588,7 +1588,7 @@ test('CLI config wizard keeps a value on a blank answer and validates what it is
   assert.match(wizard.stderr, /GitHub token/);
   assert.doesNotMatch(wizard.stderr, /ghp_abcdefgh3f2a/, 'a typed secret is never echoed back');
 
-  const changed = await run(['--json', 'config'], env, '\n\n\n\n\n6000\n');
+  const changed = await run(['--json', 'config'], env, '\n\n\n\n\n\n6000\n');
   const rows = JSON.parse(changed.stdout) as {
     name: string;
     value: string | null;
@@ -1604,7 +1604,7 @@ test('CLI config wizard keeps a value on a blank answer and validates what it is
   );
   await run(['--json', 'config', 'set', 'FOGGY_PORT', '5000'], env);
 
-  const bad = await run(['--json', 'config'], env, '\n\n\n\n\n0\n');
+  const bad = await run(['--json', 'config'], env, '\n\n\n\n\n\n0\n');
   assert.equal(bad.code, 1);
   // Prompts share stderr with the error, so match rather than parse the whole stream.
   assert.match(bad.stderr, /between 1 and 65535/);

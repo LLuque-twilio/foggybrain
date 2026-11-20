@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { safeSyncRef } from './shared.js';
+import { DEFAULT_SYNC_TIMEOUT_MS } from './sync-timeout.js';
 import {
   DomainError,
   emptyPortableState,
@@ -248,6 +249,7 @@ export class StateSync {
   private active: Promise<unknown> | null = null;
   private controller: AbortController | null = null;
   private stopped = false;
+  private readonly timeoutMs: number;
 
   constructor(
     private readonly store: Store,
@@ -256,6 +258,7 @@ export class StateSync {
       token?: string;
       resolveToken?: () => string | undefined;
       fetch?: typeof fetch;
+      timeoutMs?: number;
     },
   ) {
     if (options.target) {
@@ -273,6 +276,7 @@ export class StateSync {
     this.token = options.token;
     this.resolveToken = options.resolveToken;
     this.fetcher = options.fetch ?? fetch;
+    this.timeoutMs = options.timeoutMs ?? DEFAULT_SYNC_TIMEOUT_MS;
   }
 
   getStatus(): SyncStatus {
@@ -304,7 +308,7 @@ export class StateSync {
     }
     const controller = new AbortController();
     this.controller = controller;
-    const timer = setTimeout(() => controller.abort(), 10_000);
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
     const active = Promise.resolve()
       .then(() => operation(controller.signal))
       .catch((error: unknown) => {
@@ -402,7 +406,7 @@ export class StateSync {
       const reason = signal.aborted
         ? this.stopped
           ? 'was cancelled because the sync service stopped'
-          : 'timed out after the 10-second sync deadline'
+          : `timed out after the ${this.timeoutMs / 1000}-second sync deadline`
         : 'failed during transport; check server network, DNS, TLS, and proxy connectivity';
       throw new DomainError(
         `GitHub state sync ${reason} while ${operation}. Re-preview before applying again.${

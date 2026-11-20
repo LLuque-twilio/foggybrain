@@ -513,6 +513,9 @@ test('server configuration validates ports and intervals, resolves storage, and 
     assert.throws(() => readConfig({ FOGGY_PORT }));
   assert.throws(() => readConfig({ FOGGY_DATA_DIR: '' }));
   assert.throws(() => readConfig({ FOGGY_POLL_INTERVAL_MS: '14999' }));
+  assert.equal(readConfig({}).syncTimeoutMs, 10_000);
+  assert.equal(readConfig({ FOGGY_SYNC_TIMEOUT_MS: '60000' }).syncTimeoutMs, 60_000);
+  assert.throws(() => readConfig({ FOGGY_SYNC_TIMEOUT_MS: '500' }), /FOGGY_SYNC_TIMEOUT_MS/);
   const withoutSyncToken = readConfig({
     FOGGY_SYNC_REPO: 'owner/state',
     GH_TOKEN: 'not-a-sync-token',

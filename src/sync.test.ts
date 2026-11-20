@@ -967,6 +967,39 @@ test('stop aborts and awaits in-flight work, and rejects future operations', asy
   await assert.rejects(sync.preview(), /stopped/);
 });
 
+test('a configured deadline replaces the 10-second default', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const store = new Store(':memory:');
+  t.after(() => store.close());
+  let started!: () => void;
+  const ready = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const sync = new StateSync(store, {
+    target,
+    token,
+    timeoutMs: 60_000,
+    fetch: async (_url, init) =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            init!.signal!.addEventListener('abort', () => controller.error(new Error(token)));
+            started();
+          },
+        }),
+      ),
+  });
+  const rejected = assert.rejects(
+    sync.preview(),
+    /timed out after the 60-second sync deadline while reading repository/,
+  );
+  await ready;
+  t.mock.timers.tick(59_999);
+  assert.equal(sync.getStatus().syncing, true);
+  t.mock.timers.tick(1);
+  await rejected;
+});
+
 test('one 10-second deadline covers the entire operation, including response reads', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const store = new Store(':memory:');

@@ -277,12 +277,13 @@ An installed FoggyBrain needs no checkout and no `.env` file. The `.env` files b
 | `FOGGY_URL`              | CLI server origin; default `http://127.0.0.1:4173`. Overridden by `--url`.                                                                           |
 | `FOGGY_WORKSPACE`        | CLI workspace ID from process environment; overridden by `--workspace`. Unset keeps the server default, independently of browser tabs.               |
 
-| Sync variable       | Purpose                                                                                                                                                                           |
-| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `FOGGY_SYNC_REPO`   | Legacy default-workspace state target, `owner/repo`; must be private. Additional targets use workspace create/connect.                                                            |
-| `FOGGY_SYNC_BRANCH` | Existing target branch; default `main`. Sync does not create branches.                                                                                                            |
-| `FOGGY_SYNC_PATH`   | State JSON path in that branch; default `foggybrain/state.json`.                                                                                                                  |
-| `FOGGY_SYNC_TOKEN`  | Server token for dedicated mode, Contents read/write restricted to the selected private state repository. No automatic fallback; GitHub reuse requires explicit workspace opt-in. |
+| Sync variable           | Purpose                                                                                                                                                                           |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `FOGGY_SYNC_REPO`       | Legacy default-workspace state target, `owner/repo`; must be private. Additional targets use workspace create/connect.                                                            |
+| `FOGGY_SYNC_BRANCH`     | Existing target branch; default `main`. Sync does not create branches.                                                                                                            |
+| `FOGGY_SYNC_PATH`       | State JSON path in that branch; default `foggybrain/state.json`.                                                                                                                  |
+| `FOGGY_SYNC_TIMEOUT_MS` | Overall deadline for one sync preview or apply; default `10000` ms, range `1000`-`600000`. Raise it for large states.                                                             |
+| `FOGGY_SYNC_TOKEN`      | Server token for dedicated mode, Contents read/write restricted to the selected private state repository. No automatic fallback; GitHub reuse requires explicit workspace opt-in. |
 
 For an explicit data location, start the server with, for example:
 

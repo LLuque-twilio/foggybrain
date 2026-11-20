@@ -4,6 +4,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { installRoot } from './install.js';
 import { safeSyncRef } from './shared.js';
+import { parseSyncTimeout } from './sync-timeout.js';
 
 export interface ConfigKey {
   name: string;
@@ -109,6 +110,13 @@ export const CONFIG_KEYS: ConfigKey[] = [
     secret: false,
     fallback: () => 'foggybrain/state.json',
     validate: syncRef('FOGGY_SYNC_PATH'),
+  },
+  {
+    name: 'FOGGY_SYNC_TIMEOUT_MS',
+    label: 'Overall state sync deadline in milliseconds',
+    secret: false,
+    fallback: () => '10000',
+    validate: (value) => void parseSyncTimeout(value),
   },
   {
     name: 'FOGGY_PORT',
