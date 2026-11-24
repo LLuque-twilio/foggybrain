@@ -6,6 +6,7 @@ import {
   MiniMap,
   Handle,
   Position,
+  Panel,
   MarkerType,
   applyNodeChanges,
   useReactFlow,
@@ -25,6 +26,7 @@ import {
   ExternalLink,
   GitPullRequest,
   Link2,
+  LayoutDashboard,
   ListChecks,
   Sparkles,
 } from 'lucide-react';
@@ -492,6 +494,67 @@ function Canvas({
     });
   }, [dimensionsKey, manual, tasks, dependencies, viewId]);
 
+  const measuredDimensions = () => {
+    if (
+      nodes.length !== tasks.length ||
+      nodes.some((node) => node.measured?.width === undefined || node.measured.height === undefined)
+    )
+      return null;
+    return new Map(
+      nodes.map((node) => [
+        node.id,
+        { width: node.measured!.width!, height: node.measured!.height! },
+      ]),
+    );
+  };
+
+  const autoArrange = () => {
+    const dimensions = measuredDimensions();
+    if (!dimensions) return;
+    const { positions } = autoLayout(tasks, dependencies, dimensions);
+    onLayout({
+      viewId,
+      mode: 'manual',
+      positions: tasks.map((task) => ({ nodeId: task.id, ...positions.get(task.id)! })),
+    });
+  };
+
+  const seededKey = useRef('');
+  useEffect(() => {
+    if (!manual) return;
+    const stored = (layout?.positions ?? []).filter((position) => ids.has(position.nodeId));
+    const storedIds = new Set(stored.map((position) => position.nodeId));
+    const missing = tasks.filter((task) => !storedIds.has(task.id));
+    if (!missing.length) return;
+    const dimensions = measuredDimensions();
+    if (!dimensions) return;
+    const key = `${viewId}:${missing.map((task) => task.id).join(',')}`;
+    if (seededKey.current === key) return;
+    seededKey.current = key;
+    const { positions } = autoLayout(tasks, dependencies, dimensions);
+    if (!stored.length) {
+      onLayout({
+        viewId,
+        mode: 'manual',
+        positions: tasks.map((task) => ({ nodeId: task.id, ...positions.get(task.id)! })),
+      });
+      return;
+    }
+    // Auto positions ignore hand-placed nodes, so newcomers go below everything already placed.
+    const gap = 44;
+    let cursorY = Math.max(
+      ...stored.map((position) => position.y + (dimensions.get(position.nodeId)?.height ?? 0)),
+    );
+    const placed = missing.map((task) => {
+      cursorY += gap;
+      const position = { nodeId: task.id, x: positions.get(task.id)!.x, y: cursorY };
+      cursorY += dimensions.get(task.id)!.height;
+      return position;
+    });
+    onLayout({ viewId, mode: 'manual', positions: [...stored, ...placed] });
+    // Seeding reacts to which positions are missing and to measured sizes, not callback identity.
+  }, [manual, layout, tasks, dimensionsKey, viewId]);
+
   const topology = `${viewId}:${tasks.map((task) => `${task.id}:${task.kind}:${task.prUrl !== null}`).join(',')}:${dependencies.map((edge) => `${edge.id}:${edge.prerequisiteId}:${edge.dependentId}`).join(',')}:${manual}`;
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -535,6 +598,14 @@ function Canvas({
     >
       <Background color="var(--graph-grid)" gap={22} size={1} />
       <Controls showInteractive={false} />
+      {manual && (
+        <Panel position="top-left">
+          <button type="button" className="text-button" onClick={autoArrange}>
+            <LayoutDashboard size={14} />
+            Auto-arrange
+          </button>
+        </Panel>
+      )}
       <MiniMap<StepNode>
         nodeColor={(node) =>
           node.selected

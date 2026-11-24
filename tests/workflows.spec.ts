@@ -27,6 +27,11 @@ test.beforeEach(async ({ request }) => {
   expect(
     (await request.put('/api/preferences', { data: { hideCompleted: true } })).ok(),
   ).toBeTruthy();
+  expect(
+    (
+      await request.put('/api/layout', { data: { viewId: 'root', mode: 'auto', positions: [] } })
+    ).ok(),
+  ).toBeTruthy();
 });
 
 test('theme controls are accessible, persist presets, and follow the system', async ({
@@ -1673,11 +1678,14 @@ test('manual layout persists, auto layout restores, and polling sees external up
     await expect
       .poll(
         async () =>
-          ((await (await request.get('/api/state')).json()) as Snapshot).layouts[0].positions
-            .length,
+          ((await (await request.get('/api/state')).json()) as Snapshot).layouts.find(
+            (layout) => layout.viewId === parent.id,
+          )?.positions.length,
       )
       .toBe(2);
-    const before = ((await (await request.get('/api/state')).json()) as Snapshot).layouts[0];
+    const before = ((await (await request.get('/api/state')).json()) as Snapshot).layouts.find(
+      (layout) => layout.viewId === parent.id,
+    )!;
     await page.reload();
     await expect(page.getByRole('button', { name: 'Manual layout', exact: true })).toBeVisible();
     await expect(node(page, a.id)).toBeVisible();
@@ -1971,4 +1979,75 @@ test('move errors stay inside the dialog and leave the graph unchanged', async (
   await expect(dialog.getByRole('alert')).toContainText('cycle');
   await expect(dialog).toBeVisible();
   expect(await (await request.get('/api/state')).json()).toEqual(before);
+});
+
+test('manual layout starts from the auto arrangement and can be re-arranged', async ({
+  request,
+  page,
+}) => {
+  await create(request, 'Short manual step');
+  const container = await create(request, 'Container with progress', 'container');
+  await create(request, 'Nested work', 'manual', container.id);
+  const gated = await request.post('/api/tasks', {
+    data: {
+      title: 'Manual work with a PR gate',
+      kind: 'manual',
+      prUrl: 'https://github.com/acme/example/pull/12',
+    },
+  });
+  expect(gated.ok()).toBeTruthy();
+  expect(
+    (
+      await request.put('/api/layout', { data: { viewId: 'root', mode: 'auto', positions: [] } })
+    ).ok(),
+  ).toBeTruthy();
+  await page.goto('/#/map');
+
+  const overlaps = () =>
+    page.locator('.react-flow__node-step').evaluateAll((elements) => {
+      const rects = elements.map((element) => {
+        const { e: x, f: y } = new DOMMatrix(getComputedStyle(element).transform);
+        return {
+          x,
+          y,
+          width: (element as HTMLElement).offsetWidth,
+          height: (element as HTMLElement).offsetHeight,
+        };
+      });
+      return rects.some((a, i) =>
+        rects
+          .slice(i + 1)
+          .some(
+            (b) =>
+              a.x < b.x + b.width &&
+              b.x < a.x + a.width &&
+              a.y < b.y + b.height &&
+              b.y < a.y + a.height,
+          ),
+      );
+    });
+  const layouts = async () =>
+    ((await (await request.get('/api/state')).json()) as Snapshot).layouts;
+
+  await page.getByRole('button', { name: 'Auto layout', exact: true }).click();
+  await expect.poll(async () => (await layouts())[0]?.positions.length).toBe(3);
+  await expect.poll(overlaps).toBe(false);
+
+  const stacked = (await layouts())[0].positions.map((position) => ({
+    ...position,
+    x: 0,
+    y: 0,
+  }));
+  expect(
+    (
+      await request.put('/api/layout', {
+        data: { viewId: 'root', mode: 'manual', positions: stacked },
+      })
+    ).ok(),
+  ).toBeTruthy();
+  await page.reload();
+  await expect.poll(overlaps).toBe(true);
+  await page.getByRole('button', { name: 'Auto-arrange', exact: true }).click();
+  await expect.poll(overlaps).toBe(false);
+  expect((await layouts())[0].mode).toBe('manual');
 });
